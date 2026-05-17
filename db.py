@@ -94,6 +94,34 @@ def get_realised() -> pd.DataFrame:
     return df
 
 
+def _clean_date(d):
+    """Normalize a date-ish value to a real date or None.
+
+    Migrated holdings have no buy_date, so it can arrive as NaN, None,
+    an empty string, or the literal string 'nan'. All of those -> None.
+    """
+    if d is None:
+        return None
+    # pandas NaN / NaT check (guarded — pd.isna can choke on some types)
+    try:
+        if pd.isna(d):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(d, date):
+        return d
+    s = str(d).strip()
+    if s == "" or s.lower() in ("nan", "nat", "none"):
+        return None
+    try:
+        return datetime.fromisoformat(s).date()
+    except (ValueError, TypeError):
+        try:
+            return pd.to_datetime(s).date()
+        except Exception:
+            return None
+
+
 def add_realised(stock_name: str, quantity: float, purchase_cost: float,
                  selling_price: float, sale_date: date,
                  buy_date: Optional[date] = None,
@@ -104,11 +132,14 @@ def add_realised(stock_name: str, quantity: float, purchase_cost: float,
     sale_consideration = round(float(quantity) * float(selling_price), 2)
     gain_loss = round(sale_consideration - amount_invested, 2)
     pct_gain_loss = round(gain_loss / amount_invested, 4) if amount_invested else 0
+
+    # Normalize dates — buy_date may be missing/NaN on migrated holdings
+    buy_date = _clean_date(buy_date)
+    sale_date_clean = _clean_date(sale_date)
+
     no_of_days = None
-    if buy_date and sale_date:
-        bd = buy_date if isinstance(buy_date, date) else datetime.fromisoformat(str(buy_date)).date()
-        sd = sale_date if isinstance(sale_date, date) else datetime.fromisoformat(str(sale_date)).date()
-        no_of_days = (sd - bd).days
+    if buy_date and sale_date_clean:
+        no_of_days = (sale_date_clean - buy_date).days
     payload = {
         "stock_name": stock_name.strip(),
         "quantity": float(quantity),
