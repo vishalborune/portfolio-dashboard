@@ -301,14 +301,21 @@ def tab_holdings(enriched: pd.DataFrame):
     st.divider()
     st.subheader("Manage holdings")
 
-    cc1, cc2, cc3 = st.columns(3)
+    # Row 1: Buy actions
+    cc1, cc2 = st.columns(2)
     with cc1:
-        with st.expander("➕ Add holding", expanded=False):
+        with st.expander("➕ Add new stock", expanded=False):
             _form_add_holding()
     with cc2:
+        with st.expander("🔁 Buy more of existing", expanded=False):
+            _form_buy_more(enriched)
+
+    # Row 2: Sell / edit actions
+    cc3, cc4 = st.columns(2)
+    with cc3:
         with st.expander("💰 Mark as sold", expanded=False):
             _form_mark_as_sold(enriched)
-    with cc3:
+    with cc4:
         with st.expander("✏️ Edit / 🗑️ Delete", expanded=False):
             _form_edit_delete_holding(enriched)
 
@@ -347,6 +354,75 @@ def _form_add_holding():
             st.rerun()
         except Exception as e:
             st.error(f"Failed to add: {e}")
+
+
+def _form_buy_more(enriched: pd.DataFrame):
+    """Form to add more shares to an existing holding. Recalcs weighted avg."""
+    if enriched.empty:
+        st.caption("No existing holdings to add to.")
+        return
+
+    options = enriched[["id", "Short Name", "quantity", "purchase_cost", "CMP"]].copy()
+    options["label"] = options.apply(
+        lambda r: f"{r['Short Name']} (have {r['quantity']:.0f} @ avg ₹{r['purchase_cost']:,.2f})",
+        axis=1,
+    )
+    pick = st.selectbox("Select holding to add to", options["label"].tolist(), key="buymore_pick")
+    if not pick:
+        return
+    row = options[options["label"] == pick].iloc[0]
+
+    with st.form("buy_more_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            add_qty = st.number_input("Additional quantity", min_value=0.0, step=1.0, format="%.2f")
+        with c2:
+            add_price = st.number_input(
+                "Buy price per share", min_value=0.0, step=0.01, format="%.2f",
+                value=float(row["CMP"]) if pd.notna(row["CMP"]) else 0.0,
+            )
+        with c3:
+            buy_dt = st.date_input("Transaction date", value=date.today(), key="buymore_date")
+
+        notes = st.text_input(
+            "Notes (optional)",
+            placeholder="Why are you adding here? Thesis, dip, etc.",
+        )
+
+        # Live preview of new weighted average
+        if add_qty > 0 and add_price > 0:
+            old_qty = float(row["quantity"])
+            old_cost = float(row["purchase_cost"])
+            new_qty = old_qty + add_qty
+            new_avg = ((old_qty * old_cost) + (add_qty * add_price)) / new_qty
+            st.info(
+                f"📊 **Preview:** {old_qty:.0f} @ ₹{old_cost:,.2f}  +  "
+                f"{add_qty:.0f} @ ₹{add_price:,.2f}  →  "
+                f"**{new_qty:.0f} @ ₹{new_avg:,.2f}**  "
+                f"(invested ₹{new_qty * new_avg:,.0f})"
+            )
+
+        submitted = st.form_submit_button("🔁 Buy more", type="primary")
+
+    if submitted:
+        if add_qty <= 0 or add_price <= 0:
+            st.error("Quantity and price must both be greater than 0.")
+            return
+        try:
+            result = db.buy_more(
+                holding_id=int(row["id"]),
+                additional_qty=add_qty,
+                price=add_price,
+                transaction_date=buy_dt,
+                notes=notes or None,
+            )
+            st.success(
+                f"✅ Added {add_qty:.0f} more shares of {row['Short Name']}. "
+                f"New position: {result['new_qty']:.0f} units @ avg ₹{result['new_avg']:,.2f}"
+            )
+            st.rerun()
+        except Exception as e:
+            st.error(f"Failed: {e}")
 
 
 def _form_mark_as_sold(enriched: pd.DataFrame):
@@ -670,6 +746,120 @@ def tab_history(k: dict):
 # TAB: NOTES
 # ---------------------------------------------------------------------------
 
+def tab_transactions():
+    """Chronological log of every buy and sell, with filters + Excel export."""
+    import io
+
+    tx = db.get_transactions()
+    if tx.empty:
+        st.info("No transactions yet. They'll appear here every time you buy or sell.")
+        return
+
+    # ---- Top KPIs ----
+    n_buy = (tx["transaction_type"] == "buy").sum()
+    n_sell = (tx["transaction_type"] == "sell").sum()
+    total_invested_ever = tx.loc[tx["transaction_type"] == "buy", "amount"].sum()
+    total_realised_ever = tx.loc[tx["transaction_type"] == "sell", "amount"].sum()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total transactions", len(tx))
+    k2.metric("Buys", int(n_buy))
+    k3.metric("Sells", int(n_sell))
+    k4.metric("Cash deployed (lifetime)", fmt_inr(total_invested_ever))
+
+    st.divider()
+
+    # ---- Filters ----
+    f1, f2, f3 = st.columns([2, 1, 2])
+    with f1:
+        stocks = ["All"] + sorted(tx["stock_name"].apply(short_name).unique().tolist())
+        stock_filter = st.selectbox("Filter by stock", stocks, key="tx_stock_filter")
+    with f2:
+        type_filter = st.selectbox("Type", ["All", "Buy only", "Sell only"], key="tx_type_filter")
+    with f3:
+        min_date = tx["transaction_date"].min().date()
+        max_date = tx["transaction_date"].max().date()
+        date_range = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date, max_value=max_date,
+            key="tx_date_range",
+        )
+
+    # Apply filters
+    filtered = tx.copy()
+    if stock_filter != "All":
+        filtered = filtered[filtered["stock_name"].apply(short_name) == stock_filter]
+    if type_filter == "Buy only":
+        filtered = filtered[filtered["transaction_type"] == "buy"]
+    elif type_filter == "Sell only":
+        filtered = filtered[filtered["transaction_type"] == "sell"]
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        d0, d1 = date_range
+        filtered = filtered[
+            (filtered["transaction_date"].dt.date >= d0) &
+            (filtered["transaction_date"].dt.date <= d1)
+        ]
+
+    # ---- Display ----
+    view = filtered.copy()
+    view["Stock"] = view["stock_name"].apply(short_name)
+    view["Date"] = view["transaction_date"].dt.strftime("%Y-%m-%d")
+    view["Type"] = view["transaction_type"].str.upper()
+    view = view.rename(columns={
+        "quantity": "Qty", "price": "Price", "amount": "Amount", "notes": "Notes",
+    })
+    show_cols = ["Date", "Stock", "Type", "Qty", "Price", "Amount", "Notes"]
+
+    st.caption(f"Showing {len(view)} of {len(tx)} transactions")
+
+    def color_type(v):
+        if v == "BUY":
+            return "background-color: #ecfdf5; color: #065f46; font-weight: 600;"
+        if v == "SELL":
+            return "background-color: #fef2f2; color: #991b1b; font-weight: 600;"
+        return ""
+
+    styled = (
+        view[show_cols].style.format({
+            "Qty": "{:,.0f}", "Price": "₹{:,.2f}", "Amount": "₹{:,.2f}",
+        }, na_rep="—").map(color_type, subset=["Type"])
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=500)
+
+    # ---- Excel export ----
+    st.divider()
+    c1, c2 = st.columns([3, 1])
+    with c2:
+        buf = io.BytesIO()
+        export_df = view[show_cols].copy()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            export_df.to_excel(writer, sheet_name="Transactions", index=False)
+            # Auto-size columns
+            ws = writer.sheets["Transactions"]
+            for col_cells in ws.columns:
+                max_len = max(
+                    (len(str(c.value)) for c in col_cells if c.value is not None),
+                    default=10,
+                )
+                ws.column_dimensions[col_cells[0].column_letter].width = min(max(max_len + 2, 10), 50)
+
+        fname = f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        st.download_button(
+            "⬇️ Download Excel",
+            data=buf.getvalue(),
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True,
+        )
+    with c1:
+        st.caption(
+            "💡 Tip: Use the filters above to narrow down what gets exported. "
+            "Useful for monthly reconciliation with INDmoney, tax filing, or sharing with your CA."
+        )
+
+
 def tab_notes():
     notes = db.get_notes()
 
@@ -772,14 +962,15 @@ def main():
 
     tabs = st.tabs([
         "📊 Holdings", "🥧 Allocation", "👀 Watchlist",
-        "💰 Realised P&L", "📈 History", "📝 Notes",
+        "💰 Realised P&L", "📈 History", "📜 Transactions", "📝 Notes",
     ])
     with tabs[0]: tab_holdings(enriched)
     with tabs[1]: tab_allocation(enriched, k)
     with tabs[2]: tab_watchlist()
     with tabs[3]: tab_realised(realised)
     with tabs[4]: tab_history(k)
-    with tabs[5]: tab_notes()
+    with tabs[5]: tab_transactions()
+    with tabs[6]: tab_notes()
 
 
 if __name__ == "__main__":
