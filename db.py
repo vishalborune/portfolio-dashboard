@@ -51,6 +51,7 @@ def add_holding(stock_name: str, quantity: float, purchase_cost: float,
                 amount_invested: Optional[float] = None,
                 buy_date: Optional[date] = None,
                 notes: Optional[str] = None):
+    """Add a brand-new holding and log the buy transaction."""
     if amount_invested is None:
         amount_invested = round(float(quantity) * float(purchase_cost), 2)
     payload = {
@@ -61,8 +62,22 @@ def add_holding(stock_name: str, quantity: float, purchase_cost: float,
         "buy_date": _iso(buy_date),
         "notes": notes,
     }
-    _client().table("holdings").insert(payload).execute()
+    res = _client().table("holdings").insert(payload).execute()
+    new_id = res.data[0]["id"] if res.data else None
+
+    # Log the buy transaction
+    _insert_transaction(
+        stock_name=stock_name.strip(),
+        transaction_type="buy",
+        quantity=float(quantity),
+        price=float(purchase_cost),
+        amount=float(amount_invested),
+        transaction_date=buy_date or date.today(),
+        notes=notes,
+        holding_id=new_id,
+    )
     _bust()
+    return new_id
 
 
 def update_holding(holding_id: int, **kwargs):
@@ -167,7 +182,7 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
     """Move a holding (or part of it) into the realised table.
 
     If partial_quantity is set and < total, the remaining quantity stays in
-    holdings (so partial sells work).
+    holdings (so partial sells work). Also logs the sell in transactions.
     """
     holdings = get_holdings()
     row = holdings[holdings["id"] == holding_id]
@@ -179,14 +194,41 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
     if sold_qty > total_qty:
         raise ValueError(f"Cannot sell {sold_qty} — only {total_qty} held")
 
-    add_realised(
+    # Insert into realised — capture the id so we can link the transaction
+    invested = round(sold_qty * float(r["purchase_cost"]), 2)
+    sale_amount = round(sold_qty * float(selling_price), 2)
+    gain = round(sale_amount - invested, 2)
+    pct = round(gain / invested, 4) if invested else 0
+    buy_d = _clean_date(r.get("buy_date"))
+    sale_d = _clean_date(sale_date)
+    days = (sale_d - buy_d).days if (buy_d and sale_d) else None
+
+    realised_payload = {
+        "stock_name": r["stock_name"],
+        "quantity": sold_qty,
+        "purchase_cost": float(r["purchase_cost"]),
+        "amount_invested": invested,
+        "selling_price": float(selling_price),
+        "sale_consideration": sale_amount,
+        "gain_loss": gain,
+        "pct_gain_loss": pct,
+        "sale_date": _iso(sale_d),
+        "buy_date": _iso(buy_d),
+        "no_of_days": days,
+    }
+    res = _client().table("realised").insert(realised_payload).execute()
+    realised_id = res.data[0]["id"] if res.data else None
+
+    # Log the sell transaction
+    _insert_transaction(
         stock_name=r["stock_name"],
+        transaction_type="sell",
         quantity=sold_qty,
-        purchase_cost=float(r["purchase_cost"]),
-        selling_price=selling_price,
-        sale_date=sale_date,
-        buy_date=r.get("buy_date"),
-        amount_invested=round(sold_qty * float(r["purchase_cost"]), 2),
+        price=float(selling_price),
+        amount=sale_amount,
+        transaction_date=sale_d or date.today(),
+        notes=f"Sold {'partial' if partial_quantity and sold_qty < total_qty else 'full'} position",
+        realised_id=realised_id,
     )
 
     if sold_qty >= total_qty:
@@ -196,6 +238,8 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
         new_qty = total_qty - sold_qty
         new_invested = round(new_qty * float(r["purchase_cost"]), 2)
         update_holding(holding_id, quantity=new_qty, amount_invested=new_invested)
+
+    _bust()
 
 
 # ===============================================================
@@ -287,3 +331,101 @@ def upsert_snapshot(snap: dict):
     _client().table("snapshots").delete().eq("snapshot_date", today).execute()
     _client().table("snapshots").insert(payload).execute()
     _bust()
+
+
+# ===============================================================
+# TRANSACTIONS  (immutable log of every buy/sell)
+# ===============================================================
+
+def _insert_transaction(stock_name: str, transaction_type: str,
+                        quantity: float, price: float, amount: float,
+                        transaction_date, notes: Optional[str] = None,
+                        holding_id: Optional[int] = None,
+                        realised_id: Optional[int] = None):
+    """Low-level: just append a row to the transactions log."""
+    payload = {
+        "stock_name": stock_name.strip(),
+        "transaction_type": transaction_type,
+        "quantity": float(quantity),
+        "price": float(price),
+        "amount": float(amount),
+        "transaction_date": _iso(transaction_date),
+        "notes": notes,
+        "holding_id": holding_id,
+        "realised_id": realised_id,
+    }
+    _client().table("transactions").insert(payload).execute()
+
+
+@st.cache_data(ttl=30)
+def get_transactions() -> pd.DataFrame:
+    """All transactions, newest first."""
+    res = (_client().table("transactions")
+           .select("*")
+           .order("transaction_date", desc=True)
+           .order("created_at", desc=True)
+           .execute())
+    df = pd.DataFrame(res.data or [])
+    if not df.empty:
+        df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+    return df
+
+
+def delete_transaction(tx_id: int):
+    _client().table("transactions").delete().eq("id", tx_id).execute()
+    _bust()
+
+
+def buy_more(holding_id: int, additional_qty: float, price: float,
+             transaction_date, notes: Optional[str] = None):
+    """Add to an existing holding.
+
+    Recalculates the weighted-average purchase cost, updates the holding,
+    and logs the new buy in the transactions table.
+    """
+    holdings = get_holdings()
+    row = holdings[holdings["id"] == holding_id]
+    if row.empty:
+        raise ValueError(f"Holding {holding_id} not found")
+    r = row.iloc[0]
+
+    old_qty = float(r["quantity"])
+    old_cost = float(r["purchase_cost"])
+    add_qty = float(additional_qty)
+    add_price = float(price)
+
+    if add_qty <= 0 or add_price <= 0:
+        raise ValueError("Quantity and price must be > 0")
+
+    new_qty = old_qty + add_qty
+    # Weighted average cost
+    new_avg = ((old_qty * old_cost) + (add_qty * add_price)) / new_qty
+    new_avg = round(new_avg, 2)
+    new_invested = round(new_qty * new_avg, 2)
+
+    # Update the holding
+    update_holding(
+        holding_id,
+        quantity=new_qty,
+        purchase_cost=new_avg,
+        amount_invested=new_invested,
+    )
+
+    # Log the additional buy
+    _insert_transaction(
+        stock_name=r["stock_name"],
+        transaction_type="buy",
+        quantity=add_qty,
+        price=add_price,
+        amount=round(add_qty * add_price, 2),
+        transaction_date=transaction_date,
+        notes=notes or f"Added to existing position (avg cost {old_cost:.2f} -> {new_avg:.2f})",
+        holding_id=holding_id,
+    )
+    _bust()
+
+    return {
+        "old_qty": old_qty, "old_avg": old_cost,
+        "new_qty": new_qty, "new_avg": new_avg,
+        "new_invested": new_invested,
+    }
