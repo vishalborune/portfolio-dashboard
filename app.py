@@ -334,7 +334,9 @@ def tab_holdings(enriched: pd.DataFrame):
                 detail = detail.rename(columns={"State Display": "State", "State Reason": "Reason"})
                 if "State Priority" in enriched.columns:
                     detail = detail.loc[enriched.sort_values("State Priority").index]
-                st.dataframe(detail, use_container_width=True, hide_index=True)
+                detail = detail.reset_index(drop=True)
+                # st.table wraps long text; st.dataframe clips it inside expanders
+                st.table(detail)
 
     if not can_edit_holdings():
         st.caption("🔒 Read-only view (logged in as friend)")
