@@ -28,6 +28,7 @@ import yfinance as yf
 #     runs without streamlit installed) ---
 CONVERGENCE_BAND_PCT = 2.0
 SWING_WINDOW = 5
+EXIT_HARD_BREAK_PCT = 3.0   # option (a): single close 3%+ below 40W = confirmed exit
 
 STATE_COLORS = {
     "INSUFFICIENT DATA": "#cbd5e1",
@@ -74,7 +75,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         res.append(cur_r)
     out["support"], out["resistance"] = sup, res
 
-    def classify(row):
+    def classify(row, prev):
         if pd.isna(row["support"]) or pd.isna(row["resistance"]):
             return "INSUFFICIENT DATA"
         if row["converging"]:
@@ -83,15 +84,25 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
             if row["close"] > row["resistance"]:
                 return "BULLISH SIGNAL"
             return "WAIT/WATCH"
-        if row["close"] < row["ema40"]:
+        # Trending branch with option-(a) confirmation buffer:
+        below_40 = row["close"] < row["ema40"]
+        hard_break = row["close"] < row["ema40"] * (1 - EXIT_HARD_BREAK_PCT / 100)
+        prev_below_40 = prev is not None and prev["close"] < prev["ema40"]
+        if below_40 and (hard_break or prev_below_40):
             return "EXIT"
+        if below_40:
+            return "BE CAUTIOUS"   # first mild close below 40W = warning week
         if row["close"] < row["ema20"]:
             return "BE CAUTIOUS"
         if row["close"] < row["ema10"]:
             return "MOMENTUM FADING"
         return "MAINTAIN/ADD"
 
-    out["state"] = out.apply(classify, axis=1)
+    states, prev = [], None
+    for _, row in out.iterrows():
+        states.append(classify(row, prev))
+        prev = row
+    out["state"] = states
     return out
 
 
