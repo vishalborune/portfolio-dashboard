@@ -31,6 +31,12 @@ CONVERGENCE_BAND_PCT = 2.0   # Lakshmi's locked number
 SWING_WINDOW = 5             # centered pivot window (weeks)
 MIN_WEEKS_REQUIRED = 45      # need enough history for a meaningful 40W EMA
 
+# EXIT confirmation buffer (Lakshmi's option (a), July 2026):
+# a single weekly close below the 40W EMA is NOT an exit — it takes either
+# two consecutive closes below, or one close this far below in one week.
+EXIT_CONFIRM_WEEKS = 2       # consecutive closes below 40W EMA required
+EXIT_HARD_BREAK_PCT = 3.0    # ...unless a single close is 3%+ below the 40W EMA
+
 STATE_EMOJI = {
     "EXIT": "🔴 EXIT",
     "BULLISH SIGNAL": "🟢 BULLISH SIGNAL",
@@ -126,8 +132,14 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # The flowchart itself
 # ---------------------------------------------------------------------------
 
-def classify_row(row) -> dict:
-    """Run one weekly bar through the flowchart. Returns state + reasons."""
+def classify_row(row, prev_row=None) -> dict:
+    """Run one weekly bar through the flowchart. Returns state + reasons.
+
+    prev_row enables the EXIT confirmation buffer (option (a)):
+    in the trending branch, EXIT fires only if this is the SECOND consecutive
+    close below the 40W EMA, or a single close 3%+ below it. A first, mild
+    close below lands in BE CAUTIOUS instead (warning week).
+    """
     detail = {
         "converging": bool(row["converging"]),
         "ema_spread_pct": round(float(row["ema_spread_pct"]), 2),
@@ -162,9 +174,26 @@ def classify_row(row) -> dict:
                                 f"₹{detail['support']}–₹{detail['resistance']} range")
     else:
         # RIGHT BRANCH — trending
-        if close < row["ema40"]:
+        below_40 = close < row["ema40"]
+        hard_break = close < row["ema40"] * (1 - EXIT_HARD_BREAK_PCT / 100)
+        prev_below_40 = (prev_row is not None
+                         and pd.notna(prev_row.get("ema40"))
+                         and prev_row["close"] < prev_row["ema40"])
+
+        if below_40 and (hard_break or prev_below_40):
             detail["state"] = "EXIT"
-            detail["reason"] = f"Close ₹{detail['close']} broke below 40-wk EMA ₹{detail['ema40']}"
+            if hard_break:
+                detail["reason"] = (f"Close ₹{detail['close']} is {EXIT_HARD_BREAK_PCT}%+ below the "
+                                    f"40-wk EMA ₹{detail['ema40']} — hard break, exit confirmed")
+            else:
+                detail["reason"] = (f"Second consecutive weekly close below the 40-wk EMA "
+                                    f"(₹{detail['close']} vs ₹{detail['ema40']}) — exit confirmed")
+        elif below_40:
+            # First mild close below 40W — warning week, not exit yet
+            detail["state"] = "BE CAUTIOUS"
+            detail["reason"] = (f"⚠️ First weekly close below the 40-wk EMA "
+                                f"(₹{detail['close']} vs ₹{detail['ema40']}) — one more weekly close "
+                                f"below, or a 3%+ break, confirms EXIT")
         elif close < row["ema20"]:
             detail["state"] = "BE CAUTIOUS"
             detail["reason"] = (f"Close ₹{detail['close']} below 20-wk EMA ₹{detail['ema20']} "
@@ -185,10 +214,12 @@ def classify_series(df: pd.DataFrame) -> pd.DataFrame:
     """Classify every bar in a weekly frame. Adds 'state' and 'reason' columns."""
     ind = compute_indicators(df)
     states, reasons = [], []
+    prev = None
     for _, row in ind.iterrows():
-        d = classify_row(row)
+        d = classify_row(row, prev_row=prev)
         states.append(d["state"])
         reasons.append(d["reason"])
+        prev = row
     ind["state"] = states
     ind["reason"] = reasons
     return ind
@@ -203,7 +234,8 @@ def current_state(ticker: str) -> dict:
                           else f"Only {len(df)} weeks of history (need {MIN_WEEKS_REQUIRED}+)",
                 "ticker": ticker}
     ind = compute_indicators(df)
-    d = classify_row(ind.iloc[-1])
+    prev = ind.iloc[-2] if len(ind) >= 2 else None
+    d = classify_row(ind.iloc[-1], prev_row=prev)
     d["ticker"] = ticker
     d["as_of"] = str(ind["date"].iloc[-1].date()) if hasattr(ind["date"].iloc[-1], "date") else str(ind["date"].iloc[-1])
     return d
