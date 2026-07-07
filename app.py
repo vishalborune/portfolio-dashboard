@@ -23,6 +23,8 @@ import streamlit as st
 import yfinance as yf
 
 import db
+import signals
+import xirr
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -210,6 +212,11 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(prices, on="Ticker", how="left")
     df = df.merge(fundamentals, on="Ticker", how="left")
 
+    # Flowchart states (Lakshmi's TheWrap TA rules) — one per ticker
+    with st.spinner("Computing flowchart states (weekly TA)..."):
+        states = signals.states_for_holdings(tickers)
+    df = df.merge(states, on="Ticker", how="left")
+
     df["quantity"] = df["quantity"].astype(float)
     df["purchase_cost"] = df["purchase_cost"].astype(float)
     df["Current Value"] = df["CMP"] * df["quantity"]
@@ -271,18 +278,44 @@ def tab_holdings(enriched: pd.DataFrame):
     if enriched.empty:
         st.info("No holdings yet. Add your first one below 👇")
     else:
+        # --- Action-needed banner (states that demand attention) ---
+        if "State" in enriched.columns:
+            urgent = enriched[enriched["State"].isin(["EXIT", "BE CAUTIOUS"])]
+            fading = enriched[enriched["State"] == "MOMENTUM FADING"]
+            if not urgent.empty:
+                names = ", ".join(urgent["Short Name"].tolist())
+                st.error(f"🚨 **Action needed** — {names} "
+                         f"({len(urgent)} holding{'s' if len(urgent) > 1 else ''} in EXIT / BE CAUTIOUS state)")
+            if not fading.empty:
+                names = ", ".join(fading["Short Name"].tolist())
+                st.warning(f"🟣 **Momentum fading** — {names}")
+
         sort_by = st.selectbox(
             "Sort by",
-            ["Day Change %", "P&L %", "P&L", "Allocation %", "Current Value", "Short Name"],
+            ["State (urgent first)", "Day Change %", "P&L %", "P&L",
+             "Allocation %", "Current Value", "Short Name"],
             index=0, key="holdings_sort",
         )
-        ascending = sort_by == "Short Name"
-        view = enriched[[
-            "Short Name", "Ticker", "quantity", "purchase_cost", "CMP",
+        view_cols = [
+            "Short Name", "Ticker", "State Display", "quantity", "purchase_cost", "CMP",
             "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
             "Sector", "Market Cap (Cr)", "PE (live)",
-        ]].rename(columns={"quantity": "Qty", "purchase_cost": "Avg Cost"})
-        view = view.sort_values(sort_by, ascending=ascending, na_position="last")
+        ]
+        view_cols = [c for c in view_cols if c in enriched.columns or c in ("State Display",)]
+        sort_col_map = {"State (urgent first)": "State Priority"}
+        actual_sort = sort_col_map.get(sort_by, sort_by)
+        ascending = sort_by in ("Short Name", "State (urgent first)")
+
+        view = enriched[[c for c in view_cols if c in enriched.columns]
+                        + (["State Priority"] if "State Priority" in enriched.columns else [])].copy()
+        view = view.rename(columns={"quantity": "Qty", "purchase_cost": "Avg Cost",
+                                     "State Display": "State"})
+        if actual_sort in ("State Priority",) and "State Priority" in view.columns:
+            view = view.sort_values("State Priority", ascending=True, na_position="last")
+        elif actual_sort in view.columns:
+            view = view.sort_values(actual_sort, ascending=ascending, na_position="last")
+        view = view.drop(columns=[c for c in ["State Priority"] if c in view.columns])
+
         styled = (
             view.style.format({
                 "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "CMP": "₹{:,.2f}",
@@ -293,6 +326,15 @@ def tab_holdings(enriched: pd.DataFrame):
             }, na_rep="—").map(color_pnl, subset=["Day Change %", "P&L", "P&L %"])
         )
         st.dataframe(styled, use_container_width=True, height=520, hide_index=True)
+
+        # --- State detail expander: why is each stock in its state? ---
+        if "State Reason" in enriched.columns:
+            with st.expander("🔍 Why is each stock in its state? (flowchart detail)"):
+                detail = enriched[["Short Name", "State Display", "State Reason"]].copy()
+                detail = detail.rename(columns={"State Display": "State", "State Reason": "Reason"})
+                if "State Priority" in enriched.columns:
+                    detail = detail.loc[enriched.sort_values("State Priority").index]
+                st.dataframe(detail, use_container_width=True, hide_index=True)
 
     if not can_edit_holdings():
         st.caption("🔒 Read-only view (logged in as friend)")
@@ -950,13 +992,25 @@ def main():
                 f"Updated {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
 
     # KPI cards
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Invested", fmt_inr(k["invested"]))
     c2.metric("Current Value", fmt_inr(k["current"]), fmt_pct(k["unrealised_pct"]))
     c3.metric("Unrealised P&L", fmt_inr(k["unrealised"]), fmt_pct(k["unrealised_pct"]))
     day_pct = (k["day_pnl"] / k["current"] * 100) if k["current"] else 0
     c4.metric("Today's P&L", fmt_inr(k["day_pnl"]), fmt_pct(day_pct))
     c5.metric("Realised P&L", fmt_inr(k["realised"]))
+
+    # Live XIRR from transactions log
+    try:
+        tx = db.get_transactions()
+        xr = xirr.compute_xirr(tx, k["current"])
+        if xr.get("xirr") is not None:
+            c6.metric("XIRR (annualised)", f"{xr['xirr']*100:.2f}%",
+                       help=f"Computed from {xr['n_flows']} cash flows since {xr['first_date']}")
+        else:
+            c6.metric("XIRR", "—", help=xr.get("reason", ""))
+    except Exception:
+        c6.metric("XIRR", "—", help="Transactions table unavailable")
 
     st.divider()
 
