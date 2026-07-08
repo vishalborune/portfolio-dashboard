@@ -336,19 +336,25 @@ def tab_holdings(enriched: pd.DataFrame):
                 return "color: #d97706;"                        # stretched
             return "color: #dc2626;"                            # very extended — don't chase
 
-        styled = (
-            view.style.format({
-                "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
-                "CMP": "₹{:,.2f}",
-                "% from 10wEMA": "{:+.1f}%",
-                "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
-                "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
-                "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
-                "PE (live)": "{:.2f}",
-            }, na_rep="—")
-            .map(color_pnl, subset=["Day Change %", "P&L", "P&L %"])
-            .map(color_ema_distance, subset=["% from 10wEMA"])
-        )
+        # Only style/format columns that actually exist — signals data can be
+        # partially unavailable (yfinance hiccup, stale cache), and a styler
+        # subset referencing a missing column raises KeyError.
+        pnl_cols = [c for c in ["Day Change %", "P&L", "P&L %"] if c in view.columns]
+        ema_cols = [c for c in ["% from 10wEMA"] if c in view.columns]
+
+        styled = view.style.format({
+            "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
+            "CMP": "₹{:,.2f}",
+            "% from 10wEMA": "{:+.1f}%",
+            "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
+            "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
+            "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
+            "PE (live)": "{:.2f}",
+        }, na_rep="—")
+        if pnl_cols:
+            styled = styled.map(color_pnl, subset=pnl_cols)
+        if ema_cols:
+            styled = styled.map(color_ema_distance, subset=ema_cols)
         st.dataframe(styled, use_container_width=True, height=520, hide_index=True)
 
         # --- State detail expander: why is each stock in its state? ---
