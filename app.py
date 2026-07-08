@@ -217,6 +217,11 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
         states = signals.states_for_holdings(tickers)
     df = df.merge(states, on="Ticker", how="left")
 
+    # % distance of LIVE price from the 10-week EMA (add-timing helper):
+    # +20% = price 20% above the 10wEMA (extended); -10% = 10% below it.
+    if "EMA10" in df.columns:
+        df["% from 10wEMA"] = (df["CMP"] - df["EMA10"]) / df["EMA10"] * 100
+
     df["quantity"] = df["quantity"].astype(float)
     df["purchase_cost"] = df["purchase_cost"].astype(float)
     df["Current Value"] = df["CMP"] * df["quantity"]
@@ -292,12 +297,13 @@ def tab_holdings(enriched: pd.DataFrame):
 
         sort_by = st.selectbox(
             "Sort by",
-            ["State (urgent first)", "Day Change %", "P&L %", "P&L",
+            ["State (urgent first)", "% from 10wEMA", "Invested", "Day Change %", "P&L %", "P&L",
              "Allocation %", "Current Value", "Short Name"],
             index=0, key="holdings_sort",
         )
         view_cols = [
-            "Short Name", "Ticker", "State Display", "quantity", "purchase_cost", "CMP",
+            "Short Name", "Ticker", "State Display", "% from 10wEMA",
+            "quantity", "purchase_cost", "Invested", "CMP",
             "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
             "Sector", "Market Cap (Cr)", "PE (live)",
         ]
@@ -316,14 +322,32 @@ def tab_holdings(enriched: pd.DataFrame):
             view = view.sort_values(actual_sort, ascending=ascending, na_position="last")
         view = view.drop(columns=[c for c in ["State Priority"] if c in view.columns])
 
+        def color_ema_distance(val):
+            """Near/below the 10wEMA = add zone (green); far above = extended (amber/red)."""
+            if pd.isna(val):
+                return "color: #888;"
+            if val <= 0:
+                return "color: #16a34a; font-weight: 600;"     # at/below EMA — prime add zone
+            if val <= 5:
+                return "color: #16a34a;"                        # close to EMA — good
+            if val <= 12:
+                return "color: #64748b;"                        # normal trend distance
+            if val <= 20:
+                return "color: #d97706;"                        # stretched
+            return "color: #dc2626;"                            # very extended — don't chase
+
         styled = (
             view.style.format({
-                "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "CMP": "₹{:,.2f}",
+                "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
+                "CMP": "₹{:,.2f}",
+                "% from 10wEMA": "{:+.1f}%",
                 "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
                 "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
                 "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
                 "PE (live)": "{:.2f}",
-            }, na_rep="—").map(color_pnl, subset=["Day Change %", "P&L", "P&L %"])
+            }, na_rep="—")
+            .map(color_pnl, subset=["Day Change %", "P&L", "P&L %"])
+            .map(color_ema_distance, subset=["% from 10wEMA"])
         )
         st.dataframe(styled, use_container_width=True, height=520, hide_index=True)
 
