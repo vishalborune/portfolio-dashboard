@@ -253,5 +253,8 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
             "State Display": STATE_EMOJI.get(d["state"], d["state"]),
             "State Reason": d.get("reason", ""),
             "State Priority": STATE_PRIORITY.get(d["state"], 9),
+            "EMA10": d.get("ema10"),
+            "EMA20": d.get("ema20"),
+            "EMA40": d.get("ema40"),
         })
     return pd.DataFrame(rows)
