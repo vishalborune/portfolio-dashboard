@@ -17,33 +17,62 @@ import os
 import requests
 
 TG_API = "https://api.telegram.org/bot{token}/sendMessage"
+TG_MAX_LEN = 3500   # Telegram hard limit is 4096; keep headroom for HTML tags
+
+
+def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
+    """Split a long message into chunks on blank-line boundaries."""
+    if len(text) <= max_len:
+        return [text]
+    chunks, current = [], ""
+    for block in text.split("\n\n"):
+        candidate = (current + "\n\n" + block) if current else block
+        if len(candidate) > max_len:
+            if current:
+                chunks.append(current)
+            # single block itself longer than the limit — hard-split it
+            while len(block) > max_len:
+                chunks.append(block[:max_len])
+                block = block[max_len:]
+            current = block
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def send_telegram(text: str) -> bool:
-    """Send a message to the configured Telegram group. Returns success."""
+    """Send a message to the configured Telegram group, auto-splitting if long."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
         return False
-    try:
-        r = requests.post(
-            TG_API.format(token=token),
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=15,
-        )
-        if r.status_code != 200:
-            print(f"⚠️ Telegram send failed: {r.status_code} {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        print(f"⚠️ Telegram send error: {e}")
-        return False
+    chunks = _chunk_message(text)
+    ok_all = True
+    for i, chunk in enumerate(chunks, 1):
+        if len(chunks) > 1:
+            chunk = f"({i}/{len(chunks)})\n" + chunk
+        try:
+            r = requests.post(
+                TG_API.format(token=token),
+                json={
+                    "chat_id": chat_id,
+                    "text": chunk,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            if r.status_code != 200:
+                print(f"⚠️ Telegram send failed (chunk {i}/{len(chunks)}): "
+                      f"{r.status_code} {r.text[:200]}")
+                ok_all = False
+        except Exception as e:
+            print(f"⚠️ Telegram send error (chunk {i}): {e}")
+            ok_all = False
+    return ok_all
 
 
 def send_email(subject: str, html: str) -> bool:
