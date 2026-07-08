@@ -1,0 +1,61 @@
+# .github/workflows/alerts.yml
+# The alert engine scheduler. All times below are UTC (IST = UTC+5:30).
+#   Market hours 9:15-15:30 IST  =  3:45-10:00 UTC
+name: Portfolio Alerts
+
+on:
+  schedule:
+    # State checks: every 30 min, 3:45-10:15 UTC, Mon-Fri (market hours IST)
+    - cron: "45 3 * * 1-5"
+    - cron: "15,45 4-9 * * 1-5"
+    - cron: "15 10 * * 1-5"
+    # Filings check: every 3 hours on weekdays
+    - cron: "0 4,7,10,13 * * 1-5"
+    # Results calendar: Monday 3:00 UTC (8:30 AM IST)
+    - cron: "0 3 * * 1"
+    # Sunday digest: 14:30 UTC (8:00 PM IST)
+    - cron: "30 14 * * 0"
+  workflow_dispatch:      # manual "Run workflow" button for testing
+    inputs:
+      mode:
+        description: "states | filings | calendar | digest"
+        default: "states"
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy yfinance supabase requests
+
+      - name: Decide mode from schedule
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "30 14 * * 0" ]; then
+            echo "mode=digest" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
+            echo "mode=calendar" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.schedule }}" = "0 4,7,10,13 * * 1-5" ]; then
+            echo "mode=filings" >> $GITHUB_OUTPUT
+          else
+            echo "mode=states" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run alert engine
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DIGEST_EMAILS: ${{ secrets.DIGEST_EMAILS }}
+        run: python alerts.py ${{ steps.mode.outputs.mode }}
