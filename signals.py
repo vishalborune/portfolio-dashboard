@@ -24,8 +24,18 @@ Flowchart:
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-import streamlit as st
 import yfinance as yf
+
+# signals.py is shared by the Streamlit dashboard AND the headless alert
+# engine (GitHub Actions). Streamlit may not be installed in the latter.
+try:
+    import streamlit as st
+    _cache = st.cache_data
+except ImportError:
+    def _cache(**kwargs):
+        def deco(fn):
+            return fn
+        return deco
 
 CONVERGENCE_BAND_PCT = 2.0   # Lakshmi's locked number
 SWING_WINDOW = 5             # centered pivot window (weeks)
@@ -65,7 +75,7 @@ STATE_PRIORITY = {
 # Data fetch
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=60 * 60 * 4)  # weekly bars barely change intraday; 4h cache
+@_cache(ttl=60 * 60 * 4)  # weekly bars barely change intraday; 4h cache
 def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
     """Weekly OHLCV for one ticker. Empty df on failure."""
     try:
@@ -91,11 +101,19 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add EMAs, convergence flag, swing S/R to a weekly OHLCV frame."""
+    """Add EMAs, convergence flag, swing S/R, volume ratio to a weekly OHLCV frame."""
     out = df.copy()
     out["ema10"] = out["close"].ewm(span=10, adjust=False).mean()
     out["ema20"] = out["close"].ewm(span=20, adjust=False).mean()
     out["ema40"] = out["close"].ewm(span=40, adjust=False).mean()
+
+    # Volume layer: this week's volume vs its 20-week average
+    if "volume" in out.columns:
+        out["vol_avg20"] = out["volume"].rolling(20).mean()
+        out["vol_ratio"] = out["volume"] / out["vol_avg20"]
+    else:
+        out["vol_avg20"] = np.nan
+        out["vol_ratio"] = np.nan
 
     ema_stack = out[["ema10", "ema20", "ema40"]]
     out["ema_spread_pct"] = (
@@ -148,6 +166,7 @@ def classify_row(row, prev_row=None) -> dict:
         "ema20": round(float(row["ema20"]), 2),
         "ema40": round(float(row["ema40"]), 2),
         "support": round(float(row["support"]), 2) if pd.notna(row["support"]) else None,
+        "vol_ratio": round(float(row["vol_ratio"]), 2) if ("vol_ratio" in row and pd.notna(row["vol_ratio"])) else None,
         "resistance": round(float(row["resistance"]), 2) if pd.notna(row["resistance"]) else None,
     }
 
@@ -241,7 +260,7 @@ def current_state(ticker: str) -> dict:
     return d
 
 
-@st.cache_data(ttl=60 * 60 * 4)
+@_cache(ttl=60 * 60 * 4)
 def states_for_holdings(tickers: tuple) -> pd.DataFrame:
     """Compute the current flowchart state for every holding. One row per ticker."""
     rows = []
@@ -256,5 +275,6 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
             "EMA10": d.get("ema10"),
             "EMA20": d.get("ema20"),
             "EMA40": d.get("ema40"),
+            "Vol vs 20wk": d.get("vol_ratio"),
         })
     return pd.DataFrame(rows)
