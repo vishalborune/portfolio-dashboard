@@ -75,12 +75,12 @@ def vol_context(vol_ratio) -> str:
     if vol_ratio is None or pd.isna(vol_ratio):
         return ""
     if vol_ratio >= 2.0:
-        return f"\nVolume: <b>{vol_ratio:.1f}x</b> 20-wk avg — heavy, institutions likely active"
+        return f"\nVolume: <b>{vol_ratio:.1f}x</b> 10-wk avg — heavy, institutions likely active"
     if vol_ratio >= 1.5:
-        return f"\nVolume: <b>{vol_ratio:.1f}x</b> 20-wk avg — elevated"
+        return f"\nVolume: <b>{vol_ratio:.1f}x</b> 10-wk avg — elevated"
     if vol_ratio <= 0.6:
-        return f"\nVolume: {vol_ratio:.1f}x 20-wk avg — quiet (weak-hands move?)"
-    return f"\nVolume: {vol_ratio:.1f}x 20-wk avg"
+        return f"\nVolume: {vol_ratio:.1f}x 10-wk avg — quiet (weak-hands move?)"
+    return f"\nVolume: {vol_ratio:.1f}x 10-wk avg"
 
 
 def run_states():
