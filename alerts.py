@@ -41,7 +41,22 @@ def sb():
 
 def get_holdings(client) -> pd.DataFrame:
     res = client.table("holdings").select("*").execute()
-    return pd.DataFrame(res.data or [])
+    df = pd.DataFrame(res.data or [])
+    if not df.empty and "portfolio_id" not in df.columns:
+        df["portfolio_id"] = 1
+    return df
+
+
+# Portfolio -> owner group -> Telegram chat routing
+PF_GROUP = {1: "vishal", 2: "lakshmi", 3: "lakshmi"}
+PF_NAME = {1: "Vishal", 2: "Lakshmi", 3: "Abinaya"}
+
+
+def chat_id_for_group(group: str):
+    import os as _os
+    if group == "lakshmi":
+        return _os.environ.get("TELEGRAM_CHAT_ID_LAKSHMI")
+    return _os.environ.get("TELEGRAM_CHAT_ID")
 
 
 def extract_yf_ticker(name: str):
@@ -90,52 +105,85 @@ def run_states():
         print("No holdings.")
         return
 
-    # Last known states
-    prev = {r["ticker"]: r["state"]
-            for r in (client.table("alert_state").select("*").execute().data or [])}
+    # Last known states, keyed (ticker, portfolio)
+    prev_rows = client.table("alert_state").select("*").execute().data or []
+    prev = {(r["ticker"], r.get("portfolio_id", 1)): r["state"] for r in prev_rows}
 
-    changes, errors = [], 0
+    # Compute each ticker ONCE, alert per portfolio that holds it
+    state_cache = {}
+    pending, changes_by_group, errors = {}, {}, 0
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
         if not ticker:
             continue
-        try:
-            d = signals.current_state(ticker)
-        except Exception as e:
-            errors += 1
-            print(f"⚠️ {ticker}: {e}")
+        pf = int(h.get("portfolio_id", 1))
+        group = PF_GROUP.get(pf, "vishal")
+        if ticker not in state_cache:
+            try:
+                state_cache[ticker] = signals.current_state(ticker)
+            except Exception as e:
+                errors += 1
+                print(f"⚠️ {ticker}: {e}")
+                continue
+        d = state_cache.get(ticker)
+        if not d:
             continue
 
         state = d["state"]
-        old = prev.get(ticker)
+        old = prev.get((ticker, pf))
         if old != state and state in ALERT_WORTHY:
-            name = short_name(h["stock_name"])
-            icon = STATE_ICON.get(state, "•")
-            msg = (f"{icon} <b>{name}</b> → <b>{state}</b>"
-                   + (f"\n(was {old})" if old else "")
-                   + f"\n{d.get('reason','')}"
-                   + vol_context(d.get("vol_ratio")))
-            # BULLISH SIGNAL volume-confirmation layer
-            if state == "BULLISH SIGNAL":
-                vr = d.get("vol_ratio")
-                if vr is not None and not pd.isna(vr):
-                    if vr >= 1.5:
-                        msg += "\n✅ Breakout volume-CONFIRMED — full size per rules"
-                    else:
-                        msg += "\n⚠️ Breakout on weak volume — half size per rules"
-            changes.append(msg)
+            # Aggregate per (group, ticker): one alert per stock per group,
+            # even when multiple household portfolios hold it.
+            key = (group, ticker)
+            entry = pending.setdefault(key, {
+                "name": short_name(h["stock_name"]), "d": d,
+                "state": state, "pfs": [], "olds": [],
+            })
+            entry["pfs"].append(pf)
+            entry["olds"].append(old)
 
-        # Upsert latest state regardless (so first run seeds silently next time)
         client.table("alert_state").upsert({
-            "ticker": ticker, "state": state,
+            "ticker": ticker, "portfolio_id": pf, "state": state,
             "reason": d.get("reason", ""),
             "updated_at": datetime.utcnow().isoformat(),
         }).execute()
 
-    if changes:
+    # Format one message per (group, ticker)
+    for (group, ticker), e in pending.items():
+        d, state = e["d"], e["state"]
+        icon = STATE_ICON.get(state, "•")
+        if group == "lakshmi":
+            uniq_pfs = sorted(set(e["pfs"]))
+            tag = "[Both] " if len(uniq_pfs) > 1 else f"[{PF_NAME.get(uniq_pfs[0], uniq_pfs[0])}] "
+        else:
+            tag = ""
+        olds = {o for o in e["olds"] if o}
+        was = f"\n(was {olds.pop()})" if len(olds) == 1 else ""
+        msg = (f"{icon} {tag}<b>{e['name']}</b> → <b>{state}</b>"
+               + was
+               + f"\n{d.get('reason','')}"
+               + vol_context(d.get("vol_ratio")))
+        if state == "BULLISH SIGNAL":
+            vr = d.get("vol_ratio")
+            if vr is not None and not pd.isna(vr):
+                if vr >= 1.5:
+                    msg += "\n✅ Breakout volume-CONFIRMED — full size per rules"
+                else:
+                    msg += "\n⚠️ Breakout on weak volume — half size per rules"
+        changes_by_group.setdefault(group, []).append(msg)
+
+    sent = 0
+    for group, changes in changes_by_group.items():
+        chat = chat_id_for_group(group)
+        if not chat:
+            print(f"⚠️ No Telegram chat configured for group '{group}' "
+                  f"({len(changes)} alert(s) dropped)")
+            continue
         header = f"📊 <b>State changes</b> · {date.today().strftime('%d %b %Y')}\n\n"
-        send_telegram(header + "\n\n".join(changes))
-        print(f"Sent {len(changes)} state-change alert(s).")
+        send_telegram(header + "\n\n".join(changes), chat_id=chat)
+        sent += len(changes)
+    if sent:
+        print(f"Sent {sent} state-change alert(s) across {len(changes_by_group)} group(s).")
     else:
         print(f"No state changes. ({len(holdings)} holdings checked, {errors} fetch errors)")
 
@@ -219,13 +267,20 @@ def run_filings():
     seen = {r["fingerprint"]
             for r in (client.table("filings_seen").select("fingerprint").execute().data or [])}
 
-    alerts = []
+    alerts_by_group = {}
+    seen_syms = set()
     for _, h in holdings.iterrows():
         name = h["stock_name"]
         m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(name))
         if not m:
             continue
         exch, sym = m.group(1), m.group(2).strip()
+        holder_groups = {PF_GROUP.get(int(hh.get("portfolio_id", 1)), "vishal")
+                          for _, hh in holdings.iterrows()
+                          if str(hh["stock_name"]) == str(name)}
+        if sym in seen_syms:
+            continue
+        seen_syms.add(sym)
         anns = (fetch_nse_announcements(sym) if exch == "XNSE"
                 else fetch_bse_announcements(sym))
 
@@ -238,19 +293,27 @@ def run_filings():
             fp = _fingerprint(sym, a["headline"], a["date"])
             if fp in seen:
                 continue
-            alerts.append(
-                f"📢 <b>{short_name(name)}</b>: {a['headline'][:200]}"
-                f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>"
-            )
+            for g in holder_groups:
+                alerts_by_group.setdefault(g, []).append(
+                    f"📢 <b>{short_name(name)}</b>: {a['headline'][:200]}"
+                    f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>"
+                )
             client.table("filings_seen").insert({
                 "fingerprint": fp, "ticker": sym,
                 "headline": a["headline"][:300], "filing_date": a["date"] or None,
             }).execute()
             seen.add(fp)
 
-    if alerts:
-        send_telegram("🗞 <b>Exchange filings</b>\n\n" + "\n\n".join(alerts[:15]))
-        print(f"Sent {len(alerts)} filing alert(s).")
+    total = 0
+    for g, alerts in alerts_by_group.items():
+        chat = chat_id_for_group(g)
+        if not chat:
+            continue
+        send_telegram("🗞 <b>Exchange filings</b>\n\n" + "\n\n".join(alerts[:15]),
+                      chat_id=chat)
+        total += len(alerts)
+    if total:
+        print(f"Sent {total} filing alert(s).")
     else:
         print("No new material filings.")
 
@@ -298,10 +361,18 @@ def run_calendar():
 
 def run_digest():
     client = sb()
-    holdings = get_holdings(client)
-    if holdings.empty:
+    all_holdings = get_holdings(client)
+    if all_holdings.empty:
         return
+    # One digest per owner group, sent to that group's recipients
+    for group in sorted({PF_GROUP.get(int(p), "vishal")
+                          for p in all_holdings.get("portfolio_id", pd.Series([1]))}):
+        pf_ids = [p for p, g in PF_GROUP.items() if g == group]
+        _digest_for(client, all_holdings[all_holdings["portfolio_id"].isin(pf_ids)], group)
 
+
+def _digest_for(client, holdings, group):
+    import os as _os
     rows, exits, cautions, adds = [], [], [], []
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
@@ -312,6 +383,8 @@ def run_digest():
         except Exception:
             continue
         name = short_name(h["stock_name"])
+        if group == "lakshmi":
+            name = f"[{PF_NAME.get(int(h.get('portfolio_id', 2)), '?')}] {name}"
         st_ = d["state"]
         rows.append((name, st_, d.get("reason", "")))
         if st_ == "EXIT":
@@ -352,8 +425,15 @@ def run_digest():
         buffered EXIT) · data via yfinance weekly bars</p>
     </div>"""
 
+    to_env = "DIGEST_EMAILS_LAKSHMI" if group == "lakshmi" else "DIGEST_EMAILS"
+    recipients = _os.environ.get(to_env, "")
+    if not recipients:
+        print(f"(digest for '{group}' skipped — {to_env} not set)")
+        return
+    _os.environ["DIGEST_EMAILS"], _saved = recipients, _os.environ.get("DIGEST_EMAILS", "")
     send_email(f"Portfolio Weekly Digest — {date.today().strftime('%d %b')}", html)
-    print(f"Digest sent: {len(rows)} holdings, {len(exits)} exits, {len(cautions)} cautions.")
+    _os.environ["DIGEST_EMAILS"] = _saved
+    print(f"Digest [{group}]: {len(rows)} holdings, {len(exits)} exits, {len(cautions)} cautions.")
 
 
 # ---------------------------------------------------------------------------
