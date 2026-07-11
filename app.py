@@ -359,10 +359,14 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
                 "Industry": info.get("industry") or "Unknown",
                 "Market Cap (Cr)": (info.get("marketCap") or 0) / 1e7,
                 "PE (live)": info.get("trailingPE"),
+                "P/B": info.get("priceToBook"),
+                "EV/EBITDA": info.get("enterpriseToEbitda"),
+                "PEG": info.get("trailingPegRatio") or info.get("pegRatio"),
             })
         except Exception:
             rows.append({"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
-                         "Market Cap (Cr)": np.nan, "PE (live)": np.nan})
+                         "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
+                         "P/B": np.nan, "EV/EBITDA": np.nan, "PEG": np.nan})
     return pd.DataFrame(rows)
 
 
@@ -496,13 +500,13 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🔬 Fundamentals view": [
                 "Short Name", "Ticker", "CMP", "Sector", "Market Cap (Cr)",
-                "PE (live)", "Allocation %",
+                "PE (live)", "P/B", "EV/EBITDA", "PEG", "Allocation %",
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 10wk",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
-                "Sector", "Market Cap (Cr)", "PE (live)",
+                "Sector", "Market Cap (Cr)", "PE (live)", "P/B", "EV/EBITDA", "PEG",
             ],
         }
 
@@ -541,12 +545,10 @@ def tab_holdings(enriched: pd.DataFrame):
             """Near/below the 10wEMA = add zone (green); far above = extended (amber/red)."""
             if pd.isna(val):
                 return "color: #888;"
-            if val <= 0:
-                return "color: #16a34a; font-weight: 600;"     # at/below EMA — prime add zone
-            if val <= 5:
-                return "color: #16a34a;"                        # close to EMA — good
+            if val < 0:
+                return "color: #dc2626; font-weight: 600;"      # below 10wEMA — weakness
             if val <= 12:
-                return "color: #64748b;"                        # normal trend distance
+                return "color: #16a34a;"                        # healthy trend distance
             if val <= 20:
                 return "color: #d97706;"                        # stretched
             return "color: #dc2626;"                            # very extended — don't chase
@@ -564,7 +566,7 @@ def tab_holdings(enriched: pd.DataFrame):
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
-            "PE (live)": "{:.2f}",
+            "PE (live)": "{:.2f}", "P/B": "{:.2f}", "EV/EBITDA": "{:.2f}", "PEG": "{:.2f}",
         }, na_rep="—")
         if pnl_cols:
             styled = styled.map(color_pnl, subset=pnl_cols)
