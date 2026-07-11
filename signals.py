@@ -264,6 +264,10 @@ def current_state(ticker: str) -> dict:
 @_cache(ttl=60 * 60 * 4)
 def states_for_holdings(tickers: tuple) -> pd.DataFrame:
     """Compute the current flowchart state for every holding. One row per ticker."""
+    _cols = ["Ticker", "State", "State Display", "State Reason", "State Priority",
+             "EMA10", "EMA20", "EMA40", "Vol vs 10wk"]
+    if not tickers:
+        return pd.DataFrame(columns=_cols)
     rows = []
     for t in tickers:
         d = current_state(t)
