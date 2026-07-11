@@ -1231,6 +1231,9 @@ def main():
 
     st.sidebar.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
     st.sidebar.caption(f"Prices cached: {PRICE_CACHE_TTL // 60} min")
+    st.sidebar.toggle("🔍 Price diagnostics", value=False, key="show_price_diag",
+                       help="Per-stock price source and date — for debugging "
+                            "when numbers look off vs INDmoney.")
 
     # Load data from Supabase
     try:
@@ -1278,9 +1281,11 @@ def main():
             f"Usually self-corrects within a few hours; try 🔄 Refresh prices later."
         )
 
-    # Per-stock price provenance — where did each CMP come from, and what date?
-    if not enriched.empty and "Price Source" in enriched.columns:
-        with st.expander("🔍 Price data diagnostics (per stock)"):
+    # Per-stock price provenance — hidden by default; enable from the sidebar
+    # when something looks off (the ⚠️ banner above fires automatically anyway).
+    if (st.session_state.get("show_price_diag")
+            and not enriched.empty and "Price Source" in enriched.columns):
+        with st.expander("🔍 Price data diagnostics (per stock)", expanded=True):
             diag = enriched[["Short Name", "CMP", "Price Source", "Price Date"]].copy()
             diag = diag.rename(columns={"Price Date": "Daily-bar date"})
             st.caption(f"Expected latest close date: **{last_expected_close_date()}** · "
