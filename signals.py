@@ -283,3 +283,64 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
             "Vol vs 10wk": d.get("vol_ratio"),
         })
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# DAILY ENTRY TRANCHES (Lakshmi's staged-entry system for WATCHLIST stocks)
+# 1st tranche: price pulls back to the 10-day EMA
+# 2nd (final) tranche: price pulls back to the 21-day EMA
+# After entry the position moves to the portfolio, where the weekly system
+# (10wEMA ≈ 50DMA) governs holding and exits.
+# ---------------------------------------------------------------------------
+
+TOUCH_BAND = 0.005   # close within ±0.5% of the EMA, or intraday low pierces it
+
+
+def daily_entry_state(ticker: str) -> dict | None:
+    """Entry-tranche status off daily bars. None if data unavailable."""
+    try:
+        df = yf.download(ticker, period="6mo", interval="1d",
+                          progress=False, auto_adjust=False)
+        if df is None or len(df) < 30:
+            return None
+        close = df["Close"].dropna()
+        if hasattr(close, "columns"):        # multi-index from yf
+            close = close.iloc[:, 0]
+        low = df["Low"].dropna()
+        if hasattr(low, "columns"):
+            low = low.iloc[:, 0]
+        ema10 = close.ewm(span=10, adjust=False).mean().iloc[-1]
+        ema21 = close.ewm(span=21, adjust=False).mean().iloc[-1]
+        cmp_ = float(close.iloc[-1])
+        day_low = float(low.iloc[-1])
+
+        def touching(ema):
+            # intraday low pierced the EMA, or close sits within the band
+            return day_low <= ema or abs(cmp_ / ema - 1) <= TOUCH_BAND
+
+        pct10 = (cmp_ / ema10 - 1) * 100
+        pct21 = (cmp_ / ema21 - 1) * 100
+
+        if cmp_ < ema21 * (1 - TOUCH_BAND):
+            zone, advice = "BELOW 21DMA", "🔴 Below both — no add, wait for repair"
+        elif touching(ema21):
+            zone, advice = "TRANCHE 2", "🎯 At 21DMA — 2nd & FINAL tranche zone"
+        elif touching(ema10):
+            zone, advice = "TRANCHE 1", "🟢 At 10DMA — 1st tranche zone"
+        else:
+            zone, advice = "EXTENDED", f"⏳ {pct10:+.1f}% above 10DMA — wait for pullback"
+
+        return {"Ticker": ticker, "CMP (d)": cmp_, "10DMA": round(float(ema10), 2),
+                "21DMA": round(float(ema21), 2), "% vs 10DMA": round(pct10, 1),
+                "% vs 21DMA": round(pct21, 1), "Entry Zone": zone, "Entry Advice": advice}
+    except Exception:
+        return None
+
+
+def entry_states_for_watchlist(tickers: tuple) -> "pd.DataFrame":
+    _cols = ["Ticker", "CMP (d)", "10DMA", "21DMA", "% vs 10DMA", "% vs 21DMA",
+             "Entry Zone", "Entry Advice"]
+    if not tickers:
+        return pd.DataFrame(columns=_cols)
+    rows = [r for t in tickers if (r := daily_entry_state(t))]
+    return pd.DataFrame(rows, columns=_cols) if rows else pd.DataFrame(columns=_cols)
