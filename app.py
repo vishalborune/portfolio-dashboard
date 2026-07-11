@@ -1485,5 +1485,5 @@ def main():
         with tabs[7]: tab_import_holdings()
 
 
-# Runs on direct execution AND via the app_lakshmi.py wrapper import
-main()
+if __name__ == "__main__":
+    main()
