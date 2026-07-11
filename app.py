@@ -282,7 +282,10 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         bdate = bar_date.get(t)
         bar_is_fresh = bool(bdate and bdate >= expected)
 
-        quote_ok = bool(q_lp and q_lp > 0)
+        # Yahoo's quote endpoint is unreliable for BSE scrips (serves ancient
+        # cached prices — seen twice: Kwality, Lehar). Never trust it for .BO;
+        # the rescue pass gets those from BSE's own API or the NSE twin.
+        quote_ok = bool(q_lp and q_lp > 0) and not t.endswith(".BO")
         if quote_ok and b_close:
             # Sanity band: reject quotes wildly off the last known bar
             # (Yahoo's quote endpoint serves ancient prices for some BSE scrips)
@@ -315,18 +318,18 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         old_ref = row["CMP"]   # the stale-but-real bar price, our sanity anchor
         rescue = None
 
-        # 1) Dual-listed? Take the NSE twin's quote (Yahoo NSE data is reliable)
-        twin = BSE_NSE_TWIN.get(t)
-        if twin:
-            _, lp, pc = _fetch_quote(twin)
-            if lp and lp > 0:
-                rescue = (lp, pc)
-
-        # 2) BSE-only: ask BSE's own API directly
-        if rescue is None and t.endswith(".BO"):
+        # 1) BSE-only or dual-listed: BSE's own API first (native exchange price)
+        if t.endswith(".BO"):
             lp = _fetch_bse_direct(t.split(".")[0])
             if lp:
                 rescue = (lp, None)
+
+        # 2) Dual-listed fallback: the NSE twin's quote (Yahoo NSE is reliable)
+        twin = BSE_NSE_TWIN.get(t)
+        if rescue is None and twin:
+            _, lp, pc = _fetch_quote(twin)
+            if lp and lp > 0:
+                rescue = (lp, pc)
 
         # Accept only if sane vs the last known real price
         if rescue and old_ref and old_ref > 0:
@@ -336,7 +339,8 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                 if pc and pc > 0:
                     row["Prev Close"] = pc
                 row["Price Stale"] = False
-                row["Price Source"] = "NSE twin" if twin else "BSE direct"
+                row["Price Source"] = ("BSE direct" if (t.endswith(".BO") and pc is None)
+                                        else "NSE twin")
     out = pd.DataFrame(rows)
     out["Day Change %"] = ((out["CMP"] - out["Prev Close"]) / out["Prev Close"]) * 100
     out["_fetched_at"] = fetched_at
