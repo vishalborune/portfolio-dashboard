@@ -545,13 +545,15 @@ def tab_holdings(enriched: pd.DataFrame):
             """Near/below the 10wEMA = add zone (green); far above = extended (amber/red)."""
             if pd.isna(val):
                 return "color: #888;"
+            if val < -5:
+                return "color: #b91c1c; font-weight: 700;"      # well below EMA — weakness
             if val < 0:
-                return "color: #dc2626; font-weight: 600;"      # below 10wEMA — weakness
+                return "color: #ef4444;"                         # just under the EMA — soft dip
             if val <= 12:
-                return "color: #16a34a;"                        # healthy trend distance
+                return "color: #16a34a;"                         # healthy trend distance
             if val <= 20:
-                return "color: #d97706;"                        # stretched
-            return "color: #dc2626;"                            # very extended — don't chase
+                return "color: #d97706;"                         # stretched
+            return "color: #b45309; font-weight: 700;"           # very extended — don't chase
 
         # Only style/format columns that actually exist — signals data can be
         # partially unavailable (yfinance hiccup, stale cache), and a styler
