@@ -295,18 +295,46 @@ def tab_holdings(enriched: pd.DataFrame):
                 names = ", ".join(fading["Short Name"].tolist())
                 st.warning(f"🟣 **Momentum fading** — {names}")
 
-        sort_by = st.selectbox(
-            "Sort by",
-            ["State (urgent first)", "% from 10wEMA", "Invested", "Day Change %", "P&L %", "P&L",
-             "Allocation %", "Current Value", "Short Name"],
-            index=0, key="holdings_sort",
-        )
-        view_cols = [
-            "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 20wk",
-            "quantity", "purchase_cost", "Invested", "CMP",
-            "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
-            "Sector", "Market Cap (Cr)", "PE (live)",
-        ]
+        # ---- Column groups: pick the view for the job ----
+        # 📊 Decision view = Lakshmi's three decision fields (State, 10wEMA dist,
+        # volume) + price basics. Default view.
+        COLUMN_VIEWS = {
+            "📊 Decision view": [
+                "Short Name", "State Display", "% from 10wEMA", "Vol vs 10wk",
+                "CMP", "purchase_cost", "quantity",
+            ],
+            "💰 P&L view": [
+                "Short Name", "State Display", "quantity", "purchase_cost", "Invested",
+                "CMP", "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
+            ],
+            "🔬 Fundamentals view": [
+                "Short Name", "Ticker", "CMP", "Sector", "Market Cap (Cr)",
+                "PE (live)", "Allocation %",
+            ],
+            "🗂 Everything": [
+                "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 10wk",
+                "quantity", "purchase_cost", "Invested", "CMP",
+                "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
+                "Sector", "Market Cap (Cr)", "PE (live)",
+            ],
+        }
+
+        vc1, vc2 = st.columns([2, 1])
+        with vc1:
+            view_choice = st.radio(
+                "Columns", list(COLUMN_VIEWS.keys()),
+                horizontal=True, key="holdings_view",
+                label_visibility="collapsed",
+            )
+        with vc2:
+            sort_by = st.selectbox(
+                "Sort by",
+                ["State (urgent first)", "% from 10wEMA", "Vol vs 10wk", "Invested",
+                 "Day Change %", "P&L %", "P&L", "Allocation %", "Current Value", "Short Name"],
+                index=0, key="holdings_sort",
+            )
+
+        view_cols = COLUMN_VIEWS[view_choice]
         view_cols = [c for c in view_cols if c in enriched.columns or c in ("State Display",)]
         sort_col_map = {"State (urgent first)": "State Priority"}
         actual_sort = sort_col_map.get(sort_by, sort_by)
@@ -345,7 +373,7 @@ def tab_holdings(enriched: pd.DataFrame):
         styled = view.style.format({
             "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
             "CMP": "₹{:,.2f}",
-            "% from 10wEMA": "{:+.1f}%", "Vol vs 20wk": "{:.1f}x",
+            "% from 10wEMA": "{:+.1f}%", "Vol vs 10wk": "{:.1f}x",
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
