@@ -277,6 +277,28 @@ def add_watchlist(stock_name: str, target_buy_price: Optional[float] = None,
     _bust()
 
 
+def graduate_from_watchlist(stock_name: str) -> bool:
+    """When a stock becomes a holding, silently remove it from the SAME
+    portfolio's watchlist. Matches on the (XNSE:SYM)/(XBOM:CODE) part so the
+    free-text company-name half doesn't have to be identical. Returns True
+    if something was removed."""
+    import re as _re
+    m = _re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", stock_name or "")
+    if not m:
+        return False
+    needle = f"({m.group(1)}:{m.group(2).strip()})".upper()
+    res = (_client().table("watchlist").select("id, stock_name")
+            .eq("portfolio_id", _active_pf()).execute())
+    removed = False
+    for row in (res.data or []):
+        if needle in str(row.get("stock_name", "")).upper().replace(" ", ""):
+            _client().table("watchlist").delete().eq("id", row["id"]).execute()
+            removed = True
+    if removed:
+        _bust()
+    return removed
+
+
 def delete_watchlist(watchlist_id: int):
     _client().table("watchlist").delete().eq("id", watchlist_id).execute()
     _bust()
@@ -322,7 +344,7 @@ def delete_note(note_id: int):
 
 @st.cache_data(ttl=60)
 def get_snapshots() -> pd.DataFrame:
-    res = _client().table("snapshots").select("*").order("snapshot_date").execute()
+    res = _client().table("snapshots").select("*").eq("portfolio_id", _active_pf()).order("snapshot_date").execute()
     df = pd.DataFrame(res.data or [])
     if not df.empty:
         df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
@@ -333,6 +355,7 @@ def upsert_snapshot(snap: dict):
     """Insert or replace today's snapshot."""
     today = date.today().isoformat()
     payload = {
+        "portfolio_id": _active_pf(),
         "snapshot_date": today,
         "invested": round(snap["invested"], 2),
         "current_value": round(snap["current"], 2),
