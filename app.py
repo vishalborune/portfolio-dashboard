@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 
@@ -169,6 +170,48 @@ def last_expected_close_date():
     return candidate
 
 
+# Yahoo's BSE mirror is chronically stale for smallcaps. Dual-listed holdings
+# get an NSE twin fallback (NSE data on Yahoo is reliable); BSE-only scrips
+# get a direct BSE-API quote as last resort.
+BSE_NSE_TWIN = {
+    "532856.BO": "TIMETECHNO.NS",   # Time Technoplast
+    "532365.BO": "DSSL.NS",         # Dynacons Systems & Solutions
+}
+
+
+def _fetch_bse_direct(scrip_code: str):
+    """Last-traded price straight from BSE's own quote API. None on failure."""
+    try:
+        url = ("https://api.bseindia.com/BseIndiaAPI/api/getScripHeaderData/w"
+               f"?Debtflag=&scripcode={scrip_code}&seriesid=")
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.bseindia.com/",
+        })
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        # Schema is loose; hunt for the LTP in the usual spots
+        for path in (("CurrRate", "LTP"), ("Header", "LTP"), ("Cmpgn", "LTP")):
+            node = j
+            ok = True
+            for k in path:
+                node = node.get(k) if isinstance(node, dict) else None
+                if node is None:
+                    ok = False
+                    break
+            if ok:
+                try:
+                    v = float(str(node).replace(",", ""))
+                    if v > 0:
+                        return v
+                except (TypeError, ValueError):
+                    pass
+        return None
+    except Exception:
+        return None
+
+
 def _fetch_quote(t):
     """Yahoo quote endpoint — updates promptly at close, unlike daily bars."""
     try:
@@ -259,6 +302,36 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
 
         rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
                      "Price Stale": stale})
+
+    # --- Rescue pass for stale BSE scrips ---
+    for row in rows:
+        if not row["Price Stale"]:
+            continue
+        t = row["Ticker"]
+        old_ref = row["CMP"]   # the stale-but-real bar price, our sanity anchor
+        rescue = None
+
+        # 1) Dual-listed? Take the NSE twin's quote (Yahoo NSE data is reliable)
+        twin = BSE_NSE_TWIN.get(t)
+        if twin:
+            _, lp, pc = _fetch_quote(twin)
+            if lp and lp > 0:
+                rescue = (lp, pc)
+
+        # 2) BSE-only: ask BSE's own API directly
+        if rescue is None and t.endswith(".BO"):
+            lp = _fetch_bse_direct(t.split(".")[0])
+            if lp:
+                rescue = (lp, None)
+
+        # Accept only if sane vs the last known real price
+        if rescue and old_ref and old_ref > 0:
+            lp, pc = rescue
+            if abs(lp / old_ref - 1) <= MAX_PLAUSIBLE_MOVE * 2:
+                row["CMP"] = lp
+                if pc and pc > 0:
+                    row["Prev Close"] = pc
+                row["Price Stale"] = False
     out = pd.DataFrame(rows)
     out["Day Change %"] = ((out["CMP"] - out["Prev Close"]) / out["Prev Close"]) * 100
     out["_fetched_at"] = fetched_at
