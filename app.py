@@ -227,16 +227,36 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         pass
 
     expected = last_expected_close_date()
+    MAX_PLAUSIBLE_MOVE = 0.25   # smallcap daily circuit ~20%; beyond this per
+                                 # missing day, the quote is garbage, not a move
     rows = []
     for t in tickers:
         q_lp, q_pc = quotes.get(t, (None, None))
-        cmp_ = q_lp if (q_lp and q_lp > 0) else bar_close.get(t, np.nan)
-        prev = q_pc if (q_pc and q_pc > 0) else bar_prev.get(t, np.nan)
-        # Stale = we had to fall back to daily bars AND the bar is older than
-        # the last session that should have closed by now.
-        used_fallback = not (q_lp and q_lp > 0)
+        b_close = bar_close.get(t)
+        b_prev = bar_prev.get(t)
         bdate = bar_date.get(t)
-        stale = bool(used_fallback and bdate and bdate < expected)
+        bar_is_fresh = bool(bdate and bdate >= expected)
+
+        quote_ok = bool(q_lp and q_lp > 0)
+        if quote_ok and b_close:
+            # Sanity band: reject quotes wildly off the last known bar
+            # (Yahoo's quote endpoint serves ancient prices for some BSE scrips)
+            days_gap = max(1, (expected - bdate).days if bdate else 1)
+            band = MAX_PLAUSIBLE_MOVE * days_gap
+            if abs(q_lp / b_close - 1) > band:
+                quote_ok = False
+
+        if bar_is_fresh and b_close:
+            # After close with a same-date bar: the settled close is authoritative
+            cmp_, prev, stale = b_close, b_prev, False
+        elif quote_ok:
+            cmp_ = q_lp
+            prev = q_pc if (q_pc and q_pc > 0) else b_prev
+            stale = False
+        else:
+            cmp_, prev = b_close if b_close else np.nan, b_prev if b_prev else np.nan
+            stale = bool(bdate and bdate < expected)
+
         rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
                      "Price Stale": stale})
     out = pd.DataFrame(rows)
