@@ -434,6 +434,14 @@ def lookup_company(symbol: str, exchange: str) -> str:
 
 def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
     """Add Ticker, Short Name, live price columns + computed P&L."""
+    if holdings_df is None or holdings_df.empty:
+        # Brand-new portfolio: return an empty frame with the columns the UI reads
+        return pd.DataFrame(columns=[
+            "id", "stock_name", "Short Name", "Ticker", "quantity", "purchase_cost",
+            "CMP", "Prev Close", "Day Change %", "Invested", "Current Value",
+            "P&L", "P&L %", "Allocation %", "State", "State Display", "State Reason",
+            "State Priority", "% from 10wEMA", "Vol vs 10wk",
+        ])
     if holdings_df.empty:
         return pd.DataFrame()
     df = holdings_df.copy()
