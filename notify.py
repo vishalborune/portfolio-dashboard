@@ -42,10 +42,10 @@ def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
     return chunks
 
 
-def send_telegram(text: str) -> bool:
-    """Send a message to the configured Telegram group, auto-splitting if long."""
+def send_telegram(text: str, chat_id: str = None) -> bool:
+    """Send a message to a Telegram group (default: TELEGRAM_CHAT_ID), auto-splitting if long."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
         return False
