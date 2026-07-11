@@ -56,13 +56,16 @@ def _get_secret(key: str, default=None):
 
 
 def login_gate():
-    """Block app until user enters a valid password. Sets st.session_state.role."""
-    owner_pw = _get_secret("OWNER_PASSWORD")
-    friend_pw = _get_secret("FRIEND_PASSWORD")
+    """Block app until user enters a valid password.
 
-    if not owner_pw:
-        st.error("⚠️ App not configured. Set OWNER_PASSWORD in Streamlit secrets.")
-        st.stop()
+    Each DEPLOYMENT serves exactly one tenant, set via APP_TENANT in that
+    app's Streamlit secrets:
+      - "vishal"  (default): Vishal's portfolio only; OWNER_PASSWORD (+ optional
+                    FRIEND_PASSWORD read-only view)
+      - "lakshmi": Lakshmi household only; LAKSHMI_PASSWORD; portfolios 2 & 3
+    The two apps share code + database but neither can log into the other.
+    """
+    tenant = _get_secret("APP_TENANT", "vishal").strip().lower()
 
     if st.session_state.get("role"):
         return True
@@ -70,18 +73,61 @@ def login_gate():
     st.title("📈 Portfolio Dashboard")
     st.caption("Enter your password to continue")
     pw = st.text_input("Password", type="password", key="pw_input")
+
+    if tenant == "lakshmi":
+        lakshmi_pw = _get_secret("LAKSHMI_PASSWORD")
+        if not lakshmi_pw:
+            st.error("⚠️ App not configured. Set LAKSHMI_PASSWORD in Streamlit secrets.")
+            st.stop()
+        if st.button("Enter", type="primary"):
+            if pw == lakshmi_pw:
+                st.session_state.role = "lakshmi"
+                st.session_state.user = "Lakshmi"
+                st.session_state.portfolios = {2: "Lakshmi", 3: "Abinaya"}
+                st.session_state.portfolio_id = 2
+                st.rerun()
+            else:
+                st.error("Wrong password.")
+        return False
+
+    # Default tenant: Vishal's app
+    owner_pw = _get_secret("OWNER_PASSWORD")
+    friend_pw = _get_secret("FRIEND_PASSWORD")
+    if not owner_pw:
+        st.error("⚠️ App not configured. Set OWNER_PASSWORD in Streamlit secrets.")
+        st.stop()
     if st.button("Enter", type="primary"):
         if pw == owner_pw:
             st.session_state.role = "owner"
             st.session_state.user = "Vishal"
+            st.session_state.portfolios = {1: "Vishal"}
+            st.session_state.portfolio_id = 1
             st.rerun()
         elif friend_pw and pw == friend_pw:
             st.session_state.role = "friend"
             st.session_state.user = _get_secret("FRIEND_NAME", "Friend")
+            st.session_state.portfolios = {1: "Vishal"}
+            st.session_state.portfolio_id = 1
             st.rerun()
         else:
             st.error("Wrong password.")
     return False
+
+
+def portfolio_switcher():
+    """Sidebar selector between the portfolios this login can access."""
+    pfs = st.session_state.get("portfolios", {1: "Vishal"})
+    if len(pfs) <= 1:
+        return
+    labels = list(pfs.values())
+    ids = list(pfs.keys())
+    current = st.session_state.get("portfolio_id", ids[0])
+    idx = ids.index(current) if current in ids else 0
+    choice = st.sidebar.radio("👤 Portfolio", labels, index=idx, key="pf_radio")
+    new_id = ids[labels.index(choice)]
+    if new_id != current:
+        st.session_state.portfolio_id = new_id
+        st.rerun()
 
 
 def is_owner() -> bool:
@@ -89,15 +135,16 @@ def is_owner() -> bool:
 
 
 def can_edit_holdings() -> bool:
-    return is_owner()
+    # Each login can edit its OWN portfolios; friend view stays read-only
+    return st.session_state.get("role") in ("owner", "lakshmi")
 
 
 def can_edit_watchlist() -> bool:
-    return st.session_state.get("role") in ("owner", "friend")
+    return st.session_state.get("role") in ("owner", "friend", "lakshmi")
 
 
 def can_edit_notes() -> bool:
-    return st.session_state.get("role") in ("owner", "friend")
+    return st.session_state.get("role") in ("owner", "friend", "lakshmi")
 
 
 # ---------------------------------------------------------------------------
@@ -1201,6 +1248,93 @@ def tab_notes():
 # MAIN
 # ---------------------------------------------------------------------------
 
+def tab_import_holdings():
+    """Setup-phase bulk import from the standard Excel template.
+    Imports into the CURRENTLY SELECTED portfolio. Removable after onboarding."""
+    st.subheader("📥 Import Holdings (one-time setup)")
+    pf_name = st.session_state.get("portfolios", {}).get(
+        st.session_state.get("portfolio_id"), "?")
+    st.info(f"Rows will be imported into: **{pf_name}** "
+            f"(switch portfolio in the sidebar to import the other one).")
+    st.markdown(
+        "Fill the template with holdings from Kite / Upstox — columns: "
+        "**Stock Name · Exchange (NSE/BSE) · Symbol · Quantity · Avg Buy Price** "
+        "· optional **Buy Date** (defaults to today; approximate is fine)."
+    )
+
+    up = st.file_uploader("Upload the filled template (.xlsx)", type=["xlsx"],
+                           key="import_upload")
+    if not up:
+        return
+    try:
+        raw = pd.read_excel(up)
+    except Exception as e:
+        st.error(f"Couldn't read the file: {e}")
+        return
+
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    required = {"stock name", "exchange", "symbol", "quantity", "avg buy price"}
+    missing = required - set(raw.columns)
+    if missing:
+        st.error(f"Template columns missing: {', '.join(sorted(missing))}")
+        return
+
+    rows, problems = [], []
+    for i, r in raw.iterrows():
+        try:
+            name = str(r["stock name"]).strip()
+            exch = str(r["exchange"]).strip().upper()
+            sym = str(r["symbol"]).strip().upper()
+            qty = float(r["quantity"])
+            cost = float(r["avg buy price"])
+            if not name or exch not in ("NSE", "BSE") or not sym or qty <= 0 or cost <= 0:
+                raise ValueError("invalid values")
+            bdate = pd.to_datetime(r.get("buy date"), errors="coerce")
+            bdate = bdate.date() if pd.notna(bdate) else date.today()
+            # Build the canonical stock_name format the whole system uses
+            prefix = "XNSE" if exch == "NSE" else "XBOM"
+            canonical = f"{name.upper()} ({prefix}:{sym})"
+            rows.append({"stock_name": canonical, "quantity": qty,
+                          "purchase_cost": cost, "purchase_date": bdate})
+        except Exception:
+            problems.append(i + 2)  # +2: header + 1-index, matches Excel row no.
+
+    if problems:
+        st.warning(f"Skipping {len(problems)} row(s) with invalid data "
+                    f"(Excel rows: {problems[:10]}{'…' if len(problems) > 10 else ''})")
+    if not rows:
+        st.error("No valid rows found.")
+        return
+
+    prev = pd.DataFrame(rows)
+    prev["invested"] = prev["quantity"] * prev["purchase_cost"]
+    st.dataframe(prev, use_container_width=True, hide_index=True)
+    st.markdown(f"**{len(rows)} holdings · ₹{prev['invested'].sum():,.0f} invested** "
+                f"→ portfolio **{pf_name}**")
+
+    existing = db.get_holdings()
+    existing_names = set(existing["stock_name"]) if not existing.empty else set()
+    dupes = [r["stock_name"] for r in rows if r["stock_name"] in existing_names]
+    if dupes:
+        st.warning(f"⚠️ Already in this portfolio (will be skipped): {', '.join(dupes[:8])}")
+
+    if st.button(f"✅ Import {len(rows) - len(dupes)} holdings into {pf_name}",
+                  type="primary", key="do_import"):
+        done = 0
+        for r in rows:
+            if r["stock_name"] in existing_names:
+                continue
+            try:
+                db.add_holding(r["stock_name"], r["quantity"], r["purchase_cost"],
+                                r["purchase_date"])
+                done += 1
+            except Exception as e:
+                st.error(f"{r['stock_name']}: {e}")
+        st.success(f"Imported {done} holdings into {pf_name}. "
+                    "Switch portfolio in the sidebar to import the next file.")
+        st.balloons()
+
+
 def main():
     if not login_gate():
         return
@@ -1209,6 +1343,8 @@ def main():
     st.sidebar.title("⚙️ Settings")
     st.sidebar.caption(f"👤 Logged in as: **{st.session_state.get('user','?')}**  "
                         f"({st.session_state.get('role','?')})")
+
+    portfolio_switcher()
 
     if st.sidebar.button("🔄 Refresh prices"):
         st.cache_data.clear()
@@ -1274,7 +1410,9 @@ def main():
         note = ("last close loaded for all holdings — safe to compare with INDmoney"
                 if not stale_names else
                 "last close loaded, EXCEPT the stocks flagged below")
-    st.caption(f"Tracking {k['n_holdings']} holdings · {badge} · "
+    pf_name = st.session_state.get("portfolios", {}).get(
+        st.session_state.get("portfolio_id", 1), "")
+    st.caption(f"**{pf_name}** · Tracking {k['n_holdings']} holdings · {badge} · "
                 f"Prices as of **{fetched_at or '—'} IST** · {note}")
 
     if stale_names:
@@ -1319,10 +1457,15 @@ def main():
 
     st.divider()
 
-    tabs = st.tabs([
+    tab_names = [
         "📊 Holdings", "🥧 Allocation", "👀 Watchlist",
         "💰 Realised P&L", "📈 History", "📜 Transactions", "📝 Notes",
-    ])
+    ]
+    # Setup-phase importer for Lakshmi's household — removable after onboarding
+    show_import = st.session_state.get("role") == "lakshmi"
+    if show_import:
+        tab_names.append("📥 Import Holdings")
+    tabs = st.tabs(tab_names)
     with tabs[0]: tab_holdings(enriched)
     with tabs[1]: tab_allocation(enriched, k)
     with tabs[2]: tab_watchlist()
@@ -1330,6 +1473,8 @@ def main():
     with tabs[4]: tab_history(k)
     with tabs[5]: tab_transactions()
     with tabs[6]: tab_notes()
+    if show_import:
+        with tabs[7]: tab_import_holdings()
 
 
 if __name__ == "__main__":
