@@ -698,6 +698,8 @@ def _form_add_holding():
         try:
             stock_name = build_stock_name(company, exchange, symbol)
             db.add_holding(stock_name, qty, cost, buy_date=buy_dt, notes=notes or None)
+            if db.graduate_from_watchlist(stock_name):
+                st.info("🎓 Removed from watchlist — it's a holding now.")
             st.success(f"✅ Added {qty:g} × {short_name(stock_name)} @ ₹{cost:,.2f}")
             st.rerun()
         except Exception as e:
@@ -913,11 +915,18 @@ def tab_watchlist():
         if tickers:
             prices = fetch_live_prices(tickers)
             wl_view = wl_view.merge(prices, on="Ticker", how="left")
+            # Lakshmi's staged-entry system: 10DMA = 1st tranche, 21DMA = final
+            with st.spinner("Checking entry zones (10/21 DMA)…"):
+                entries = signals.entry_states_for_watchlist(tickers)
+            if not entries.empty:
+                wl_view = wl_view.merge(
+                    entries.drop(columns=["CMP (d)"]), on="Ticker", how="left")
             if "target_buy_price" in wl_view.columns:
                 wl_view["Distance to Target %"] = (
                     (wl_view["CMP"] - wl_view["target_buy_price"]) / wl_view["target_buy_price"] * 100
                 )
-        cols = ["Short Name", "Ticker", "CMP", "Day Change %",
+        cols = ["Short Name", "Ticker", "CMP", "Entry Advice", "10DMA", "21DMA",
+                "% vs 10DMA", "Day Change %",
                 "target_buy_price", "Distance to Target %", "notes", "added_by"]
         cols = [c for c in cols if c in wl_view.columns]
         styled = (
@@ -1335,6 +1344,7 @@ def tab_import_holdings():
             try:
                 db.add_holding(r["stock_name"], r["quantity"], r["purchase_cost"],
                                 r["purchase_date"])
+                db.graduate_from_watchlist(r["stock_name"])
                 done += 1
             except Exception as e:
                 st.error(f"{r['stock_name']}: {e}")
