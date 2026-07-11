@@ -135,28 +135,113 @@ def build_stock_name(company: str, exchange: str, symbol: str) -> str:
 # LIVE PRICES
 # ---------------------------------------------------------------------------
 
+from zoneinfo import ZoneInfo
+from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist():
+    return datetime.now(IST)
+
+
+def market_is_open() -> bool:
+    """NSE/BSE regular session: 9:15–15:30 IST, Mon–Fri (holidays not tracked)."""
+    n = now_ist()
+    if n.weekday() >= 5:
+        return False
+    minutes = n.hour * 60 + n.minute
+    return (9 * 60 + 15) <= minutes <= (15 * 60 + 30)
+
+
+def last_expected_close_date():
+    """The date whose closing prices we SHOULD be seeing right now."""
+    n = now_ist()
+    d = n.date()
+    # today's close only exists if today is a weekday and the session has ended
+    if n.weekday() < 5 and (n.hour * 60 + n.minute) >= (15 * 60 + 30):
+        candidate = d
+    else:
+        candidate = d - timedelta(days=1)
+    while candidate.weekday() >= 5:   # walk back over weekends
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _fetch_quote(t):
+    """Yahoo quote endpoint — updates promptly at close, unlike daily bars."""
+    try:
+        fi = yf.Ticker(t).fast_info
+        def _get(key, attr):
+            try:
+                v = fi[key]
+            except Exception:
+                v = getattr(fi, attr, None)
+            try:
+                v = float(v)
+                return v if v > 0 else None
+            except (TypeError, ValueError):
+                return None
+        lp = _get("last_price", "last_price")
+        pc = _get("previous_close", "previous_close")
+        return t, lp, pc
+    except Exception:
+        return t, None, None
+
+
 @st.cache_data(ttl=PRICE_CACHE_TTL)
 def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
+    fetched_at = now_ist().strftime("%H:%M:%S")
     if not tickers:
-        return pd.DataFrame(columns=["Ticker", "CMP", "Prev Close", "Day Change %"])
-    data = yf.download(
-        list(tickers), period="5d", interval="1d",
-        progress=False, auto_adjust=False, group_by="ticker", threads=True,
-    )
+        df = pd.DataFrame(columns=["Ticker", "CMP", "Prev Close", "Day Change %",
+                                    "Price Stale", "_fetched_at"])
+        return df
+
+    # 1) Daily bars: prev-close reference + fallback + bar-date for staleness
+    bar_close, bar_prev, bar_date = {}, {}, {}
+    try:
+        data = yf.download(
+            list(tickers), period="10d", interval="1d",
+            progress=False, auto_adjust=False, group_by="ticker", threads=True,
+        )
+        for t in tickers:
+            try:
+                close = data["Close"].dropna() if len(tickers) == 1 else data[t]["Close"].dropna()
+                if len(close):
+                    bar_close[t] = float(close.iloc[-1])
+                    bar_prev[t] = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
+                    bar_date[t] = pd.Timestamp(close.index[-1]).date()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2) Quote endpoint in parallel — the fresher source
+    quotes = {}
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for t, lp, pc in ex.map(_fetch_quote, tickers):
+                quotes[t] = (lp, pc)
+    except Exception:
+        pass
+
+    expected = last_expected_close_date()
     rows = []
     for t in tickers:
-        try:
-            close = data["Close"].dropna() if len(tickers) == 1 else data[t]["Close"].dropna()
-            if len(close) == 0:
-                rows.append({"Ticker": t, "CMP": np.nan, "Prev Close": np.nan})
-                continue
-            cmp_ = float(close.iloc[-1])
-            prev = float(close.iloc[-2]) if len(close) >= 2 else cmp_
-            rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev})
-        except Exception:
-            rows.append({"Ticker": t, "CMP": np.nan, "Prev Close": np.nan})
+        q_lp, q_pc = quotes.get(t, (None, None))
+        cmp_ = q_lp if (q_lp and q_lp > 0) else bar_close.get(t, np.nan)
+        prev = q_pc if (q_pc and q_pc > 0) else bar_prev.get(t, np.nan)
+        # Stale = we had to fall back to daily bars AND the bar is older than
+        # the last session that should have closed by now.
+        used_fallback = not (q_lp and q_lp > 0)
+        bdate = bar_date.get(t)
+        stale = bool(used_fallback and bdate and bdate < expected)
+        rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
+                     "Price Stale": stale})
     out = pd.DataFrame(rows)
     out["Day Change %"] = ((out["CMP"] - out["Prev Close"]) / out["Prev Close"]) * 100
+    out["_fetched_at"] = fetched_at
     return out
 
 
@@ -1023,6 +1108,20 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
+    # Auto-refresh: reruns the app every 5 minutes so prices stay current
+    # during market hours without manual refreshing.
+    auto = st.sidebar.toggle("⏱ Auto-refresh (5 min)", value=False,
+                              help="Keeps prices updating while this tab is open. "
+                                   "Yahoo data is ~15 min delayed regardless.")
+    if auto:
+        if hasattr(st, "fragment"):
+            @st.fragment(run_every=PRICE_CACHE_TTL)
+            def _auto_refresh_tick():
+                st.rerun(scope="app")
+            _auto_refresh_tick()
+        else:
+            st.sidebar.caption("Auto-refresh needs a newer Streamlit; use 🔄 instead.")
+
     if st.sidebar.button("Logout"):
         for k in list(st.session_state.keys()):
             del st.session_state[k]
@@ -1048,8 +1147,34 @@ def main():
 
     # Header
     st.title("📈 Portfolio Dashboard")
-    st.caption(f"Tracking {k['n_holdings']} holdings · "
-                f"Updated {datetime.now().strftime('%I:%M %p, %d %b %Y')}")
+
+    # When were these prices actually fetched? (IST) + market status
+    fetched_at = None
+    if not enriched.empty and "_fetched_at" in enriched.columns:
+        fetched_at = enriched["_fetched_at"].iloc[0]
+
+    stale_names = []
+    if not enriched.empty and "Price Stale" in enriched.columns:
+        stale_names = enriched.loc[enriched["Price Stale"] == True, "Short Name"].tolist()
+
+    if market_is_open():
+        badge = "🟢 Market OPEN"
+        note = "prices refresh every 5 min (Yahoo feed, ~15 min delayed)"
+    else:
+        badge = "🔴 Market CLOSED"
+        note = ("last close loaded for all holdings — safe to compare with INDmoney"
+                if not stale_names else
+                "last close loaded, EXCEPT the stocks flagged below")
+    st.caption(f"Tracking {k['n_holdings']} holdings · {badge} · "
+                f"Prices as of **{fetched_at or '—'} IST** · {note}")
+
+    if stale_names:
+        st.warning(
+            f"⚠️ **Yahoo is serving outdated prices for {len(stale_names)} stock"
+            f"{'s' if len(stale_names) > 1 else ''}:** {', '.join(stale_names)}. "
+            f"Portfolio totals will differ from INDmoney by these stocks' last-day moves. "
+            f"Usually self-corrects within a few hours; try 🔄 Refresh prices later."
+        )
 
     # KPI cards
     c1, c2, c3, c4, c5, c6 = st.columns(6)
