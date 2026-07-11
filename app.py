@@ -244,8 +244,10 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
     # 1) Daily bars: prev-close reference + fallback + bar-date for staleness
     bar_close, bar_prev, bar_date = {}, {}, {}
     try:
+        _end = now_ist().date() + timedelta(days=1)
+        _start = _end - timedelta(days=14)
         data = yf.download(
-            list(tickers), period="10d", interval="1d",
+            list(tickers), start=str(_start), end=str(_end), interval="1d",
             progress=False, auto_adjust=False, group_by="ticker", threads=True,
         )
         for t in tickers:
@@ -291,17 +293,19 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
 
         if bar_is_fresh and b_close:
             # After close with a same-date bar: the settled close is authoritative
-            cmp_, prev, stale = b_close, b_prev, False
+            cmp_, prev, stale, source = b_close, b_prev, False, "bar (settled close)"
         elif quote_ok:
             cmp_ = q_lp
             prev = q_pc if (q_pc and q_pc > 0) else b_prev
-            stale = False
+            stale, source = False, "quote"
         else:
             cmp_, prev = b_close if b_close else np.nan, b_prev if b_prev else np.nan
             stale = bool(bdate and bdate < expected)
+            source = "bar (STALE)" if stale else "bar"
 
         rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
-                     "Price Stale": stale})
+                     "Price Stale": stale, "Price Source": source,
+                     "Price Date": str(bdate) if bdate else "—"})
 
     # --- Rescue pass for stale BSE scrips ---
     for row in rows:
@@ -332,6 +336,7 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                 if pc and pc > 0:
                     row["Prev Close"] = pc
                 row["Price Stale"] = False
+                row["Price Source"] = "NSE twin" if twin else "BSE direct"
     out = pd.DataFrame(rows)
     out["Day Change %"] = ((out["CMP"] - out["Prev Close"]) / out["Prev Close"]) * 100
     out["_fetched_at"] = fetched_at
@@ -1268,6 +1273,15 @@ def main():
             f"Portfolio totals will differ from INDmoney by these stocks' last-day moves. "
             f"Usually self-corrects within a few hours; try 🔄 Refresh prices later."
         )
+
+    # Per-stock price provenance — where did each CMP come from, and what date?
+    if not enriched.empty and "Price Source" in enriched.columns:
+        with st.expander("🔍 Price data diagnostics (per stock)"):
+            diag = enriched[["Short Name", "CMP", "Price Source", "Price Date"]].copy()
+            diag = diag.rename(columns={"Price Date": "Daily-bar date"})
+            st.caption(f"Expected latest close date: **{last_expected_close_date()}** · "
+                        "'quote'/'NSE twin'/'BSE direct' = fetched live, bar date not applicable")
+            st.table(diag.reset_index(drop=True))
 
     # KPI cards
     c1, c2, c3, c4, c5, c6 = st.columns(6)
