@@ -41,8 +41,17 @@ def _iso(d):
 # ===============================================================
 
 @st.cache_data(ttl=30)
+def _active_pf() -> int:
+    """The portfolio currently selected in the UI (set by app.py at login/switch)."""
+    try:
+        import streamlit as st
+        return int(st.session_state.get("portfolio_id", 1))
+    except Exception:
+        return 1
+
+
 def get_holdings() -> pd.DataFrame:
-    res = _client().table("holdings").select("*").order("created_at").execute()
+    res = _client().table("holdings").select("*").eq("portfolio_id", _active_pf()).order("created_at").execute()
     df = pd.DataFrame(res.data or [])
     return df
 
@@ -62,6 +71,7 @@ def add_holding(stock_name: str, quantity: float, purchase_cost: float,
         "buy_date": _iso(buy_date),
         "notes": notes,
     }
+    payload["portfolio_id"] = _active_pf()
     res = _client().table("holdings").insert(payload).execute()
     new_id = res.data[0]["id"] if res.data else None
 
@@ -104,7 +114,7 @@ def delete_holding(holding_id: int):
 
 @st.cache_data(ttl=60)
 def get_realised() -> pd.DataFrame:
-    res = _client().table("realised").select("*").order("sale_date", desc=True).execute()
+    res = _client().table("realised").select("*").eq("portfolio_id", _active_pf()).order("sale_date", desc=True).execute()
     df = pd.DataFrame(res.data or [])
     return df
 
@@ -168,6 +178,7 @@ def add_realised(stock_name: str, quantity: float, purchase_cost: float,
         "buy_date": _iso(buy_date),
         "no_of_days": no_of_days,
     }
+    payload["portfolio_id"] = _active_pf()
     _client().table("realised").insert(payload).execute()
     _bust()
 
@@ -216,6 +227,7 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
         "buy_date": _iso(buy_d),
         "no_of_days": days,
     }
+    realised_payload["portfolio_id"] = _active_pf()
     res = _client().table("realised").insert(realised_payload).execute()
     realised_id = res.data[0]["id"] if res.data else None
 
@@ -248,7 +260,7 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
 
 @st.cache_data(ttl=30)
 def get_watchlist() -> pd.DataFrame:
-    res = _client().table("watchlist").select("*").order("created_at", desc=True).execute()
+    res = _client().table("watchlist").select("*").eq("portfolio_id", _active_pf()).order("created_at", desc=True).execute()
     return pd.DataFrame(res.data or [])
 
 
@@ -260,6 +272,7 @@ def add_watchlist(stock_name: str, target_buy_price: Optional[float] = None,
         "notes": notes,
         "added_by": added_by,
     }
+    payload["portfolio_id"] = _active_pf()
     _client().table("watchlist").insert(payload).execute()
     _bust()
 
@@ -283,7 +296,7 @@ def update_watchlist(watchlist_id: int, **kwargs):
 
 @st.cache_data(ttl=30)
 def get_notes() -> pd.DataFrame:
-    res = _client().table("notes").select("*").order("created_at", desc=True).execute()
+    res = _client().table("notes").select("*").eq("portfolio_id", _active_pf()).order("created_at", desc=True).execute()
     return pd.DataFrame(res.data or [])
 
 
@@ -293,6 +306,7 @@ def add_note(author: str, note: str, note_date: Optional[date] = None):
         "note": note,
         "note_date": _iso(note_date or date.today()),
     }
+    payload["portfolio_id"] = _active_pf()
     _client().table("notes").insert(payload).execute()
     _bust()
 
@@ -354,6 +368,7 @@ def _insert_transaction(stock_name: str, transaction_type: str,
         "holding_id": holding_id,
         "realised_id": realised_id,
     }
+    payload["portfolio_id"] = _active_pf()
     _client().table("transactions").insert(payload).execute()
 
 
@@ -361,7 +376,7 @@ def _insert_transaction(stock_name: str, transaction_type: str,
 def get_transactions() -> pd.DataFrame:
     """All transactions, newest first."""
     res = (_client().table("transactions")
-           .select("*")
+           .select("*").eq("portfolio_id", _active_pf())
            .order("transaction_date", desc=True)
            .order("created_at", desc=True)
            .execute())
