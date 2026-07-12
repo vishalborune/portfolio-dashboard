@@ -6,7 +6,7 @@ stays snappy without hammering the database.
 """
 
 from __future__ import annotations
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 import pandas as pd
 import streamlit as st
@@ -328,6 +328,43 @@ def _get_journal_cached(pf: int) -> pd.DataFrame:
 
 def get_trade_journal() -> pd.DataFrame:
     return _get_journal_cached(_active_pf())
+
+
+# ===============================================================
+# DELIVERY % (Sprint 3 fast-follow — displayed, never gates signals)
+# ===============================================================
+
+@st.cache_data(ttl=60 * 60 * 4)
+def get_delivery_pct(tickers: tuple) -> pd.DataFrame:
+    """Latest delivery % + 4-week rolling average per ticker, from the
+    delivery_daily table (fed by delivery.py, NSE only in v1).
+    Returns df [Ticker, Deliv % (last), Deliv % (4wk)]. Empty df if the
+    table is empty or unreachable — callers must degrade gracefully,
+    same as every other optional data layer in this codebase."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        since = (date.today() - timedelta(days=45)).isoformat()
+        res = (_client().table("delivery_daily")
+               .select("ticker, price_date, deliv_pct")
+               .in_("ticker", list(tickers))
+               .gte("price_date", since)
+               .order("price_date").execute())
+        df = pd.DataFrame(res.data or [])
+        if df.empty:
+            return pd.DataFrame()
+        out = []
+        for t, grp in df.groupby("ticker"):
+            grp = grp.sort_values("price_date")
+            last20 = grp["deliv_pct"].tail(20)   # ~4 trading weeks
+            out.append({
+                "Ticker": t,
+                "Deliv % (last)": float(grp["deliv_pct"].iloc[-1]),
+                "Deliv % (4wk)": float(last20.mean()),
+            })
+        return pd.DataFrame(out)
+    except Exception:
+        return pd.DataFrame()
 
 
 # ===============================================================
