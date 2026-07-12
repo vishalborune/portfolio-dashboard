@@ -47,6 +47,15 @@ INFO_CACHE_TTL = 60 * 60 * 6
 # ---------------------------------------------------------------------------
 
 def _get_secret(key: str, default=None):
+    # Read from os.environ FIRST: Streamlit Cloud injects secrets as env vars
+    # too, and env reads are plain dict lookups with no file parsing or
+    # watchers involved. The bisect showed a login flow reading os.environ
+    # (stage 14) worked while the identical flow reading st.secrets crashed,
+    # so environment is the primary source; st.secrets stays as fallback for
+    # local runs.
+    import os
+    if key in os.environ:
+        return os.environ[key]
     if hasattr(st, "secrets"):
         try:
             return st.secrets[key]
