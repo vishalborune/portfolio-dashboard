@@ -1,4 +1,4 @@
-STAGE = 3
+STAGE = 4
 
 import streamlit as st
 
@@ -19,3 +19,6 @@ st.write("Stage 2 OK — plotly rendered")
 
 from supabase import create_client
 st.write("Stage 3 OK — supabase imported")
+
+import yfinance as yf
+st.write("Stage 4 OK — yfinance imported")
