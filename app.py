@@ -85,7 +85,12 @@ def login_gate():
                 st.session_state.user = "Lakshmi"
                 st.session_state.portfolios = {2: "Lakshmi", 3: "Abinaya"}
                 st.session_state.portfolio_id = 2
-                st.rerun()
+                # No explicit st.rerun() here: the button click already
+                # triggers Streamlit's own automatic rerun. Calling rerun()
+                # AGAIN from inside that in-flight rerun caused an
+                # intermittent native crash. Returning True lets THIS same
+                # execution continue straight into the dashboard instead.
+                return True
             else:
                 st.error("Wrong password.")
         return False
@@ -102,13 +107,13 @@ def login_gate():
             st.session_state.user = "Vishal"
             st.session_state.portfolios = {1: "Vishal"}
             st.session_state.portfolio_id = 1
-            st.rerun()
+            return True
         elif friend_pw and pw == friend_pw:
             st.session_state.role = "friend"
             st.session_state.user = _get_secret("FRIEND_NAME", "Friend")
             st.session_state.portfolios = {1: "Vishal"}
             st.session_state.portfolio_id = 1
-            st.rerun()
+            return True
         else:
             st.error("Wrong password.")
     return False
