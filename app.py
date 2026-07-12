@@ -31,8 +31,15 @@ import xirr
 # CONFIG
 # ---------------------------------------------------------------------------
 
+# Tenant-aware page title/tab name. Read directly from os.environ here
+# (not via _get_secret, which isn't defined yet at module-load time) --
+# same env-first convention used everywhere else in this file.
+import os as _os
+_tenant = _os.environ.get("APP_TENANT", "vishal").strip().lower()
+_PAGE_TITLE = "Lakshmi's Portfolio" if _tenant == "lakshmi" else "Vishal's Portfolio"
+
 st.set_page_config(
-    page_title="Vishal's Portfolio",
+    page_title=_PAGE_TITLE,
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -548,6 +555,24 @@ def fmt_inr(x, decimals=0):
     if pd.isna(x) or x is None:
         return "—"
     return f"₹{x:,.{decimals}f}"
+
+
+def fmt_inr_compact(x):
+    """Indian Cr/Lakh formatting for KPI cards -- keeps values short enough
+    that Streamlit's metric widget never ellipsis-truncates them on narrow
+    (mobile/tablet) screens. Full precision stays available via fmt_inr()
+    everywhere else (tables, tooltips, exports).
+    Sign is preserved for P&L figures that can be negative.
+    """
+    if pd.isna(x) or x is None:
+        return "—"
+    sign = "-" if x < 0 else ""
+    ax = abs(x)
+    if ax >= 1_00_00_000:      # >= 1 crore
+        return f"{sign}₹{ax/1_00_00_000:.2f} Cr"
+    if ax >= 1_00_000:          # >= 1 lakh
+        return f"{sign}₹{ax/1_00_000:.2f} L"
+    return f"{sign}₹{ax:,.0f}"
 
 
 def fmt_pct(x, decimals=2):
@@ -1443,12 +1468,15 @@ def main():
 
     # KPI cards
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Invested", fmt_inr(k["invested"]))
-    c2.metric("Current Value", fmt_inr(k["current"]), fmt_pct(k["unrealised_pct"]))
-    c3.metric("Unrealised P&L", fmt_inr(k["unrealised"]), fmt_pct(k["unrealised_pct"]))
+    c1.metric("Invested", fmt_inr_compact(k["invested"]), help=fmt_inr(k["invested"]))
+    c2.metric("Current Value", fmt_inr_compact(k["current"]), fmt_pct(k["unrealised_pct"]),
+               help=fmt_inr(k["current"]))
+    c3.metric("Unrealised P&L", fmt_inr_compact(k["unrealised"]), fmt_pct(k["unrealised_pct"]),
+               help=fmt_inr(k["unrealised"]))
     day_pct = (k["day_pnl"] / k["current"] * 100) if k["current"] else 0
-    c4.metric("Today's P&L", fmt_inr(k["day_pnl"]), fmt_pct(day_pct))
-    c5.metric("Realised P&L", fmt_inr(k["realised"]))
+    c4.metric("Today's P&L", fmt_inr_compact(k["day_pnl"]), fmt_pct(day_pct),
+               help=fmt_inr(k["day_pnl"]))
+    c5.metric("Realised P&L", fmt_inr_compact(k["realised"]), help=fmt_inr(k["realised"]))
 
     # Live XIRR from transactions log
     try:
