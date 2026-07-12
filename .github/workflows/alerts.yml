@@ -7,6 +7,7 @@ on:
     - cron: "15 5,9 * * 1-5"              # filings: twice on trading days
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
     - cron: "30 4 * * 0"                  # digest: Sunday 10:00 IST
+    - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
   workflow_dispatch:                       # manual run button
 
 jobs:
@@ -75,3 +76,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           DIGEST_EMAILS: ${{ secrets.DIGEST_EMAILS }}
+
+  bhavcopy:
+    # Daily EOD price pull for the 6 SME/Emerge stocks Yahoo doesn't cover
+    # (Sprint 3). Runs after NSE/BSE publish their bhavcopy files. Silent,
+    # best-effort by design -- see bhavcopy.py for the degrade-gracefully
+    # logic (missing day just gets skipped, never breaks the workflow).
+    if: github.event.schedule == '30 14 * * 1-5'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python bhavcopy.py today
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
