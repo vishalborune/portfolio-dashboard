@@ -756,7 +756,7 @@ def tab_holdings(enriched: pd.DataFrame):
             styled = styled.map(color_ema_distance, subset=ema_cols)
         if deliv_cols:
             styled = styled.map(color_delivery, subset=deliv_cols)
-        st.dataframe(styled, use_container_width=True, height=520, hide_index=True)
+        st.dataframe(styled, width="stretch", height=520, hide_index=True)
         if deliv_cols:
             st.caption("Deliv % = share of traded quantity actually taken as delivery "
                        "(4wk = rolling average). High = genuine accumulation, low = intraday "
@@ -1025,7 +1025,7 @@ def tab_allocation(enriched: pd.DataFrame, k: dict):
         fig = px.pie(enriched, values="Current Value", names="Short Name", hole=0.45)
         fig.update_traces(textposition="inside", textinfo="percent+label")
         fig.update_layout(showlegend=False, height=480, margin=dict(t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     with c2:
         st.subheader("By Sector")
         sec = enriched.groupby("Sector", dropna=False)["Current Value"].sum().reset_index()
@@ -1033,7 +1033,7 @@ def tab_allocation(enriched: pd.DataFrame, k: dict):
         fig2 = px.bar(sec, x="Current Value", y="Sector", orientation="h",
                       text=sec["Current Value"].apply(lambda x: f"₹{x/1000:,.0f}k"))
         fig2.update_layout(height=480, margin=dict(t=10, b=10), xaxis_title="", yaxis_title="")
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
     st.subheader("Concentration")
     top3 = enriched.nlargest(3, "Current Value")["Allocation %"].sum()
@@ -1091,7 +1091,7 @@ def tab_watchlist():
                 "Target Buy": "₹{:,.2f}", "Distance to Target %": "{:+.2f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
-        st.dataframe(styled, use_container_width=True, hide_index=True, height=420)
+        st.dataframe(styled, width="stretch", hide_index=True, height=420)
 
     if not can_edit_watchlist():
         return
@@ -1194,17 +1194,17 @@ def tab_realised(realised: pd.DataFrame):
             "Sale Amount": "₹{:,.0f}", "P&L": "₹{:,.0f}", "P&L %": "{:+.2%}",
         }, na_rep="—").map(color_pnl, subset=["P&L", "P&L %"])
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=460)
+    st.dataframe(styled, width="stretch", hide_index=True, height=460)
 
     cb, cw = st.columns(2)
     with cb:
         st.markdown("**🏆 Top 5 winners**")
         st.dataframe(realised.nlargest(5, "gain_loss")[["stock_name", "gain_loss", "pct_gain_loss"]],
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
     with cw:
         st.markdown("**💀 Top 5 losers**")
         st.dataframe(realised.nsmallest(5, "gain_loss")[["stock_name", "gain_loss", "pct_gain_loss"]],
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
 
     # --- Sprint 3: Trade Journal + 30/60/90-day exit audits ---
     st.markdown("---")
@@ -1236,7 +1236,7 @@ def tab_realised(realised: pd.DataFrame):
                      "qty_sold": "Qty", "reason": "Reason", "notes": "Notes"})
         st.dataframe(show.style.format({"Exit ₹": "₹{:,.2f}", "Qty": "{:,.0f}"},
                                        na_rep="—"),
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
         st.caption("'saved X%' = the stock fell after the exit (the rule protected you). "
                    "'cost X%' = it kept rising (the exit left money on the table). "
                    "Audits fill in automatically as each window matures.")
@@ -1280,12 +1280,12 @@ def tab_history(k: dict):
     fig.update_layout(title="Portfolio value over time", height=420,
                        margin=dict(t=50, b=10), hovermode="x unified",
                        yaxis_title="₹", xaxis_title="")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     st.subheader("Snapshot history")
     show = snaps.iloc[::-1].copy()
     show["snapshot_date"] = show["snapshot_date"].dt.strftime("%Y-%m-%d")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    st.dataframe(show, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1371,7 +1371,7 @@ def tab_transactions():
             "Qty": "{:,.0f}", "Price": "₹{:,.2f}", "Amount": "₹{:,.2f}",
         }, na_rep="—").map(color_type, subset=["Type"])
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(styled, width="stretch", hide_index=True, height=500)
 
     # ---- Excel export ----
     st.divider()
@@ -1397,7 +1397,7 @@ def tab_transactions():
             file_name=fname,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
     with c1:
         st.caption(
