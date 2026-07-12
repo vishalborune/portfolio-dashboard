@@ -479,7 +479,7 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
     for t in tickers:
         row = {"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
                "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
-               "P/B": np.nan, "EV/EBITDA": np.nan, "PEG": np.nan}
+               "P/B": np.nan, "EV/EBITDA": np.nan}
         if t in _sme:
             rows.append(row)
             continue
@@ -503,7 +503,6 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
             row["PE (live)"] = info.get("trailingPE")
             row["P/B"] = info.get("priceToBook")
             row["EV/EBITDA"] = info.get("enterpriseToEbitda")
-            row["PEG"] = info.get("trailingPegRatio") or info.get("pegRatio")
         except Exception:
             pass
         rows.append(row)
@@ -689,14 +688,14 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🔬 Fundamentals view": [
                 "Short Name", "Ticker", "CMP", "Sector", "Market Cap (Cr)",
-                "PE (live)", "P/B", "EV/EBITDA", "PEG", "Allocation %",
+                "PE (live)", "P/B", "EV/EBITDA", "Allocation %",
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 10wk",
                 "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
-                "Sector", "Market Cap (Cr)", "PE (live)", "P/B", "EV/EBITDA", "PEG",
+                "Sector", "Market Cap (Cr)", "PE (live)", "P/B", "EV/EBITDA",
             ],
         }
 
@@ -773,7 +772,7 @@ def tab_holdings(enriched: pd.DataFrame):
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
-            "PE (live)": "{:.2f}", "P/B": "{:.2f}", "EV/EBITDA": "{:.2f}", "PEG": "{:.2f}",
+            "PE (live)": "{:.2f}", "P/B": "{:.2f}", "EV/EBITDA": "{:.2f}",
         }, na_rep="—")
         if pnl_cols:
             styled = styled.map(color_pnl, subset=pnl_cols)
