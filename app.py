@@ -410,24 +410,46 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
 
 @st.cache_data(ttl=INFO_CACHE_TTL)
 def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
+    """Company fundamentals from Yahoo.
+
+    Yahoo's company-info endpoint is heavily rate-limited from datacenter
+    IPs (cloud hosts like Render), so .info often fails there even though
+    price endpoints work fine. Strategy: try .info per ticker with a tiny
+    pause to stay under rate limits; independently pull market cap from
+    fast_info (a lighter endpoint that usually still works) so at least
+    that column populates when the rich data is blocked.
+    """
+    import time
     rows = []
     for t in tickers:
+        row = {"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
+               "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
+               "P/B": np.nan, "EV/EBITDA": np.nan, "PEG": np.nan}
+        tk = yf.Ticker(t)
+        # Lighter endpoint first: market cap via fast_info
         try:
-            info = yf.Ticker(t).info or {}
-            rows.append({
-                "Ticker": t,
-                "Sector": info.get("sector") or "Unknown",
-                "Industry": info.get("industry") or "Unknown",
-                "Market Cap (Cr)": (info.get("marketCap") or 0) / 1e7,
-                "PE (live)": info.get("trailingPE"),
-                "P/B": info.get("priceToBook"),
-                "EV/EBITDA": info.get("enterpriseToEbitda"),
-                "PEG": info.get("trailingPegRatio") or info.get("pegRatio"),
-            })
+            mc = tk.fast_info.get("market_cap") if hasattr(tk.fast_info, "get") else getattr(tk.fast_info, "market_cap", None)
+            if mc:
+                row["Market Cap (Cr)"] = mc / 1e7
         except Exception:
-            rows.append({"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
-                         "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
-                         "P/B": np.nan, "EV/EBITDA": np.nan, "PEG": np.nan})
+            pass
+        # Rich endpoint: full info (may be blocked from cloud IPs)
+        try:
+            info = tk.info or {}
+            if info.get("sector"):
+                row["Sector"] = info["sector"]
+            if info.get("industry"):
+                row["Industry"] = info["industry"]
+            if info.get("marketCap"):
+                row["Market Cap (Cr)"] = info["marketCap"] / 1e7
+            row["PE (live)"] = info.get("trailingPE")
+            row["P/B"] = info.get("priceToBook")
+            row["EV/EBITDA"] = info.get("enterpriseToEbitda")
+            row["PEG"] = info.get("trailingPegRatio") or info.get("pegRatio")
+        except Exception:
+            pass
+        rows.append(row)
+        time.sleep(0.25)   # stay under Yahoo's rate limit for this endpoint
     return pd.DataFrame(rows)
 
 
