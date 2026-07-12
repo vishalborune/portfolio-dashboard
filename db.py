@@ -606,16 +606,27 @@ def get_sme_daily_prices(tickers: tuple) -> pd.DataFrame:
     """All stored bhavcopy rows for the given tickers, oldest first.
     Empty df if none of these tickers have any bhavcopy data yet
     (e.g. before the first backfill has run) -- callers must handle that
-    gracefully, same as any other missing-data case in this codebase."""
+    gracefully, same as any other missing-data case in this codebase.
+
+    HARD-LEARNED (13 Jul 2026): Supabase silently caps every query at
+    1000 rows. Multi-ticker queries against ~2yrs of history exceed that,
+    and with ascending order the NEWEST rows were the ones dropped --
+    tickers lost their latest price and fell back to valued-at-cost.
+    So: query DESCENDING (newest guaranteed in), then re-sort ascending
+    in pandas for callers that resample chronologically. If the cap ever
+    bites now, it only trims the oldest history, which merely shortens
+    the EMA lookback instead of corrupting current prices."""
     if not tickers:
         return pd.DataFrame()
     try:
         res = (_client().table("sme_daily_prices")
                .select("*").in_("ticker", list(tickers))
-               .order("price_date").execute())
+               .order("price_date", desc=True).execute())
         df = pd.DataFrame(res.data or [])
         if not df.empty:
             df["price_date"] = pd.to_datetime(df["price_date"])
+            # callers expect chronological order (weekly resampling etc.)
+            df = df.sort_values(["ticker", "price_date"]).reset_index(drop=True)
         return df
     except Exception:
         return pd.DataFrame()
