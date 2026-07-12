@@ -117,6 +117,13 @@ def extract_prices_for_date(d: date) -> dict:
     bse_needed = {k: v for k, v in SME_STOCKS.items() if v["exchange"] == "BSE"}
     if bse_needed:
         bse_df = fetch_bse_bhavcopy(d)
+        if bse_df.empty:
+            print(f"  [bhavcopy] BSE bhavcopy for {d} came back empty "
+                  f"(download failed, or file not yet published for this date) "
+                  f"-- {list(bse_needed.keys())} will be missing this run.")
+        else:
+            print(f"  [bhavcopy] BSE bhavcopy for {d}: {len(bse_df)} rows downloaded OK. "
+                  f"Columns: {list(bse_df.columns)}")
         if not bse_df.empty:
             name_col = next((c for c in bse_df.columns if "NAME" in c), None)
             close_col = next((c for c in bse_df.columns if c in ("CLOSE", "CLOSE_PRICE")), None)
@@ -132,22 +139,28 @@ def extract_prices_for_date(d: date) -> dict:
                     else:
                         match = bse_df[bse_df[name_col].astype(str).str.upper()
                                        .str.contains(cfg["name_hint"], na=False)]
-                    if not match.empty:
-                        row = match.iloc[0]
-                        try:
-                            out[ticker] = {
-                                "open": float(row[o_col]) if o_col else float(row[close_col]),
-                                "high": float(row[h_col]) if h_col else float(row[close_col]),
-                                "low": float(row[l_col]) if l_col else float(row[close_col]),
-                                "close": float(row[close_col]),
-                                "volume": float(row[v_col]) if v_col else 0.0,
-                            }
-                            if code_col and not cfg.get("scrip_code"):
-                                print(f"  [bhavcopy] Matched {ticker} -> "
-                                      f"{row[name_col]} (scrip code {row[code_col]}). "
-                                      f"Verify and hardcode in SME_STOCKS for speed.")
-                        except (ValueError, KeyError):
-                            pass
+                    if match.empty:
+                        print(f"  [bhavcopy] No BSE row matched name_hint "
+                              f"'{cfg['name_hint']}' for {ticker}. "
+                              f"Sample names in file: "
+                              f"{bse_df[name_col].astype(str).head(5).tolist()}")
+                        continue
+                    row = match.iloc[0]
+                    try:
+                        out[ticker] = {
+                            "open": float(row[o_col]) if o_col else float(row[close_col]),
+                            "high": float(row[h_col]) if h_col else float(row[close_col]),
+                            "low": float(row[l_col]) if l_col else float(row[close_col]),
+                            "close": float(row[close_col]),
+                            "volume": float(row[v_col]) if v_col else 0.0,
+                        }
+                        if code_col and not cfg.get("scrip_code"):
+                            print(f"  [bhavcopy] Matched {ticker} -> "
+                                  f"{row[name_col]} (scrip code {row[code_col]}). "
+                                  f"Verify and hardcode in SME_STOCKS for speed.")
+                    except (ValueError, KeyError) as e:
+                        print(f"  [bhavcopy] Matched a row for {ticker} but couldn't "
+                              f"parse price fields: {e}")
     return out
 
 
