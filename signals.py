@@ -99,14 +99,22 @@ def _fetch_weekly_from_bhavcopy(ticker: str) -> pd.DataFrame:
 
 @_cache(ttl=60 * 60 * 4)  # weekly bars barely change intraday; 4h cache
 def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
-    """Weekly OHLCV for one ticker. Empty df on failure."""
+    """Weekly OHLCV for one ticker. Empty df on failure.
+
+    Order matters (hardened 12 Jul 2026): our own bhavcopy table is checked
+    FIRST. For the SME tickers it tracks, the official NSE/BSE EOD data is
+    authoritative — Yahoo's SME coverage, when it answers at all, can serve
+    stale or wrong-instrument bars, which was silently corrupting the
+    flowchart states for those stocks. Non-SME tickers aren't in the table,
+    return empty here, and proceed to Yahoo exactly as before."""
+    bhav = _fetch_weekly_from_bhavcopy(ticker)
+    if not bhav.empty:
+        return bhav
     try:
         df = yf.download(ticker, period=period, interval="1wk",
                          progress=False, auto_adjust=False)
         if df.empty:
-            # Yahoo has nothing for this ticker at all -- try our own
-            # bhavcopy-derived history (NSE Emerge / BSE SME stocks).
-            return _fetch_weekly_from_bhavcopy(ticker)
+            return pd.DataFrame()
         # yfinance returns MultiIndex columns for single ticker sometimes
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
