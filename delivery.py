@@ -1,30 +1,31 @@
 """
 delivery.py — Sprint 3 fast-follow: daily delivery % for tracked holdings.
+v2 (13 Jul 2026): BSE coverage added; per-day logging always on.
 
 WHAT DELIVERY % MEANS
 Of everything traded in a stock today, what share was actually taken as
 delivery (demat transfer) vs squared off intraday? High delivery on an
 up-move = genuine accumulation. Low delivery = speculative churn.
-Agreed design: this is DISPLAYED context only — it never gates or changes
-any flowchart state or alert.
+Agreed design: DISPLAYED context only — never gates any state or alert.
 
-DATA SOURCE
-NSE's official end-of-day "security-wise full bhavdata" CSV:
-  https://archives.nseindia.com/products/content/sec_bhavdata_full_DDMMYYYY.csv
-One file per trading day, includes DELIV_QTY and DELIV_PER per symbol,
-covering all NSE series (EQ/BE and the SME series SM/ST where reported).
-
-SCOPE (honest limits)
-- NSE holdings only in v1. BSE's delivery file is scrip-code keyed and we
-  don't hold code mappings for most BSE names — those show "—" in the
-  dashboard rather than a guessed number. BSE can follow if wanted.
-- Fragile-by-nature like the filings monitor: NSE occasionally changes
-  endpoints or adds bot-blocking. Everything degrades gracefully — a
-  failed day is skipped, never breaks the workflow or the dashboard.
+DATA SOURCES
+- NSE: official "security-wise full bhavdata" CSV (one per trading day),
+  includes DELIV_QTY / DELIV_PER for every symbol incl. SME series:
+    https://archives.nseindia.com/products/content/sec_bhavdata_full_DDMMYYYY.csv
+- BSE (v2): official gross delivery file (one zip per trading day),
+  pipe-delimited TXT keyed by scrip code:
+    https://www.bseindia.com/BSEDATA/gross/YYYY/SCBSEALLDDMM.zip
 
 WHICH STOCKS
-Tracked dynamically: every NSE holding across ALL portfolios (queried from
-the holdings table at runtime) — no hardcoded lists to maintain.
+Tracked dynamically from the holdings table (all portfolios):
+- NSE: every XNSE symbol.
+- BSE: every XBOM symbol. Numeric symbols (e.g. 539997 = Kwality,
+  542669 = BMW Industries) ARE the scrip code. Non-numeric BSE-SME
+  symbols need the explicit map below (codes confirmed during the
+  bhavcopy build). Unknown non-numeric BSE symbols are skipped loudly.
+
+LOGGING LESSON (from the first backfill run): every processed day prints
+an outcome line, success OR failure. A silent spinner is undiagnosable.
 
 Usage:  python delivery.py today       (daily scheduled job)
         python delivery.py backfill    (one-time, ~6 weeks of history)
@@ -35,6 +36,7 @@ import os
 import re
 import sys
 import time
+import zipfile
 from datetime import date, timedelta
 
 import pandas as pd
@@ -42,13 +44,23 @@ import requests
 from supabase import create_client
 
 NSE_URL = "https://archives.nseindia.com/products/content/sec_bhavdata_full_{ddmmyyyy}.csv"
+BSE_URL = "https://www.bseindia.com/BSEDATA/gross/{yyyy}/SCBSEALL{ddmm}.zip"
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
                    "Chrome/124.0 Safari/537.36"),
-    "Accept": "text/csv,*/*",
+    "Accept": "*/*",
+    "Referer": "https://www.bseindia.com/",
 }
-BACKFILL_DAYS = 42   # ~6 weeks calendar -> ~28 trading days (>1 month rolling)
+TIMEOUT = 15          # fail fast; a hung request tells us nothing a failed one doesn't
+BACKFILL_DAYS = 42    # ~6 weeks calendar -> ~28 trading days
+
+# BSE-SME symbols whose dashboard ticker is NOT the scrip code.
+# Codes confirmed against BSE during the bhavcopy build (Jul 2026).
+BSE_SCRIP_OVERRIDES = {
+    "CWD-MS": "543378",     # CWD Ltd
+    "HSIL-MT": "543916",    # Hemant Surgical Industries
+}
 
 
 def _client():
@@ -57,35 +69,47 @@ def _client():
 
 
 # ---------------------------------------------------------------------------
-# Which tickers to track (all NSE holdings, every portfolio)
+# Which tickers to track (all portfolios)
 # ---------------------------------------------------------------------------
 
-def tracked_nse_symbols(client) -> dict:
-    """{'ADFFOODS': 'ADFFOODS.NS', ...} for every NSE holding in the db."""
+def tracked_symbols(client):
+    """Two maps from the holdings table:
+    nse: {'ADFFOODS': 'ADFFOODS.NS', ...}
+    bse: {'539997': '539997.BO', '543378': 'CWD-MS.BO', ...}  (scrip code -> dashboard ticker)
+    """
     res = client.table("holdings").select("stock_name").execute()
-    out = {}
+    nse, bse = {}, {}
     for row in (res.data or []):
-        m = re.search(r"\(XNSE:([^)]+)\)", str(row.get("stock_name") or ""))
+        name = str(row.get("stock_name") or "")
+        m = re.search(r"\(XNSE:([^)]+)\)", name)
         if m:
             sym = m.group(1).strip()
-            out[sym] = f"{sym}.NS"
-    return out
+            nse[sym] = f"{sym}.NS"
+            continue
+        m = re.search(r"\(XBOM:([^)]+)\)", name)
+        if m:
+            sym = m.group(1).strip()
+            if sym.isdigit():
+                bse[sym] = f"{sym}.BO"
+            elif sym in BSE_SCRIP_OVERRIDES:
+                bse[BSE_SCRIP_OVERRIDES[sym]] = f"{sym}.BO"
+            else:
+                print(f"[delivery] BSE symbol '{sym}' has no scrip-code mapping — "
+                      f"skipped. Add it to BSE_SCRIP_OVERRIDES to track it.")
+    return nse, bse
 
 
 # ---------------------------------------------------------------------------
-# Fetch + parse one day's NSE file
+# NSE side
 # ---------------------------------------------------------------------------
 
 def fetch_nse_day(d: date) -> pd.DataFrame:
-    """The full NSE delivery CSV for one date. Empty df on any failure
-    (holiday, weekend, file not yet published, blocking) — by design."""
     url = NSE_URL.format(ddmmyyyy=d.strftime("%d%m%Y"))
     try:
-        r = requests.get(url, headers=HEADERS, timeout=30)
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code != 200 or not r.text or "SYMBOL" not in r.text[:200]:
             return pd.DataFrame()
         df = pd.read_csv(io.StringIO(r.text))
-        # NSE pads both column names and values with spaces
         df.columns = [c.strip() for c in df.columns]
         for c in ("SYMBOL", "SERIES", "DELIV_QTY", "DELIV_PER", "TTL_TRD_QNTY"):
             if c in df.columns and df[c].dtype == object:
@@ -95,33 +119,90 @@ def fetch_nse_day(d: date) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def extract_rows(df: pd.DataFrame, symbols: dict, d: date) -> list:
-    """Rows for our tracked symbols only, delivery fields cleaned.
-    NSE prints '-' where delivery reporting doesn't apply — skipped."""
+def _num(x):
+    try:
+        return float(str(x).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_nse_rows(df: pd.DataFrame, symbols: dict, d: date) -> list:
     if df.empty:
         return []
     hits = df[df["SYMBOL"].isin(symbols.keys())]
     rows = []
     for _, r in hits.iterrows():
-        dp, dq, tq = r.get("DELIV_PER"), r.get("DELIV_QTY"), r.get("TTL_TRD_QNTY")
         try:
-            deliv_pct = float(dp)
+            deliv_pct = float(r.get("DELIV_PER"))
         except (TypeError, ValueError):
-            continue  # '-' or missing: no delivery reporting for this row
-        def _num(x):
-            try:
-                return float(str(x).replace(",", ""))
-            except (TypeError, ValueError):
-                return None
-        rows.append({
-            "ticker": symbols[r["SYMBOL"]],
-            "price_date": d.isoformat(),
-            "deliv_pct": deliv_pct,
-            "deliv_qty": _num(dq),
-            "traded_qty": _num(tq),
-        })
+            continue  # '-' = no delivery reporting for this series
+        rows.append({"ticker": symbols[r["SYMBOL"]], "price_date": d.isoformat(),
+                     "deliv_pct": deliv_pct, "deliv_qty": _num(r.get("DELIV_QTY")),
+                     "traded_qty": _num(r.get("TTL_TRD_QNTY"))})
     return rows
 
+
+# ---------------------------------------------------------------------------
+# BSE side (v2)
+# ---------------------------------------------------------------------------
+
+def fetch_bse_day(d: date) -> pd.DataFrame:
+    """BSE gross delivery file for one date. Zip containing one pipe-delimited
+    TXT. Empty df on any failure (holiday, not published, blocked)."""
+    url = BSE_URL.format(yyyy=d.strftime("%Y"), ddmm=d.strftime("%d%m"))
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code != 200 or not r.content:
+            return pd.DataFrame()
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        name = zf.namelist()[0]
+        text = zf.read(name).decode("utf-8", errors="replace")
+        sep = "|" if "|" in text.splitlines()[0] else ","
+        df = pd.read_csv(io.StringIO(text), sep=sep)
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _find_col(df, *needles):
+    """First column whose name contains ALL the given substrings."""
+    for c in df.columns:
+        if all(n in c for n in needles):
+            return c
+    return None
+
+
+def extract_bse_rows(df: pd.DataFrame, scrips: dict, d: date) -> list:
+    """scrips: {scrip_code: dashboard_ticker}. Column names in BSE's file
+    have shifted over the years, so locate them by substring, not position."""
+    if df.empty:
+        return []
+    c_code = _find_col(df, "SCRIP")
+    c_pct = _find_col(df, "DELV", "PER") or _find_col(df, "DELIVERY", "PER")
+    c_dqty = _find_col(df, "DELIVERY", "QTY") or _find_col(df, "DELV", "QTY")
+    c_vol = _find_col(df, "VOLUME")
+    if not c_code or not c_pct:
+        print(f"  [delivery] BSE file for {d}: unrecognised columns {list(df.columns)[:8]} — skipped")
+        return []
+    codes = df[c_code].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    hits = df[codes.isin(scrips.keys())]
+    rows = []
+    for _, r in hits.iterrows():
+        code = str(r[c_code]).strip().replace(".0", "")
+        deliv_pct = _num(r[c_pct])
+        if deliv_pct is None:
+            continue
+        rows.append({"ticker": scrips[code], "price_date": d.isoformat(),
+                     "deliv_pct": deliv_pct,
+                     "deliv_qty": _num(r[c_dqty]) if c_dqty else None,
+                     "traded_qty": _num(r[c_vol]) if c_vol else None})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Store + modes
+# ---------------------------------------------------------------------------
 
 def store_rows(client, rows: list):
     for row in rows:
@@ -132,46 +213,46 @@ def store_rows(client, rows: list):
             print(f"  [delivery] store failed {row['ticker']} {row['price_date']}: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Modes
-# ---------------------------------------------------------------------------
+def process_day(client, d: date, nse: dict, bse: dict) -> int:
+    """Fetch + store one day, ALWAYS printing the outcome. Returns rows stored."""
+    nse_rows = extract_nse_rows(fetch_nse_day(d), nse, d) if nse else []
+    bse_rows = extract_bse_rows(fetch_bse_day(d), bse, d) if bse else []
+    rows = nse_rows + bse_rows
+    if rows:
+        store_rows(client, rows)
+        print(f"[delivery] {d}: stored {len(nse_rows)} NSE + {len(bse_rows)} BSE symbols")
+    else:
+        print(f"[delivery] {d}: no data (holiday, not yet published, or fetch blocked)")
+    return len(rows)
+
 
 def update_today(client):
     d = date.today()
     if d.weekday() >= 5:
         print(f"[delivery] {d}: weekend — nothing to fetch")
         return
-    symbols = tracked_nse_symbols(client)
-    if not symbols:
-        print("[delivery] no NSE holdings found — nothing to track")
+    nse, bse = tracked_symbols(client)
+    if not (nse or bse):
+        print("[delivery] no holdings found — nothing to track")
         return
-    day = fetch_nse_day(d)
-    rows = extract_rows(day, symbols, d)
-    if rows:
-        store_rows(client, rows)
-        print(f"[delivery] {d}: stored {len(rows)}/{len(symbols)} tracked NSE symbols")
-    else:
-        print(f"[delivery] {d}: no data (holiday, not yet published, or fetch blocked) — skipped")
+    process_day(client, d, nse, bse)
 
 
 def backfill(client, days: int = BACKFILL_DAYS):
-    symbols = tracked_nse_symbols(client)
-    if not symbols:
-        print("[delivery] no NSE holdings found — nothing to backfill")
+    nse, bse = tracked_symbols(client)
+    if not (nse or bse):
+        print("[delivery] no holdings found — nothing to backfill")
         return
+    print(f"[delivery] Backfill: tracking {len(nse)} NSE symbols, {len(bse)} BSE scrips")
     d = date.today() - timedelta(days=days)
-    found = 0
+    days_with_data = 0
     while d <= date.today():
         if d.weekday() < 5:
-            day = fetch_nse_day(d)
-            rows = extract_rows(day, symbols, d)
-            if rows:
-                store_rows(client, rows)
-                found += 1
-                print(f"  [delivery backfill] {d}: {len(rows)} symbols stored")
-            time.sleep(1)   # be polite to NSE's archive server
+            if process_day(client, d, nse, bse):
+                days_with_data += 1
+            time.sleep(1)   # be polite to the exchange servers
         d += timedelta(days=1)
-    print(f"[delivery] Backfill complete: {found} trading days stored")
+    print(f"[delivery] Backfill complete: {days_with_data} trading days stored")
 
 
 if __name__ == "__main__":
