@@ -209,11 +209,17 @@ def delete_realised(realised_id: int):
 
 
 def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
-                 partial_quantity: Optional[float] = None):
+                 partial_quantity: Optional[float] = None,
+                 reason: Optional[str] = None, notes: Optional[str] = None):
     """Move a holding (or part of it) into the realised table.
 
     If partial_quantity is set and < total, the remaining quantity stays in
     holdings (so partial sells work). Also logs the sell in transactions.
+
+    Sprint 3: if `reason` is given, the exit is also logged in trade_journal
+    so the 30/60/90-day audit engine (exit_audit.py) can later measure what
+    the stock did after we sold. The journal write is best-effort: a failure
+    there never blocks the actual sell.
     """
     holdings = get_holdings()
     row = holdings[holdings["id"] == holding_id]
@@ -271,7 +277,57 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
         new_invested = round(new_qty * float(r["purchase_cost"]), 2)
         update_holding(holding_id, quantity=new_qty, amount_invested=new_invested)
 
+    # Sprint 3: trade journal entry (best-effort, never blocks the sell)
+    if reason:
+        try:
+            add_journal_entry(
+                stock_name=r["stock_name"],
+                exit_date=sale_d or date.today(),
+                exit_price=float(selling_price),
+                qty_sold=sold_qty,
+                reason=reason,
+                notes=notes,
+            )
+        except Exception:
+            pass
+
     _bust()
+
+
+# ===============================================================
+# TRADE JOURNAL (Sprint 3)
+# ===============================================================
+
+JOURNAL_REASONS = ("EXIT signal", "Profit booking", "Thesis broken", "Override/Other")
+
+
+def add_journal_entry(stock_name: str, exit_date: date, exit_price: float,
+                      qty_sold: float, reason: str, notes: Optional[str] = None):
+    """One row per exit. `ticker` stores the full stock_name string
+    ('COMPANY (XNSE:SYMBOL)') so the audit engine can derive the Yahoo
+    symbol with the exact same parsing the dashboard uses."""
+    payload = {
+        "portfolio_id": _active_pf(),
+        "ticker": stock_name,
+        "exit_date": _iso(_clean_date(exit_date)),
+        "exit_price": float(exit_price),
+        "qty_sold": float(qty_sold),
+        "reason": reason,
+        "notes": notes or None,
+    }
+    _client().table("trade_journal").insert(payload).execute()
+    _bust()
+
+
+@st.cache_data(ttl=60)
+def _get_journal_cached(pf: int) -> pd.DataFrame:
+    res = (_client().table("trade_journal").select("*")
+           .eq("portfolio_id", pf).order("exit_date", desc=True).execute())
+    return pd.DataFrame(res.data or [])
+
+
+def get_trade_journal() -> pd.DataFrame:
+    return _get_journal_cached(_active_pf())
 
 
 # ===============================================================
