@@ -1,8 +1,13 @@
-# Entry point for the Lakshmi household deployment.
-# Streamlit re-executes THIS file on every interaction (rerun). `import app`
-# only executes app.py's body on the FIRST run (Python caches modules), so we
-# must call main() explicitly — that's what renders the page on every rerun.
-# Which household this serves is decided by APP_TENANT in THIS app's secrets.
-import app
+STAGE = 1
 
-app.main()
+import streamlit as st
+
+st.title(f"🔬 Bisect stage {STAGE}")
+st.write("If you can read this, this stage is ALIVE.")
+
+import numpy as np
+import pandas as pd
+st.write(f"Stage 1 OK — pandas {pd.__version__}, numpy {np.__version__}")
+df = pd.DataFrame({"a": [1.5, 2.5], "b": ["x", "y"]})
+st.dataframe(df)
+st.write("Stage 1b OK — dataframe rendered (pyarrow serialization works)")
