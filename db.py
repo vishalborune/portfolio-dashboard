@@ -504,3 +504,25 @@ def buy_more(holding_id: int, additional_qty: float, price: float,
         "new_qty": new_qty, "new_avg": new_avg,
         "new_invested": new_invested,
     }
+
+
+# ---------------------------------------------------------------------------
+# SME daily prices (bhavcopy pipeline — Sprint 3)
+# ---------------------------------------------------------------------------
+def get_sme_daily_prices(tickers: tuple) -> pd.DataFrame:
+    """All stored bhavcopy rows for the given tickers, oldest first.
+    Empty df if none of these tickers have any bhavcopy data yet
+    (e.g. before the first backfill has run) -- callers must handle that
+    gracefully, same as any other missing-data case in this codebase."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        res = (_client().table("sme_daily_prices")
+               .select("*").in_("ticker", list(tickers))
+               .order("price_date").execute())
+        df = pd.DataFrame(res.data or [])
+        if not df.empty:
+            df["price_date"] = pd.to_datetime(df["price_date"])
+        return df
+    except Exception:
+        return pd.DataFrame()
