@@ -1,8 +1,14 @@
-streamlit>=1.32
-pandas>=2.0
-numpy>=1.24
-yfinance>=0.2.40
-plotly>=5.18
-openpyxl>=3.1
-supabase>=2.0
-scipy>=1.11
+# PINNED dependency set — verified working together (12 Jul 2026).
+# Do NOT use >= ranges here: unpinned versions let Streamlit Cloud drift onto
+# brand-new releases (e.g. pandas 3.x) whose native code can segfault the app.
+# To upgrade anything: change the pin deliberately, test, deploy.
+streamlit==1.41.1
+pandas==2.2.3
+numpy==2.1.3
+yfinance==0.2.54
+pyarrow==17.0.0
+plotly==5.24.1
+openpyxl==3.1.5
+supabase==2.15.0
+scipy==1.14.1
+requests==2.32.3
