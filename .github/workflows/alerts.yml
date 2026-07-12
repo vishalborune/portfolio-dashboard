@@ -9,6 +9,11 @@ on:
     - cron: "30 4 * * 0"                  # digest: Sunday 10:00 IST
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
   workflow_dispatch:                       # manual run button
+    inputs:
+      run_backfill:
+        description: "Also run the one-time bhavcopy backfill (~2yr history)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -91,6 +96,24 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python bhavcopy.py today
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  bhavcopy-backfill:
+    # ONE-TIME job: fetches ~2 years of history so the weekly EMA system
+    # has enough data immediately, instead of building up day-by-day.
+    # Manual-trigger ONLY (no schedule) -- run this once, then ignore it.
+    # Takes several minutes: it walks every weekday individually.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_backfill == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python bhavcopy.py backfill
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
