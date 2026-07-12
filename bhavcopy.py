@@ -38,10 +38,12 @@ SME_STOCKS = {
     "TCL.NS":    {"exchange": "NSE", "symbol": "TCL"},
     "UTSSAV.NS": {"exchange": "NSE", "symbol": "UTSSAV"},
     "VIESL.NS":  {"exchange": "NSE", "symbol": "VIESL"},
-    "CWD-MS.BO": {"exchange": "BSE", "name_hint": "CAPITAL WORTH",  # verify on first run
-                  "scrip_code": None},
-    "HSIL-MT.BO": {"exchange": "BSE", "name_hint": "HEMANT SURGICAL",
-                   "scrip_code": None},
+    # BSE's SC_NAME field is a short abbreviated code (e.g. "AEGISLOG" for
+    # Aegis Logistics), NOT a full company name -- confirmed against a real
+    # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
+    # -MS/-MT segment suffix, matching that convention.
+    "CWD-MS.BO": {"exchange": "BSE", "name_hint": "CWD", "scrip_code": None},
+    "HSIL-MT.BO": {"exchange": "BSE", "name_hint": "HSIL", "scrip_code": None},
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -136,15 +138,28 @@ def extract_prices_for_date(d: date) -> dict:
                 for ticker, cfg in bse_needed.items():
                     if cfg.get("scrip_code") and code_col:
                         match = bse_df[bse_df[code_col].astype(str) == str(cfg["scrip_code"])]
+                        strategy = "scrip_code"
                     else:
-                        match = bse_df[bse_df[name_col].astype(str).str.upper()
-                                       .str.contains(cfg["name_hint"], na=False)]
+                        names_upper = bse_df[name_col].astype(str).str.upper().str.strip()
+                        hint = cfg["name_hint"].upper()
+                        match = bse_df[names_upper == hint]
+                        strategy = "exact"
+                        if match.empty:
+                            match = bse_df[names_upper.str.startswith(hint, na=False)]
+                            strategy = "startswith"
+                        if match.empty:
+                            match = bse_df[names_upper.str.contains(hint, na=False)]
+                            strategy = "contains"
                     if match.empty:
-                        print(f"  [bhavcopy] No BSE row matched name_hint "
-                              f"'{cfg['name_hint']}' for {ticker}. "
+                        print(f"  [bhavcopy] No BSE row matched '{cfg['name_hint']}' "
+                              f"for {ticker} (tried exact/startswith/contains). "
                               f"Sample names in file: "
-                              f"{bse_df[name_col].astype(str).head(5).tolist()}")
+                              f"{bse_df[name_col].astype(str).head(8).tolist()}")
                         continue
+                    if len(match) > 1:
+                        print(f"  [bhavcopy] WARNING: '{cfg['name_hint']}' matched "
+                              f"{len(match)} rows via {strategy} match for {ticker} -- "
+                              f"using the first. Consider a tighter hint.")
                     row = match.iloc[0]
                     try:
                         out[ticker] = {
