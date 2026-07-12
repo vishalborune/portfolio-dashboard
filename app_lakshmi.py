@@ -1,4 +1,4 @@
-STAGE = 11
+STAGE = "11b"
 
 import streamlit as st
 st.title(f"🔬 Bisect stage {STAGE}")
@@ -10,7 +10,7 @@ st.session_state["user"] = "Lakshmi"
 st.session_state["portfolio_id"] = 2
 st.session_state["portfolios"] = {2: "Lakshmi", 3: "Abinaya"}
 
-import db, signals
+import db
 import app as appmod
 
 st.write("① Fetching holdings...")
@@ -21,13 +21,13 @@ st.write("② Enriching...")
 enriched = appmod.enrich_holdings(holdings)
 st.write(f"✅ enriched shape {enriched.shape}")
 
-st.write("③ Computing KPIs...")
-k = appmod.compute_kpis(enriched)
-st.write(f"✅ KPIs: {k}")
-
-st.write("④ Fetching realised P&L...")
+st.write("③ Fetching realised...")
 realised = db.get_realised()
 st.write(f"✅ {len(realised)} realised rows")
+
+st.write("④ Computing KPIs (with BOTH args this time)...")
+k = appmod.compute_kpis(enriched, realised)
+st.write(f"✅ KPIs: {k}")
 
 st.write("⑤ Fetching transactions...")
 txns = db.get_transactions()
@@ -41,4 +41,4 @@ st.write("⑦ Fetching notes...")
 notes = db.get_notes()
 st.write(f"✅ {len(notes)} notes")
 
-st.write("🎉 STAGE 11 CLEAR — all data functions survive in sequence")
+st.write("🎉 STAGE 11b CLEAR — everything main() needs before rendering tabs survives")
