@@ -73,59 +73,64 @@ def login_gate():
                     FRIEND_PASSWORD read-only view)
       - "lakshmi": Lakshmi household only; LAKSHMI_PASSWORD; portfolios 2 & 3
     The two apps share code + database but neither can log into the other.
+
+    The whole form lives inside an st.empty() placeholder so that on a
+    successful login (which returns True and lets the SAME script run
+    continue into the dashboard — no rerun, see the crash post-mortem)
+    the form is erased before the dashboard renders below it.
     """
     tenant = _get_secret("APP_TENANT", "vishal").strip().lower()
 
     if st.session_state.get("role"):
         return True
 
-    st.title("📈 Portfolio Dashboard")
-    st.caption("Enter your password to continue")
-    pw = st.text_input("Password", type="password", key="pw_input")
+    gate = st.empty()
+    with gate.container():
+        st.title("📈 Portfolio Dashboard")
+        st.caption("Enter your password to continue")
+        pw = st.text_input("Password", type="password", key="pw_input")
 
-    if tenant == "lakshmi":
-        lakshmi_pw = _get_secret("LAKSHMI_PASSWORD")
-        if not lakshmi_pw:
-            st.error("⚠️ App not configured. Set LAKSHMI_PASSWORD in Streamlit secrets.")
+        if tenant == "lakshmi":
+            lakshmi_pw = _get_secret("LAKSHMI_PASSWORD")
+            if not lakshmi_pw:
+                st.error("⚠️ App not configured. Set LAKSHMI_PASSWORD in Streamlit secrets.")
+                st.stop()
+            if st.button("Enter", type="primary"):
+                if pw == lakshmi_pw:
+                    st.session_state.role = "lakshmi"
+                    st.session_state.user = "Lakshmi"
+                    st.session_state.portfolios = {2: "Lakshmi", 3: "Abinaya"}
+                    st.session_state.portfolio_id = 2
+                    gate.empty()   # wipe the login form before the dashboard draws
+                    return True
+                else:
+                    st.error("Wrong password.")
+            return False
+
+        # Default tenant: Vishal's app
+        owner_pw = _get_secret("OWNER_PASSWORD")
+        friend_pw = _get_secret("FRIEND_PASSWORD")
+        if not owner_pw:
+            st.error("⚠️ App not configured. Set OWNER_PASSWORD in Streamlit secrets.")
             st.stop()
         if st.button("Enter", type="primary"):
-            if pw == lakshmi_pw:
-                st.session_state.role = "lakshmi"
-                st.session_state.user = "Lakshmi"
-                st.session_state.portfolios = {2: "Lakshmi", 3: "Abinaya"}
-                st.session_state.portfolio_id = 2
-                # No explicit st.rerun() here: the button click already
-                # triggers Streamlit's own automatic rerun. Calling rerun()
-                # AGAIN from inside that in-flight rerun caused an
-                # intermittent native crash. Returning True lets THIS same
-                # execution continue straight into the dashboard instead.
+            if pw == owner_pw:
+                st.session_state.role = "owner"
+                st.session_state.user = "Vishal"
+                st.session_state.portfolios = {1: "Vishal"}
+                st.session_state.portfolio_id = 1
+                gate.empty()
+                return True
+            elif friend_pw and pw == friend_pw:
+                st.session_state.role = "friend"
+                st.session_state.user = _get_secret("FRIEND_NAME", "Friend")
+                st.session_state.portfolios = {1: "Vishal"}
+                st.session_state.portfolio_id = 1
+                gate.empty()
                 return True
             else:
                 st.error("Wrong password.")
         return False
-
-    # Default tenant: Vishal's app
-    owner_pw = _get_secret("OWNER_PASSWORD")
-    friend_pw = _get_secret("FRIEND_PASSWORD")
-    if not owner_pw:
-        st.error("⚠️ App not configured. Set OWNER_PASSWORD in Streamlit secrets.")
-        st.stop()
-    if st.button("Enter", type="primary"):
-        if pw == owner_pw:
-            st.session_state.role = "owner"
-            st.session_state.user = "Vishal"
-            st.session_state.portfolios = {1: "Vishal"}
-            st.session_state.portfolio_id = 1
-            return True
-        elif friend_pw and pw == friend_pw:
-            st.session_state.role = "friend"
-            st.session_state.user = _get_secret("FRIEND_NAME", "Friend")
-            st.session_state.portfolios = {1: "Vishal"}
-            st.session_state.portfolio_id = 1
-            return True
-        else:
-            st.error("Wrong password.")
-    return False
 
 
 def portfolio_switcher():
