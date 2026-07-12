@@ -562,6 +562,11 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
     deliv = db.get_delivery_pct(tickers)
     if not deliv.empty:
         df = df.merge(deliv, on="Ticker", how="left")
+        # force numeric dtype: stocks without delivery data must be true
+        # NaN (renders as "—" via na_rep), never a printed "None"
+        for c in ("Deliv % (last)", "Deliv % (4wk)"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
 
     # % distance of LIVE price from the 10-week EMA (add-timing helper):
     # +20% = price 20% above the 10wEMA (extended); -10% = 10% below it.
@@ -781,7 +786,7 @@ def tab_holdings(enriched: pd.DataFrame):
             st.caption("Deliv % = share of traded quantity actually taken as delivery "
                        "(4wk = rolling average). High = genuine accumulation, low = intraday "
                        "churn. Context only — it never changes any state or alert. "
-                       "NSE stocks only; BSE names show —.")
+                       "Sourced from NSE/BSE official EOD files; — means no data yet for that stock.")
 
         # --- State detail expander: why is each stock in its state? ---
         if "State Reason" in enriched.columns:
