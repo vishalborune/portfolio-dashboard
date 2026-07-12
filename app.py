@@ -915,12 +915,21 @@ def tab_watchlist():
         if tickers:
             prices = fetch_live_prices(tickers)
             wl_view = wl_view.merge(prices, on="Ticker", how="left")
-            # Lakshmi's staged-entry system: 10DMA = 1st tranche, 21DMA = final
-            with st.spinner("Checking entry zones (10/21 DMA)…"):
-                entries = signals.entry_states_for_watchlist(tickers)
-            if not entries.empty:
+            # Lakshmi's staged-entry system: 10DMA = 1st tranche, 21DMA = final.
+            # On-demand (button) rather than auto-run: keeps the tab light and
+            # avoids heavy daily-bar fetches on every app load.
+            if st.button("🎯 Check entry zones (10/21 DMA)", key="check_entry_zones"):
+                try:
+                    with st.spinner("Checking entry zones…"):
+                        st.session_state["entry_zone_cache"] = (
+                            signals.entry_states_for_watchlist(tickers))
+                except Exception as e:
+                    st.error(f"Entry-zone check failed: {e}")
+            entries = st.session_state.get("entry_zone_cache")
+            if entries is not None and not entries.empty:
                 wl_view = wl_view.merge(
-                    entries.drop(columns=["CMP (d)"]), on="Ticker", how="left")
+                    entries.drop(columns=["CMP (d)"], errors="ignore"),
+                    on="Ticker", how="left")
             if "target_buy_price" in wl_view.columns:
                 wl_view["Distance to Target %"] = (
                     (wl_view["CMP"] - wl_view["target_buy_price"]) / wl_view["target_buy_price"] * 100
