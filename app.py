@@ -537,6 +537,12 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
         states = signals.states_for_holdings(tickers)
     df = df.merge(states, on="Ticker", how="left")
 
+    # Delivery % (Sprint 3 fast-follow) — context column only, never gates
+    # any state or alert. Empty/failed fetch = column simply shows "—".
+    deliv = db.get_delivery_pct(tickers)
+    if not deliv.empty:
+        df = df.merge(deliv, on="Ticker", how="left")
+
     # % distance of LIVE price from the 10-week EMA (add-timing helper):
     # +20% = price 20% above the 10wEMA (extended); -10% = 10% below it.
     if "EMA10" in df.columns:
@@ -650,7 +656,7 @@ def tab_holdings(enriched: pd.DataFrame):
         COLUMN_VIEWS = {
             "📊 Decision view": [
                 "Short Name", "State Display", "% from 10wEMA", "Vol vs 10wk",
-                "CMP", "purchase_cost", "quantity",
+                "Deliv % (4wk)", "CMP", "purchase_cost", "quantity",
             ],
             "💰 P&L view": [
                 "Short Name", "State Display", "quantity", "purchase_cost", "Invested",
@@ -662,6 +668,7 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 10wk",
+                "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
                 "Sector", "Market Cap (Cr)", "PE (live)", "P/B", "EV/EBITDA", "PEG",
@@ -678,7 +685,8 @@ def tab_holdings(enriched: pd.DataFrame):
         with vc2:
             sort_by = st.selectbox(
                 "Sort by",
-                ["State (urgent first)", "% from 10wEMA", "Vol vs 10wk", "Invested",
+                ["State (urgent first)", "% from 10wEMA", "Vol vs 10wk", "Deliv % (4wk)",
+                 "Invested",
                  "Day Change %", "P&L %", "P&L", "Allocation %", "Current Value", "Short Name"],
                 index=0, key="holdings_sort",
             )
@@ -718,11 +726,25 @@ def tab_holdings(enriched: pd.DataFrame):
         # subset referencing a missing column raises KeyError.
         pnl_cols = [c for c in ["Day Change %", "P&L", "P&L %"] if c in view.columns]
         ema_cols = [c for c in ["% from 10wEMA"] if c in view.columns]
+        deliv_cols = [c for c in ["Deliv % (last)", "Deliv % (4wk)"] if c in view.columns]
+
+        def color_delivery(val):
+            """High delivery = genuine hands taking stock home; low = intraday churn."""
+            if pd.isna(val):
+                return "color: #888;"
+            if val >= 60:
+                return "color: #15803d; font-weight: 700;"   # strong accumulation
+            if val >= 40:
+                return "color: #22c55e;"                      # healthy
+            if val >= 25:
+                return "color: #f59e0b;"                      # mixed
+            return "color: #ef4444;"                          # mostly speculative churn
 
         styled = view.style.format({
             "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
             "CMP": "₹{:,.2f}",
             "% from 10wEMA": "{:+.1f}%", "Vol vs 10wk": "{:.1f}x",
+            "Deliv % (last)": "{:.0f}%", "Deliv % (4wk)": "{:.0f}%",
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
@@ -732,7 +754,14 @@ def tab_holdings(enriched: pd.DataFrame):
             styled = styled.map(color_pnl, subset=pnl_cols)
         if ema_cols:
             styled = styled.map(color_ema_distance, subset=ema_cols)
+        if deliv_cols:
+            styled = styled.map(color_delivery, subset=deliv_cols)
         st.dataframe(styled, use_container_width=True, height=520, hide_index=True)
+        if deliv_cols:
+            st.caption("Deliv % = share of traded quantity actually taken as delivery "
+                       "(4wk = rolling average). High = genuine accumulation, low = intraday "
+                       "churn. Context only — it never changes any state or alert. "
+                       "NSE stocks only; BSE names show —.")
 
         # --- State detail expander: why is each stock in its state? ---
         if "State Reason" in enriched.columns:
