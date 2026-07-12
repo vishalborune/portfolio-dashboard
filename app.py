@@ -518,11 +518,22 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
 
     df["quantity"] = df["quantity"].astype(float)
     df["purchase_cost"] = df["purchase_cost"].astype(float)
-    df["Current Value"] = df["CMP"] * df["quantity"]
     df["Invested"] = df["purchase_cost"] * df["quantity"]
+
+    # IMPORTANT: when a stock has no live price (CMP is NaN — e.g. the SME
+    # names Yahoo doesn't cover), do NOT let Current Value become NaN.
+    # pandas .sum() silently treats NaN as 0, which was making those
+    # holdings' entire market value vanish from portfolio totals while
+    # their invested cost stayed counted — understating unrealised P&L by
+    # the full amount invested in every no-price stock. Fallback: value
+    # unknown-price holdings at cost (flat, P&L=0 for that row) instead of
+    # erasing them. This is the honest "we don't know, so assume no gain
+    # or loss" convention, not a fabricated number.
+    has_price = df["CMP"].notna()
+    df["Current Value"] = df["Invested"].where(~has_price, df["CMP"] * df["quantity"])
     df["P&L"] = df["Current Value"] - df["Invested"]
-    df["P&L %"] = (df["P&L"] / df["Invested"]) * 100
-    df["Day P&L"] = (df["CMP"] - df["Prev Close"]) * df["quantity"]
+    df["P&L %"] = (df["P&L"] / df["Invested"]).replace([float("inf"), -float("inf")], 0) * 100
+    df["Day P&L"] = ((df["CMP"] - df["Prev Close"]) * df["quantity"]).fillna(0)
     total = df["Current Value"].sum()
     df["Allocation %"] = (df["Current Value"] / total * 100) if total else 0
     return df
