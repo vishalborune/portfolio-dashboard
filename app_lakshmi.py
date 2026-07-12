@@ -1,4 +1,4 @@
-STAGE = 1
+STAGE = 2
 
 import streamlit as st
 
@@ -11,3 +11,8 @@ st.write(f"Stage 1 OK — pandas {pd.__version__}, numpy {np.__version__}")
 df = pd.DataFrame({"a": [1.5, 2.5], "b": ["x", "y"]})
 st.dataframe(df)
 st.write("Stage 1b OK — dataframe rendered (pyarrow serialization works)")
+
+import plotly.express as px
+fig = px.line(x=[1, 2, 3], y=[1, 4, 9])
+st.plotly_chart(fig)
+st.write("Stage 2 OK — plotly rendered")
