@@ -383,6 +383,32 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                      "Price Stale": stale, "Price Source": source,
                      "Price Date": str(bdate) if bdate else "—"})
 
+    # --- SME rescue pass (Sprint 3): bhavcopy fallback for Yahoo's blind spot ---
+    # Yahoo carries zero data for NSE Emerge / BSE SME. For any ticker still
+    # missing a price after the yfinance passes above, check our own
+    # bhavcopy-derived table (updated once daily, after market close, from
+    # NSE/BSE's own official EOD files -- see bhavcopy.py).
+    sme_missing = [row["Ticker"] for row in rows if pd.isna(row["CMP"])]
+    if sme_missing:
+        try:
+            bhav = db.get_sme_daily_prices(tuple(sme_missing))
+        except Exception:
+            bhav = pd.DataFrame()
+        if not bhav.empty:
+            for row in rows:
+                if not pd.isna(row["CMP"]):
+                    continue
+                sub = bhav[bhav["ticker"] == row["Ticker"]].sort_values("price_date")
+                if sub.empty:
+                    continue
+                latest = sub.iloc[-1]
+                prev = sub.iloc[-2] if len(sub) >= 2 else latest
+                row["CMP"] = float(latest["close"])
+                row["Prev Close"] = float(prev["close"])
+                row["Price Stale"] = False
+                row["Price Source"] = "bhavcopy (EOD, official NSE/BSE)"
+                row["Price Date"] = str(latest["price_date"].date())
+
     # --- Rescue pass for stale BSE scrips ---
     for row in rows:
         if not row["Price Stale"]:
