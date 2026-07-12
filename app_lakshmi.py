@@ -1,4 +1,4 @@
-STAGE = 9
+STAGE = 10
 
 import streamlit as st
 st.title(f"🔬 Bisect stage {STAGE}")
@@ -6,20 +6,27 @@ st.write("If you can read this, this stage is ALIVE.")
 
 import os
 os.environ["APP_TENANT"] = "lakshmi"
-
-import db
 st.session_state["portfolio_id"] = 2
 st.session_state["portfolios"] = {2: "Lakshmi", 3: "Abinaya"}
 
-st.write("Calling db.get_holdings()...")
-holdings = db.get_holdings()
-st.write(f"OK — got {len(holdings)} holdings")
-st.dataframe(holdings)
+import db
+wl = db.get_watchlist()
+st.write(f"Watchlist has {len(wl)} row(s)")
+st.dataframe(wl)
 
 import app as appmod
-st.write("Calling app.enrich_holdings()...")
-enriched = appmod.enrich_holdings(holdings)
-st.write(f"OK — enriched shape {enriched.shape}")
-st.dataframe(enriched)
+tickers = tuple(t for t in wl["Ticker"].dropna().unique()) if not wl.empty and "Ticker" in wl.columns else ()
+st.write(f"Tickers to fetch: {tickers}")
 
-st.write("STAGE 9 CLEAR")
+if tickers:
+    st.write("Calling fetch_live_prices() — the threaded quote fetcher...")
+    prices = appmod.fetch_live_prices(tickers)
+    st.write("OK — fetch_live_prices survived!")
+    st.dataframe(prices)
+else:
+    st.write("No tickers in watchlist — nothing to fetch, trying a synthetic one instead")
+    prices = appmod.fetch_live_prices(("RELIANCE.NS", "TCS.NS"))
+    st.write("OK — fetch_live_prices survived with synthetic tickers!")
+    st.dataframe(prices)
+
+st.write("STAGE 10 CLEAR")
