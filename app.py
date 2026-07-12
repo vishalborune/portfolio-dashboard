@@ -909,6 +909,17 @@ def _form_mark_as_sold(enriched: pd.DataFrame):
                 max_value=float(row["quantity"]), value=float(row["quantity"]),
                 step=1.0, disabled=not partial,
             )
+        # Sprint 3: trade journal — WHY is this exit happening?
+        c5, c6 = st.columns(2)
+        with c5:
+            sell_reason = st.selectbox(
+                "Why are you selling?", db.JOURNAL_REASONS,
+                help="Logged in the trade journal. The audit engine checks back "
+                     "30/60/90 days later to see what the stock did after the exit.",
+            )
+        with c6:
+            sell_notes = st.text_input("Notes (optional)", max_chars=200,
+                                       placeholder="e.g. Lakshmi's call after weekly close")
         submitted = st.form_submit_button("Mark as sold", type="primary")
 
     if submitted:
@@ -921,6 +932,8 @@ def _form_mark_as_sold(enriched: pd.DataFrame):
                 selling_price=sell_price,
                 sale_date=sell_dt,
                 partial_quantity=partial_qty if partial else None,
+                reason=sell_reason,
+                notes=sell_notes.strip() or None,
             )
             st.success("✅ Trade closed — moved to Realised P&L")
             st.rerun()
@@ -1163,6 +1176,41 @@ def tab_realised(realised: pd.DataFrame):
         st.markdown("**💀 Top 5 losers**")
         st.dataframe(realised.nsmallest(5, "gain_loss")[["stock_name", "gain_loss", "pct_gain_loss"]],
                      use_container_width=True, hide_index=True)
+
+    # --- Sprint 3: Trade Journal + 30/60/90-day exit audits ---
+    st.markdown("---")
+    st.markdown("**📓 Trade Journal — what happened after we sold**")
+    journal = db.get_trade_journal()
+    if journal.empty:
+        st.caption("No journaled exits yet. Every sell from now on asks "
+                   "'Why are you selling?' and lands here — then the audit engine "
+                   "checks the price 30/60/90 days later.")
+    else:
+        jv = journal.copy()
+        jv["Stock"] = jv["ticker"].apply(short_name)
+
+        def _audit_cell(row, col):
+            p = row.get(col)
+            if p is None or pd.isna(p):
+                return "⏳ pending"
+            chg = (float(p) - float(row["exit_price"])) / float(row["exit_price"]) * 100
+            # Stock fell after we sold → the exit saved money; rose → it cost us
+            verdict = "saved" if chg < 0 else "cost"
+            return f"₹{float(p):,.1f} ({verdict} {abs(chg):.1f}%)"
+
+        for col in ("price_30d", "price_60d", "price_90d"):
+            jv[col.replace("price_", "After ").replace("d", " days")] = jv.apply(
+                lambda r, c=col: _audit_cell(r, c), axis=1)
+        show = jv[["Stock", "exit_date", "exit_price", "qty_sold", "reason",
+                   "After 30 days", "After 60 days", "After 90 days", "notes"]].rename(
+            columns={"exit_date": "Exit Date", "exit_price": "Exit ₹",
+                     "qty_sold": "Qty", "reason": "Reason", "notes": "Notes"})
+        st.dataframe(show.style.format({"Exit ₹": "₹{:,.2f}", "Qty": "{:,.0f}"},
+                                       na_rep="—"),
+                     use_container_width=True, hide_index=True)
+        st.caption("'saved X%' = the stock fell after the exit (the rule protected you). "
+                   "'cost X%' = it kept rising (the exit left money on the table). "
+                   "Audits fill in automatically as each window matures.")
 
 
 # ---------------------------------------------------------------------------
