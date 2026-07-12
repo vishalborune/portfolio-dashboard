@@ -432,8 +432,9 @@ def buy_more(holding_id: int, additional_qty: float, price: float,
     add_qty = float(additional_qty)
     add_price = float(price)
 
-    if add_qty <= 0 or add_price <= 0:
-        raise ValueError("Quantity and price must be > 0")
+    if add_qty <= 0 or add_price < 0:
+        raise ValueError("Quantity must be > 0 and price cannot be negative "
+                          "(price 0 = bonus shares)")
 
     new_qty = old_qty + add_qty
     # Weighted average cost
