@@ -42,8 +42,11 @@ SME_STOCKS = {
     # Aegis Logistics), NOT a full company name -- confirmed against a real
     # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
     # -MS/-MT segment suffix, matching that convention.
-    "CWD-MS.BO": {"exchange": "BSE", "name_hint": "CWD", "scrip_code": None},
-    "HSIL-MT.BO": {"exchange": "BSE", "name_hint": "HSIL", "scrip_code": None},
+    # Scrip codes confirmed via live bhavcopy match on 12-Jul-2026 (exact
+    # SC_NAME match, verified: CWD -> 543378, HSIL -> 543916). name_hint
+    # kept as a fallback in case a scrip code ever changes.
+    "CWD-MS.BO": {"exchange": "BSE", "name_hint": "CWD", "scrip_code": "543378"},
+    "HSIL-MT.BO": {"exchange": "BSE", "name_hint": "HSIL", "scrip_code": "543916"},
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
