@@ -47,7 +47,6 @@ def _iso(d):
 # HOLDINGS
 # ===============================================================
 
-@st.cache_data(ttl=30)
 def _active_pf() -> int:
     """The portfolio currently selected in the UI (set by app.py at login/switch)."""
     try:
@@ -131,10 +130,13 @@ def delete_transaction(transaction_id: int):
 # ===============================================================
 
 @st.cache_data(ttl=60)
+def _get_realised_cached(pf: int) -> pd.DataFrame:
+    res = _client().table("realised").select("*").eq("portfolio_id", pf).order("sale_date", desc=True).execute()
+    return pd.DataFrame(res.data or [])
+
+
 def get_realised() -> pd.DataFrame:
-    res = _client().table("realised").select("*").eq("portfolio_id", _active_pf()).order("sale_date", desc=True).execute()
-    df = pd.DataFrame(res.data or [])
-    return df
+    return _get_realised_cached(_active_pf())
 
 
 def _clean_date(d):
@@ -277,9 +279,13 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
 # ===============================================================
 
 @st.cache_data(ttl=30)
-def get_watchlist() -> pd.DataFrame:
-    res = _client().table("watchlist").select("*").eq("portfolio_id", _active_pf()).order("created_at", desc=True).execute()
+def _get_watchlist_cached(pf: int) -> pd.DataFrame:
+    res = _client().table("watchlist").select("*").eq("portfolio_id", pf).order("created_at", desc=True).execute()
     return pd.DataFrame(res.data or [])
+
+
+def get_watchlist() -> pd.DataFrame:
+    return _get_watchlist_cached(_active_pf())
 
 
 def add_watchlist(stock_name: str, target_buy_price: Optional[float] = None,
@@ -335,9 +341,13 @@ def update_watchlist(watchlist_id: int, **kwargs):
 # ===============================================================
 
 @st.cache_data(ttl=30)
-def get_notes() -> pd.DataFrame:
-    res = _client().table("notes").select("*").eq("portfolio_id", _active_pf()).order("created_at", desc=True).execute()
+def _get_notes_cached(pf: int) -> pd.DataFrame:
+    res = _client().table("notes").select("*").eq("portfolio_id", pf).order("created_at", desc=True).execute()
     return pd.DataFrame(res.data or [])
+
+
+def get_notes() -> pd.DataFrame:
+    return _get_notes_cached(_active_pf())
 
 
 def add_note(author: str, note: str, note_date: Optional[date] = None):
@@ -361,12 +371,16 @@ def delete_note(note_id: int):
 # ===============================================================
 
 @st.cache_data(ttl=60)
-def get_snapshots() -> pd.DataFrame:
-    res = _client().table("snapshots").select("*").eq("portfolio_id", _active_pf()).order("snapshot_date").execute()
+def _get_snapshots_cached(pf: int) -> pd.DataFrame:
+    res = _client().table("snapshots").select("*").eq("portfolio_id", pf).order("snapshot_date").execute()
     df = pd.DataFrame(res.data or [])
     if not df.empty:
         df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
     return df
+
+
+def get_snapshots() -> pd.DataFrame:
+    return _get_snapshots_cached(_active_pf())
 
 
 def upsert_snapshot(snap: dict):
@@ -414,10 +428,10 @@ def _insert_transaction(stock_name: str, transaction_type: str,
 
 
 @st.cache_data(ttl=30)
-def get_transactions() -> pd.DataFrame:
+def _get_transactions_cached(pf: int) -> pd.DataFrame:
     """All transactions, newest first."""
     res = (_client().table("transactions")
-           .select("*").eq("portfolio_id", _active_pf())
+           .select("*").eq("portfolio_id", pf)
            .order("transaction_date", desc=True)
            .order("created_at", desc=True)
            .execute())
@@ -426,6 +440,10 @@ def get_transactions() -> pd.DataFrame:
         df["transaction_date"] = pd.to_datetime(df["transaction_date"])
     return df
 
+
+
+def get_transactions() -> pd.DataFrame:
+    return _get_transactions_cached(_active_pf())
 
 def delete_transaction(tx_id: int):
     _client().table("transactions").delete().eq("id", tx_id).execute()
