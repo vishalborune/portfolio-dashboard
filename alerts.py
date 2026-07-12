@@ -49,13 +49,20 @@ def get_holdings(client) -> pd.DataFrame:
 
 # Portfolio -> owner group -> Telegram chat routing
 PF_GROUP = {1: "vishal", 2: "lakshmi", 3: "lakshmi"}
+
+# Which owner groups receive Telegram alerts (state changes + filings).
+# Vishal opted out — Lakshmi is the TA lead and acts on alerts; Vishal's
+# dashboard still shows all states, and his Sunday email digest continues.
+# To re-enable Vishal's pings: add "vishal" back to this set.
+TELEGRAM_ALERT_GROUPS = {"lakshmi"}
 PF_NAME = {1: "Vishal", 2: "Lakshmi", 3: "Abinaya"}
 
 
 def chat_id_for_group(group: str):
+    # Only ONE Telegram group exists — the one already set up. It now carries
+    # Lakshmi + Abinaya's alerts (see TELEGRAM_ALERT_GROUPS below for which
+    # portfolios' data actually gets sent to it).
     import os as _os
-    if group == "lakshmi":
-        return _os.environ.get("TELEGRAM_CHAT_ID_LAKSHMI")
     return _os.environ.get("TELEGRAM_CHAT_ID")
 
 
@@ -174,6 +181,9 @@ def run_states():
 
     sent = 0
     for group, changes in changes_by_group.items():
+        if group not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(changes)} state change(s) for '{group}' — Telegram off for this group)")
+            continue
         chat = chat_id_for_group(group)
         if not chat:
             print(f"⚠️ No Telegram chat configured for group '{group}' "
@@ -306,6 +316,8 @@ def run_filings():
 
     total = 0
     for g, alerts in alerts_by_group.items():
+        if g not in TELEGRAM_ALERT_GROUPS:
+            continue
         chat = chat_id_for_group(g)
         if not chat:
             continue
@@ -360,31 +372,45 @@ def run_calendar():
 # ---------------------------------------------------------------------------
 
 def run_digest():
+    """One weekly digest, sent to the existing DIGEST_EMAILS recipients,
+    reporting Lakshmi + Abinaya's holdings (matches the Telegram alert scope:
+    Vishal's own portfolio is tracked on the dashboard but not pushed here)."""
     client = sb()
     all_holdings = get_holdings(client)
     if all_holdings.empty:
         return
-    # One digest per owner group, sent to that group's recipients
-    for group in sorted({PF_GROUP.get(int(p), "vishal")
-                          for p in all_holdings.get("portfolio_id", pd.Series([1]))}):
-        pf_ids = [p for p, g in PF_GROUP.items() if g == group]
-        _digest_for(client, all_holdings[all_holdings["portfolio_id"].isin(pf_ids)], group)
+    pf_ids = [p for p, g in PF_GROUP.items() if g == "lakshmi"]
+    holdings = all_holdings[all_holdings["portfolio_id"].isin(pf_ids)]
+    if holdings.empty:
+        print("(digest: no Lakshmi/Abinaya holdings yet)")
+        return
+    _digest_for(client, holdings)
 
 
-def _digest_for(client, holdings, group):
+def _digest_for(client, holdings):
     import os as _os
     rows, exits, cautions, adds = [], [], [], []
+
+    # Compute once per ticker, then note WHICH portfolios hold it —
+    # same duplicate-collapse logic as the Telegram alerts: [Both] when
+    # Lakshmi and Abinaya both hold it, otherwise [Lakshmi]/[Abinaya].
+    by_ticker = {}
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
         if not ticker:
             continue
+        entry = by_ticker.setdefault(ticker, {
+            "name": short_name(h["stock_name"]), "pfs": set()})
+        entry["pfs"].add(int(h.get("portfolio_id", 2)))
+
+    for ticker, e in by_ticker.items():
         try:
             d = signals.current_state(ticker)
         except Exception:
             continue
-        name = short_name(h["stock_name"])
-        if group == "lakshmi":
-            name = f"[{PF_NAME.get(int(h.get('portfolio_id', 2)), '?')}] {name}"
+        owners = sorted(e["pfs"])
+        tag = "[Both] " if len(owners) > 1 else f"[{PF_NAME.get(owners[0], owners[0])}] "
+        name = f"{tag}{e['name']}"
         st_ = d["state"]
         rows.append((name, st_, d.get("reason", "")))
         if st_ == "EXIT":
@@ -425,15 +451,8 @@ def _digest_for(client, holdings, group):
         buffered EXIT) · data via yfinance weekly bars</p>
     </div>"""
 
-    to_env = "DIGEST_EMAILS_LAKSHMI" if group == "lakshmi" else "DIGEST_EMAILS"
-    recipients = _os.environ.get(to_env, "")
-    if not recipients:
-        print(f"(digest for '{group}' skipped — {to_env} not set)")
-        return
-    _os.environ["DIGEST_EMAILS"], _saved = recipients, _os.environ.get("DIGEST_EMAILS", "")
     send_email(f"Portfolio Weekly Digest — {date.today().strftime('%d %b')}", html)
-    _os.environ["DIGEST_EMAILS"] = _saved
-    print(f"Digest [{group}]: {len(rows)} holdings, {len(exits)} exits, {len(cautions)} cautions.")
+    print(f"Digest sent: {len(rows)} holdings, {len(exits)} exits, {len(cautions)} cautions.")
 
 
 # ---------------------------------------------------------------------------
