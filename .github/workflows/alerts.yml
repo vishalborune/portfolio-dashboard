@@ -19,6 +19,10 @@ on:
         description: "Also run the one-time delivery % backfill (~6 weeks)?"
         type: boolean
         default: false
+      send_digest_now:
+        description: "Send the Sunday digest right now?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -70,7 +74,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
   digest:
-    if: github.event.schedule == '30 4 * * 0'
+    # Runs on the Sunday 10:00 IST cron, OR when manually triggered with the
+    # "Send the Sunday digest right now?" tick-box (GitHub sometimes drops
+    # scheduled runs entirely -- this is the recovery button for that).
+    if: github.event.schedule == '30 4 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
