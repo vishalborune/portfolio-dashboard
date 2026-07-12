@@ -321,41 +321,71 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                                     "Price Stale", "_fetched_at"])
         return df
 
+    # 0) SME-tracked tickers (Sprint 3, hardened 13 Jul 2026): our own
+    # bhavcopy table is authoritative for these -- so we don't ask Yahoo
+    # about them AT ALL. Previously we asked, Yahoo failed with 12+ noisy
+    # retries per refresh (404s, "possibly delisted", rate-limits), and
+    # only then did we override with our own data. That retry storm was
+    # hammering yfinance's cache ("database is locked"), slowing first
+    # load by 30-60s, and spiking memory/CPU enough to crash the free-tier
+    # instance mid-login (exit 139). Skip Yahoo for them entirely.
+    try:
+        bhav = db.get_sme_daily_prices(tuple(sorted(tickers)))
+    except Exception:
+        bhav = pd.DataFrame()
+    sme_tracked = set(bhav["ticker"].unique()) if not bhav.empty else set()
+    yahoo_tickers = tuple(t for t in tickers if t not in sme_tracked)
+
     # 1) Daily bars: prev-close reference + fallback + bar-date for staleness
     bar_close, bar_prev, bar_date = {}, {}, {}
-    try:
-        _end = now_ist().date() + timedelta(days=1)
-        _start = _end - timedelta(days=14)
-        data = yf.download(
-            list(tickers), start=str(_start), end=str(_end), interval="1d",
-            progress=False, auto_adjust=False, group_by="ticker", threads=True,
-        )
-        for t in tickers:
-            try:
-                close = data["Close"].dropna() if len(tickers) == 1 else data[t]["Close"].dropna()
-                if len(close):
-                    bar_close[t] = float(close.iloc[-1])
-                    bar_prev[t] = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
-                    bar_date[t] = pd.Timestamp(close.index[-1]).date()
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if yahoo_tickers:
+        try:
+            _end = now_ist().date() + timedelta(days=1)
+            _start = _end - timedelta(days=14)
+            data = yf.download(
+                list(yahoo_tickers), start=str(_start), end=str(_end), interval="1d",
+                progress=False, auto_adjust=False, group_by="ticker", threads=True,
+            )
+            for t in yahoo_tickers:
+                try:
+                    close = data["Close"].dropna() if len(yahoo_tickers) == 1 else data[t]["Close"].dropna()
+                    if len(close):
+                        bar_close[t] = float(close.iloc[-1])
+                        bar_prev[t] = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
+                        bar_date[t] = pd.Timestamp(close.index[-1]).date()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-    # 2) Quote endpoint in parallel — the fresher source
+    # 2) Quote endpoint in parallel — the fresher source. max_workers kept
+    # modest: 8 threads plus retries was part of the cache-contention storm.
     quotes = {}
-    try:
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            for t, lp, pc in ex.map(_fetch_quote, tickers):
-                quotes[t] = (lp, pc)
-    except Exception:
-        pass
+    if yahoo_tickers:
+        try:
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                for t, lp, pc in ex.map(_fetch_quote, yahoo_tickers):
+                    quotes[t] = (lp, pc)
+        except Exception:
+            pass
 
     expected = last_expected_close_date()
     MAX_PLAUSIBLE_MOVE = 0.25   # smallcap daily circuit ~20%; beyond this per
                                  # missing day, the quote is garbage, not a move
     rows = []
     for t in tickers:
+        # SME-tracked: build directly from our own table, Yahoo never consulted
+        if t in sme_tracked:
+            sub = bhav[bhav["ticker"] == t].sort_values("price_date")
+            latest = sub.iloc[-1]
+            prev_row = sub.iloc[-2] if len(sub) >= 2 else latest
+            rows.append({"Ticker": t, "CMP": float(latest["close"]),
+                         "Prev Close": float(prev_row["close"]),
+                         "Price Stale": False,
+                         "Price Source": "bhavcopy (EOD, official NSE/BSE)",
+                         "Price Date": str(latest["price_date"].date())})
+            continue
+
         q_lp, q_pc = quotes.get(t, (None, None))
         b_close = bar_close.get(t)
         b_prev = bar_prev.get(t)
@@ -389,32 +419,6 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
                      "Price Stale": stale, "Price Source": source,
                      "Price Date": str(bdate) if bdate else "—"})
-
-    # --- SME authoritative pass (Sprint 3, hardened 12 Jul 2026) ---
-    # For any ticker we track in our own bhavcopy table, the official
-    # NSE/BSE EOD close is the ONLY trusted source — it OVERRIDES Yahoo,
-    # it doesn't just fill gaps. Reason (verified against Lakshmi's Kite
-    # statement): Yahoo's SME coverage isn't merely missing — when it does
-    # answer for these tickers it can serve stale or wrong-instrument
-    # prices (5 of 6 SME holdings showed junk Yahoo prices while this
-    # table matched Kite to the paisa). The old version of this pass only
-    # rescued tickers with NO price, so Yahoo's junk blocked the real data.
-    try:
-        bhav = db.get_sme_daily_prices(tuple(sorted(tickers)))
-    except Exception:
-        bhav = pd.DataFrame()
-    if not bhav.empty:
-        for row in rows:
-            sub = bhav[bhav["ticker"] == row["Ticker"]].sort_values("price_date")
-            if sub.empty:
-                continue                     # not an SME-tracked ticker
-            latest = sub.iloc[-1]
-            prev = sub.iloc[-2] if len(sub) >= 2 else latest
-            row["CMP"] = float(latest["close"])
-            row["Prev Close"] = float(prev["close"])
-            row["Price Stale"] = False
-            row["Price Source"] = "bhavcopy (EOD, official NSE/BSE)"
-            row["Price Date"] = str(latest["price_date"].date())
 
     # --- Rescue pass for stale BSE scrips ---
     for row in rows:
@@ -466,10 +470,19 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
     """
     import time
     rows = []
+    # SME-tracked tickers: Yahoo has no fundamentals for them (only 404s and
+    # retries -- the quoteSummary "Not Found" errors in the logs). Skip.
+    try:
+        _sme = set(db.get_sme_daily_prices(tuple(sorted(tickers)))["ticker"].unique())
+    except Exception:
+        _sme = set()
     for t in tickers:
         row = {"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
                "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
                "P/B": np.nan, "EV/EBITDA": np.nan, "PEG": np.nan}
+        if t in _sme:
+            rows.append(row)
+            continue
         tk = yf.Ticker(t)
         # Lighter endpoint first: market cap via fast_info
         try:
