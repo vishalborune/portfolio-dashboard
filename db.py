@@ -16,8 +16,15 @@ from supabase import create_client, Client
 @st.cache_resource
 def _client() -> Client:
     """Single Supabase client per session."""
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_SERVICE_KEY"]
+    # Environment variables first (Render/HF inject secrets as env vars;
+    # os.environ needs no secrets.toml file). st.secrets stays as fallback
+    # for Streamlit Cloud / local runs with a secrets file.
+    import os
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_SERVICE_KEY"]
     return create_client(url, key)
 
 
