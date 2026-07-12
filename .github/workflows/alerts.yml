@@ -15,6 +15,10 @@ on:
         description: "Also run the one-time bhavcopy backfill (~2yr history)?"
         type: boolean
         default: false
+      run_delivery_backfill:
+        description: "Also run the one-time delivery % backfill (~6 weeks)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -97,6 +101,30 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python bhavcopy.py today
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      # Delivery % (Sprint 3 fast-follow) — same 20:00 IST slot, NSE
+      # publishes the delivery file by early evening. Best-effort by
+      # design: a blocked/missing day is skipped, never fails the job.
+      - run: python delivery.py today
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  delivery-backfill:
+    # ONE-TIME job: ~6 weeks of delivery history so the 4-week rolling
+    # average is meaningful immediately. Manual-trigger only, like the
+    # bhavcopy backfill. Run once, then ignore.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_delivery_backfill == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python delivery.py backfill
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
