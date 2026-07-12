@@ -1,32 +1,44 @@
-STAGE = 10
+STAGE = 11
 
 import streamlit as st
 st.title(f"🔬 Bisect stage {STAGE}")
-st.write("If you can read this, this stage is ALIVE.")
 
 import os
 os.environ["APP_TENANT"] = "lakshmi"
+st.session_state["role"] = "lakshmi"
+st.session_state["user"] = "Lakshmi"
 st.session_state["portfolio_id"] = 2
 st.session_state["portfolios"] = {2: "Lakshmi", 3: "Abinaya"}
 
-import db
-wl = db.get_watchlist()
-st.write(f"Watchlist has {len(wl)} row(s)")
-st.dataframe(wl)
-
+import db, signals
 import app as appmod
-tickers = tuple(t for t in wl["Ticker"].dropna().unique()) if not wl.empty and "Ticker" in wl.columns else ()
-st.write(f"Tickers to fetch: {tickers}")
 
-if tickers:
-    st.write("Calling fetch_live_prices() — the threaded quote fetcher...")
-    prices = appmod.fetch_live_prices(tickers)
-    st.write("OK — fetch_live_prices survived!")
-    st.dataframe(prices)
-else:
-    st.write("No tickers in watchlist — nothing to fetch, trying a synthetic one instead")
-    prices = appmod.fetch_live_prices(("RELIANCE.NS", "TCS.NS"))
-    st.write("OK — fetch_live_prices survived with synthetic tickers!")
-    st.dataframe(prices)
+st.write("① Fetching holdings...")
+holdings = db.get_holdings()
+st.write(f"✅ {len(holdings)} holdings")
 
-st.write("STAGE 10 CLEAR")
+st.write("② Enriching...")
+enriched = appmod.enrich_holdings(holdings)
+st.write(f"✅ enriched shape {enriched.shape}")
+
+st.write("③ Computing KPIs...")
+k = appmod.compute_kpis(enriched)
+st.write(f"✅ KPIs: {k}")
+
+st.write("④ Fetching realised P&L...")
+realised = db.get_realised()
+st.write(f"✅ {len(realised)} realised rows")
+
+st.write("⑤ Fetching transactions...")
+txns = db.get_transactions()
+st.write(f"✅ {len(txns)} transactions")
+
+st.write("⑥ Fetching watchlist...")
+wl = db.get_watchlist()
+st.write(f"✅ {len(wl)} watchlist rows")
+
+st.write("⑦ Fetching notes...")
+notes = db.get_notes()
+st.write(f"✅ {len(notes)} notes")
+
+st.write("🎉 STAGE 11 CLEAR — all data functions survive in sequence")
