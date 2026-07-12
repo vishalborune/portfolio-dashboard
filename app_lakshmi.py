@@ -50,3 +50,22 @@ with tabs[1]:
     appmod.tab_allocation(enriched, k)
 
 with tabs[2]:
+    appmod.tab_watchlist()
+
+with tabs[3]:
+    appmod.tab_realised(realised)
+
+with tabs[4]:
+    appmod.tab_history(k)
+
+with tabs[5]:
+    appmod.tab_transactions()
+
+with tabs[6]:
+    appmod.tab_notes()
+
+with tabs[7]:
+    appmod.tab_import_holdings()
+
+st.write("STEP 5 done")
+st.write("STAGE 13 CLEAR - this is now an exact replica of main")
