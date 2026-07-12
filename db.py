@@ -115,6 +115,17 @@ def delete_holding(holding_id: int):
     _bust()
 
 
+def delete_transaction(transaction_id: int):
+    """Remove a single row from the transactions journal.
+
+    Intended for cleaning up mistaken/test entries. Real trade history
+    should normally stay append-only — deleting a genuine buy will make
+    XIRR less accurate, so the UI warns before doing this.
+    """
+    _client().table("transactions").delete().eq("id", transaction_id).execute()
+    _bust()
+
+
 # ===============================================================
 # REALISED P&L  (closed trades)
 # ===============================================================
