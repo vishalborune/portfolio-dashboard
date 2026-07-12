@@ -1,13 +1,13 @@
-# PINNED to the exact versions from the 11-Jul-2026 deploy that ran all day
-# without issues (from the app's own install log). Streamlit Cloud runs
-# Python 3.14, so these must be 3.14-compatible releases — do not downgrade
-# below these, and do not use >= ranges (drift onto untested versions is what
-# broke both apps on 12 Jul).
+# STEP 1: yesterday's proven set + curl_cffi pinned to the newest build
+# (0.15.1b2, June 2026) — rebuilt binaries often fix segfaults caused by
+# platform base-image updates. If the app still segfaults on this set,
+# switch to requirements_fallback.txt (removes curl_cffi entirely).
 streamlit==1.59.1
 pandas==3.0.3
 numpy==2.5.1
 pyarrow==25.0.0
 yfinance==1.5.1
+curl-cffi==0.15.1b2
 plotly==6.9.0
 openpyxl==3.1.5
 supabase==2.31.0
