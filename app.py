@@ -95,14 +95,21 @@ def login_gate():
     with gate.container():
         st.title("📈 Portfolio Dashboard")
         st.caption("Enter your password to continue")
-        pw = st.text_input("Password", type="password", key="pw_input")
+        # st.form so the keyboard Enter key SUBMITS. With a bare st.button,
+        # pressing Enter after typing only commits the text and reruns the
+        # script -- the button reads as un-clicked and the login page
+        # redraws, which users experience as "it bounced me back and I had
+        # to enter the password twice, every time".
+        with st.form("login_form"):
+            pw = st.text_input("Password", type="password", key="pw_input")
+            submitted = st.form_submit_button("Enter", type="primary")
 
         if tenant == "lakshmi":
             lakshmi_pw = _get_secret("LAKSHMI_PASSWORD")
             if not lakshmi_pw:
                 st.error("⚠️ App not configured. Set LAKSHMI_PASSWORD in Streamlit secrets.")
                 st.stop()
-            if st.button("Enter", type="primary"):
+            if submitted:
                 if pw == lakshmi_pw:
                     st.session_state.role = "lakshmi"
                     st.session_state.user = "Lakshmi"
@@ -120,7 +127,7 @@ def login_gate():
         if not owner_pw:
             st.error("⚠️ App not configured. Set OWNER_PASSWORD in Streamlit secrets.")
             st.stop()
-        if st.button("Enter", type="primary"):
+        if submitted:
             if pw == owner_pw:
                 st.session_state.role = "owner"
                 st.session_state.user = "Vishal"
