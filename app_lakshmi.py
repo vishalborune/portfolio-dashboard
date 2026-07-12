@@ -1,12 +1,8 @@
-import streamlit as st
+# Entry point for the Lakshmi household deployment.
+# Streamlit re-executes THIS file on every interaction (rerun). `import app`
+# only executes app.py's body on the FIRST run (Python caches modules), so we
+# must call main() explicitly - that's what renders the page on every rerun.
+# Which household this serves is decided by APP_TENANT in THIS app's secrets.
+import app
 
-st.title("Bisect stage 15 retry - real login_gate, repeat test")
-
-import app as appmod
-
-st.write("About to call appmod.login_gate()...")
-result = appmod.login_gate()
-st.write(f"login_gate() returned: {result}")
-
-if result:
-    st.write("SUCCESS - real login_gate returned True, rerun survived this time")
+app.main()
