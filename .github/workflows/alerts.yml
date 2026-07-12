@@ -8,6 +8,7 @@ on:
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
     - cron: "30 4 * * 0"                  # digest: Sunday 10:00 IST
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
+    - cron: "0 15 * * 1-5"                # exit audit: 20:30 IST, after bhavcopy so SME prices exist
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -117,3 +118,25 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  audit:
+    # Sprint 3: 30/60/90-day exit audits. Checks the trade_journal for
+    # matured windows, fills in what the stock did after each sell, and
+    # sends one Telegram summary when anything completed. Idempotent and
+    # silent when nothing matured -- exits are rare, most runs do nothing.
+    # Scheduled AFTER bhavcopy (20:30 IST) so SME closes for the day exist.
+    # Also runs on manual dispatch so the first journal entry can be tested.
+    if: github.event.schedule == '0 15 * * 1-5' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python exit_audit.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
