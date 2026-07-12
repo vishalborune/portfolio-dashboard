@@ -1,4 +1,4 @@
-STAGE = 2
+STAGE = 3
 
 import streamlit as st
 
@@ -16,3 +16,6 @@ import plotly.express as px
 fig = px.line(x=[1, 2, 3], y=[1, 4, 9])
 st.plotly_chart(fig)
 st.write("Stage 2 OK — plotly rendered")
+
+from supabase import create_client
+st.write("Stage 3 OK — supabase imported")
