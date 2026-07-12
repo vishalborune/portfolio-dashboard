@@ -75,6 +75,28 @@ STATE_PRIORITY = {
 # Data fetch
 # ---------------------------------------------------------------------------
 
+def _fetch_weekly_from_bhavcopy(ticker: str) -> pd.DataFrame:
+    """Fallback source for stocks Yahoo doesn't carry at all (NSE Emerge /
+    BSE SME). Builds weekly bars by resampling our own bhavcopy-derived
+    daily table (see bhavcopy.py, Sprint 3). Empty df if this ticker has
+    no bhavcopy history either (e.g. backfill hasn't run yet) -- caller
+    treats that exactly like any other missing-data case."""
+    try:
+        import db
+        daily = db.get_sme_daily_prices((ticker,))
+        if daily.empty:
+            return pd.DataFrame()
+        daily = daily.set_index("price_date").sort_index()
+        weekly = daily.resample("W-FRI").agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }).dropna(subset=["close"]).reset_index()
+        return weekly.rename(columns={"price_date": "date"})[
+            ["date", "open", "high", "low", "close", "volume"]]
+    except Exception:
+        return pd.DataFrame()
+
+
 @_cache(ttl=60 * 60 * 4)  # weekly bars barely change intraday; 4h cache
 def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
     """Weekly OHLCV for one ticker. Empty df on failure."""
@@ -82,7 +104,9 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
         df = yf.download(ticker, period=period, interval="1wk",
                          progress=False, auto_adjust=False)
         if df.empty:
-            return pd.DataFrame()
+            # Yahoo has nothing for this ticker at all -- try our own
+            # bhavcopy-derived history (NSE Emerge / BSE SME stocks).
+            return _fetch_weekly_from_bhavcopy(ticker)
         # yfinance returns MultiIndex columns for single ticker sometimes
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -93,7 +117,7 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
         df = df.dropna(subset=["close"]).reset_index(drop=True)
         return df[["date", "open", "high", "low", "close", "volume"]]
     except Exception:
-        return pd.DataFrame()
+        return _fetch_weekly_from_bhavcopy(ticker)
 
 
 # ---------------------------------------------------------------------------
