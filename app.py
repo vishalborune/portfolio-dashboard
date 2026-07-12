@@ -1240,6 +1240,30 @@ def tab_transactions():
         )
 
 
+    # ---- Manage entries (owner/lakshmi only): delete mistaken rows ----
+    if st.session_state.get("role") in ("owner", "lakshmi"):
+        with st.expander("🗑 Delete a transaction entry"):
+            st.caption(
+                "For cleaning up mistaken or test entries only. Deleting a "
+                "genuine buy/sell makes XIRR and history less accurate — "
+                "when in doubt, leave it."
+            )
+            opts = {
+                f"#{int(r['id'])} · {r['transaction_date'].strftime('%Y-%m-%d')} · "
+                f"{r['transaction_type'].upper()} · {short_name(r['stock_name'])} · "
+                f"qty {r['quantity']:g} @ ₹{r['price']:g}": int(r["id"])
+                for _, r in tx.sort_values("transaction_date", ascending=False).iterrows()
+            }
+            sel = st.selectbox("Entry to delete", ["— select —"] + list(opts.keys()),
+                                key="tx_del_select")
+            confirm = st.checkbox("Yes, I'm sure — delete this entry permanently",
+                                   key="tx_del_confirm")
+            if st.button("Delete entry", type="primary", key="tx_del_btn",
+                          disabled=(sel == "— select —" or not confirm)):
+                db.delete_transaction(opts[sel])
+                st.success("Entry deleted.")
+                st.rerun()
+
 def tab_notes():
     notes = db.get_notes()
 
@@ -1288,201 +1312,7 @@ def tab_notes():
 # MAIN
 # ---------------------------------------------------------------------------
 
-REQUIRED_IMPORT_COLS = {"stock name", "exchange", "symbol", "quantity", "avg buy price"}
-
-
-def _norm_header(c) -> str:
-    # Kill non-breaking spaces / stray whitespace / case differences
-    return " ".join(str(c).replace("\xa0", " ").strip().lower().split())
-
-
-def _load_import_template(file):
-    """Find the header row anywhere in any sheet (row 1-12), any sheet name.
-    Returns (DataFrame, None) on success or (None, diagnostic_message)."""
-    try:
-        xls = pd.ExcelFile(file)
-    except Exception as e:
-        return None, f"Couldn't read the file: {e}"
-    seen = []
-    for sheet in xls.sheet_names:
-        try:
-            probe = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=12)
-        except Exception:
-            continue
-        for i in range(len(probe)):
-            row_vals = {_norm_header(v) for v in probe.iloc[i].tolist()}
-            hits = REQUIRED_IMPORT_COLS & row_vals
-            if len(hits) >= 4:      # found the header row
-                df = pd.read_excel(xls, sheet_name=sheet, header=i)
-                df.columns = [_norm_header(c) for c in df.columns]
-                missing = REQUIRED_IMPORT_COLS - set(df.columns)
-                if missing:
-                    return None, (f"Found the header row in sheet '{sheet}' but "
-                                   f"column(s) still missing: {', '.join(sorted(missing))}")
-                return df, None
-            seen.extend(v for v in row_vals if v and v != "nan")
-    return None, ("Couldn't find the header row in any sheet. The file must contain "
-                   "a row with: Stock Name · Exchange · Symbol · Quantity · Avg Buy Price. "
-                   f"(Headers seen in the file: {', '.join(sorted(set(seen))[:12]) or 'none'})")
-
-
-def _normalize_import_row(name, exch, sym):
-    """Map broker-style exchange/symbol values to our canonical ticker format.
-    Returns (canonical_stock_name, warning_or_None)."""
-    exch = exch.upper().replace(" ", "")
-    sym = sym.upper().strip()
-    warn = None
-
-    # Known fixes: broker symbols that differ from Yahoo/our pipeline
-    SPECIAL = {
-        ("BSE", "KPL"): ("XBOM", "539997"),          # Kwality Pharmaceuticals
-        ("BSE", "BMW-X"): ("XBOM", "542669"),        # BMW Industries
-        ("BSE", "BMW"): ("XBOM", "542669"),
-        ("BSE", "BANSWRAS"): ("XNSE", "BANSWRAS"),   # dual-listed: NSE feed is better
-        ("BSE", "FAZE3Q"): ("XNSE", "FAZE3Q"),       # dual-listed: NSE symbol
-    }
-    base_exch = "BSE" if exch.startswith("BSE") else "NSE"
-    if (base_exch, sym) in SPECIAL:
-        prefix, sym = SPECIAL[(base_exch, sym)]
-    elif base_exch == "NSE":
-        prefix = "XNSE"
-        # strip series suffixes brokers append (-T T2T, -SM/-ST SME, -BE etc.)
-        stripped = re.sub(r"-(SM|ST|T|BE|BZ|MT|MS)$", "", sym)
-        if stripped != sym:
-            sym = stripped
-        if exch == "NSE-SME":
-            warn = "SME stock — price data may be unavailable on Yahoo"
-    else:  # BSE / BSE-SME
-        prefix = "XBOM"
-        if not sym.isdigit():
-            # Alphabetic BSE symbol without a known numeric code: keep as-is,
-            # price fetch will flag it rather than risk fetching the wrong company
-            warn = "BSE symbol is not a numeric scrip code — price may not resolve"
-    canonical = f"{name.upper()} ({prefix}:{sym})"
-    return canonical, warn
-
-
-def tab_import_holdings():
-    """Setup-phase bulk import from the standard Excel template.
-    Handles transaction-level files: multiple buy lots per stock are grouped,
-    the first lot creates the holding and later lots go through buy-more so
-    every purchase date lands in the transactions table (accurate XIRR).
-    Imports into the CURRENTLY SELECTED portfolio. Removable after onboarding."""
-    st.subheader("📥 Import Holdings (one-time setup)")
-    pf_name = st.session_state.get("portfolios", {}).get(
-        st.session_state.get("portfolio_id"), "?")
-    st.info(f"Rows will be imported into: **{pf_name}** "
-            f"(switch portfolio in the sidebar to import the other one).")
-    st.markdown(
-        "Columns needed: **Stock Name · Exchange · Symbol · Quantity · Avg Buy Price** "
-        "· optional **Buy Date**. Multiple rows per stock (one per purchase) are fine — "
-        "they'll be combined automatically with the full buy history preserved."
-    )
-
-    up = st.file_uploader("Upload the filled template (.xlsx)", type=["xlsx"],
-                           key="import_upload")
-    if not up:
-        return
-    raw, err = _load_import_template(up)
-    if err:
-        st.error(err)
-        return
-
-    # Parse rows -> lots
-    lots, problems = [], []
-    for i, r in raw.iterrows():
-        try:
-            name = str(r["stock name"]).strip()
-            exch = str(r["exchange"]).strip().upper()
-            sym = str(r["symbol"]).strip().upper()
-            qty = float(r["quantity"])
-            cost = float(r["avg buy price"])
-            if (not name or name.lower() == "nan" or not sym or sym == "NAN"
-                    or exch.replace("-", "").replace(" ", "") not in
-                    ("NSE", "BSE", "NSESME", "BSESME") or qty <= 0 or cost < 0):
-                raise ValueError
-            bdate = pd.to_datetime(r.get("buy date"), errors="coerce")
-            bdate = bdate.date() if pd.notna(bdate) else date.today()
-            canonical, warn = _normalize_import_row(name, exch, sym)
-            lots.append({"stock_name": canonical, "qty": qty, "price": cost,
-                          "date": bdate, "warn": warn})
-        except Exception:
-            # skip blank/total/invalid rows silently unless partially filled
-            vals = [r.get(c) for c in ("stock name", "symbol", "quantity")]
-            if any(pd.notna(v) for v in vals):
-                problems.append(i + 2)
-
-    if problems:
-        st.warning(f"Skipping {len(problems)} row(s) with invalid data "
-                    f"(rows: {problems[:10]}{'…' if len(problems) > 10 else ''})")
-    if not lots:
-        st.error("No valid rows found.")
-        return
-
-    # Group lots per stock. Zero-price lots = bonus shares; a paid lot must
-    # open the position, so sort by (date, price==0 last within same date).
-    stocks = {}
-    for l in sorted(lots, key=lambda x: (x["date"], x["price"] == 0)):
-        s = stocks.setdefault(l["stock_name"], {"lots": [], "warn": l["warn"]})
-        s["lots"].append(l)
-    for cname in list(stocks):
-        ls = stocks[cname]["lots"]
-        if all(l["price"] == 0 for l in ls):
-            st.warning(f"{cname}: only zero-price (bonus) lots found — skipping, "
-                        "needs at least one paid lot.")
-            del stocks[cname]
-            continue
-        if ls[0]["price"] == 0:   # bonus dated before first paid buy: reorder
-            paid = next(i for i, l in enumerate(ls) if l["price"] > 0)
-            ls.insert(0, ls.pop(paid))
-
-    prev_rows = []
-    for cname, s in stocks.items():
-        tq = sum(l["qty"] for l in s["lots"])
-        inv = sum(l["qty"] * l["price"] for l in s["lots"])
-        prev_rows.append({"Stock": cname, "Lots": len(s["lots"]), "Total Qty": tq,
-                           "Weighted Avg": round(inv / tq, 2), "Invested": round(inv, 2),
-                           "⚠️": s["warn"] or ""})
-    prev = pd.DataFrame(prev_rows)
-    st.dataframe(prev, use_container_width=True, hide_index=True)
-    st.markdown(f"**{len(stocks)} stocks · {len(lots)} buy lots · "
-                f"₹{prev['Invested'].sum():,.0f} invested** → portfolio **{pf_name}**")
-    warns = prev[prev["⚠️"] != ""]
-    if not warns.empty:
-        st.warning(f"{len(warns)} stock(s) flagged — they'll import fine, but live "
-                    f"prices/signals may not resolve for them (SME / non-standard symbols).")
-
-    existing = db.get_holdings()
-    existing_names = set(existing["stock_name"]) if not existing.empty else set()
-    dupes = [c for c in stocks if c in existing_names]
-    if dupes:
-        st.warning(f"⚠️ Already in this portfolio (will be skipped): "
-                    f"{', '.join(d.split(' (')[0] for d in dupes[:8])}")
-
-    n_new = len(stocks) - len(dupes)
-    if st.button(f"✅ Import {n_new} stocks ({len(lots)} buy lots) into {pf_name}",
-                  type="primary", key="do_import"):
-        done, prog = 0, st.progress(0.0, text="Importing…")
-        todo = [c for c in stocks if c not in existing_names]
-        for k, cname in enumerate(todo):
-            ls = stocks[cname]["lots"]
-            try:
-                first = ls[0]
-                hid = db.add_holding(cname, first["qty"], first["price"],
-                                      buy_date=first["date"])
-                for extra in ls[1:]:
-                    db.buy_more(hid, extra["qty"], extra["price"],
-                                 transaction_date=extra["date"])
-                db.graduate_from_watchlist(cname)
-                done += 1
-            except Exception as e:
-                st.error(f"{cname}: {e}")
-            prog.progress((k + 1) / max(len(todo), 1),
-                           text=f"Importing… {k + 1}/{len(todo)}")
-        prog.empty()
-        st.success(f"Imported {done} stocks with full buy history into {pf_name}. "
-                    "Switch portfolio in the sidebar to import the next file.")
-        st.balloons()
+# (Bulk-import feature removed after onboarding — data now managed via SQL)
 
 
 def main():
@@ -1611,10 +1441,6 @@ def main():
         "📊 Holdings", "🥧 Allocation", "👀 Watchlist",
         "💰 Realised P&L", "📈 History", "📜 Transactions", "📝 Notes",
     ]
-    # Setup-phase importer for Lakshmi's household — removable after onboarding
-    show_import = st.session_state.get("role") == "lakshmi"
-    if show_import:
-        tab_names.append("📥 Import Holdings")
     tabs = st.tabs(tab_names)
     with tabs[0]: tab_holdings(enriched)
     with tabs[1]: tab_allocation(enriched, k)
@@ -1623,8 +1449,6 @@ def main():
     with tabs[4]: tab_history(k)
     with tabs[5]: tab_transactions()
     with tabs[6]: tab_notes()
-    if show_import:
-        with tabs[7]: tab_import_holdings()
 
 
 if __name__ == "__main__":
