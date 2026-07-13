@@ -953,15 +953,17 @@ def _form_mark_as_sold(enriched: pd.DataFrame):
             )
         with c2:
             sell_dt = st.date_input("Sale date", value=date.today())
-        c3, c4 = st.columns(2)
-        with c3:
-            partial = st.checkbox("Partial sell?")
-        with c4:
-            partial_qty = st.number_input(
-                "Quantity sold", min_value=0.0,
-                max_value=float(row["quantity"]), value=float(row["quantity"]),
-                step=1.0, disabled=not partial,
-            )
+        # Quantity is always editable (pre-filled with the full holding).
+        # Reducing it = partial sell; leaving it = full sell. NOTE: the old
+        # "Partial sell?" checkbox could never work here -- widgets inside an
+        # st.form don't rerun until submit, so ticking it couldn't un-disable
+        # the quantity field. Discovered by Lakshmi mid-sell, 13 Jul 2026.
+        qty_sold = st.number_input(
+            "Quantity sold", min_value=1.0,
+            max_value=float(row["quantity"]), value=float(row["quantity"]),
+            step=1.0,
+            help="Pre-filled with your full holding — reduce it for a partial sell.",
+        )
         # Sprint 3: trade journal — WHY is this exit happening?
         c5, c6 = st.columns(2)
         with c5:
@@ -984,7 +986,7 @@ def _form_mark_as_sold(enriched: pd.DataFrame):
                 holding_id=int(row["id"]),
                 selling_price=sell_price,
                 sale_date=sell_dt,
-                partial_quantity=partial_qty if partial else None,
+                partial_quantity=qty_sold,   # == full holding -> full sell (db handles it)
                 reason=sell_reason,
                 notes=sell_notes.strip() or None,
             )
