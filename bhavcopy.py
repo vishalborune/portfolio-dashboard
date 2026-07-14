@@ -38,6 +38,11 @@ SME_STOCKS = {
     "TCL.NS":    {"exchange": "NSE", "symbol": "TCL"},
     "UTSSAV.NS": {"exchange": "NSE", "symbol": "UTSSAV"},
     "VIESL.NS":  {"exchange": "NSE", "symbol": "VIESL"},
+    # Abinaya's NSE Emerge holding (added 13-Jul-2026). SSEGL trades in
+    # series ST (Trade-for-Trade surveillance) but still appears in the
+    # standard NSE sec_bhavdata_full file under symbol SSEGL, so the same
+    # exact-symbol match works.
+    "SSEGL.NS":  {"exchange": "NSE", "symbol": "SSEGL"},
     # BSE's SC_NAME field is a short abbreviated code (e.g. "AEGISLOG" for
     # Aegis Logistics), NOT a full company name -- confirmed against a real
     # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
@@ -47,6 +52,10 @@ SME_STOCKS = {
     # kept as a fallback in case a scrip code ever changes.
     "CWD-MS.BO": {"exchange": "BSE", "name_hint": "CWD", "scrip_code": "543378"},
     "HSIL-MT.BO": {"exchange": "BSE", "name_hint": "HSIL", "scrip_code": "543916"},
+    # Abinaya's BSE SME holding (added 13-Jul-2026). Scrip code 544531
+    # confirmed via BSE listing + screener.in. Matched by scrip_code, the
+    # safe path; name_hint kept only as documentation fallback.
+    "TRUECOLORS.BO": {"exchange": "BSE", "name_hint": "TRUECOLORS", "scrip_code": "544531"},
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
