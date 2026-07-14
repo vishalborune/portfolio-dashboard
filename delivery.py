@@ -60,6 +60,8 @@ BACKFILL_DAYS = 42    # ~6 weeks calendar -> ~28 trading days
 BSE_SCRIP_OVERRIDES = {
     "CWD-MS": "543378",     # CWD Ltd
     "HSIL-MT": "543916",    # Hemant Surgical Industries
+    "544531": "544531",     # True Colors (Abinaya) — numeric symbol == scrip code,
+                            # listed here explicitly for documentation
 }
 
 
