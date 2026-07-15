@@ -119,6 +119,7 @@ def run_states():
     # Compute each ticker ONCE, alert per portfolio that holds it
     state_cache = {}
     pending, changes_by_group, errors = {}, {}, 0
+    vol_spikes = {}   # (group, ticker) -> spike info  (volume alerts, 15-Jul-2026)
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
         if not ticker:
@@ -148,6 +149,27 @@ def run_states():
             })
             entry["pfs"].append(pf)
             entry["olds"].append(old)
+
+        # --- Volume spike detection (requested by Lakshmi, 15-Jul-2026) ---
+        # "Unusually high trading activity" alerts, ScoutQuest-style, from
+        # data we already compute. vol_ratio = current week's volume vs the
+        # 10-week average -- but early in the week the current bar only has
+        # 1-2 days of volume, so we PACE-ADJUST: scale by 5/elapsed trading
+        # days. A stock that's already traded 0.8x a full week's average by
+        # Tuesday morning is pacing at 2x -- that's the signal. Threshold 2.0.
+        vr = d.get("vol_ratio")
+        if vr is not None and not pd.isna(vr) and d["state"] not in ("NO DATA", "INSUFFICIENT DATA"):
+            elapsed = min(datetime.utcnow().weekday() + 1, 5)  # Mon=1 .. Fri=5
+            pace = float(vr) * 5.0 / elapsed
+            if pace >= 2.0:
+                key = (group, ticker)
+                if key not in vol_spikes:
+                    vol_spikes[key] = {
+                        "name": short_name(h["stock_name"]),
+                        "pace": pace, "raw": float(vr),
+                        "close": d.get("close"), "pfs": [],
+                    }
+                vol_spikes[key]["pfs"].append(pf)
 
         client.table("alert_state").upsert({
             "ticker": ticker, "portfolio_id": pf, "state": state,
@@ -196,6 +218,53 @@ def run_states():
         print(f"Sent {sent} state-change alert(s) across {len(changes_by_group)} group(s).")
     else:
         print(f"No state changes. ({len(holdings)} holdings checked, {errors} fetch errors)")
+
+    # --- Volume spike dispatch (one alert per stock per group per day) ---
+    if vol_spikes:
+        today_iso = date.today().isoformat()
+        try:
+            logged = client.table("volume_alert_log").select("ticker, grp") \
+                .eq("alert_date", today_iso).execute().data or []
+            already = {(r["ticker"], r["grp"]) for r in logged}
+        except Exception:
+            already = set()
+
+        spikes_by_group = {}
+        for (group, ticker), s in vol_spikes.items():
+            if (ticker, group) in already:
+                continue
+            if group == "lakshmi":
+                uniq = sorted(set(s["pfs"]))
+                tag = "[Both] " if len(uniq) > 1 else f"[{PF_NAME.get(uniq[0], uniq[0])}] "
+            else:
+                tag = ""
+            price = f" · last ₹{s['close']:,.2f}" if s.get("close") else ""
+            msg = (f"🔥 {tag}<b>{s['name']}</b> — unusually high trading activity\n"
+                   f"Pacing at <b>{s['pace']:.1f}x</b> its 10-week average volume "
+                   f"(this week already {s['raw']:.1f}x a full week's average){price}")
+            spikes_by_group.setdefault(group, []).append((ticker, msg, s["pace"]))
+
+        v_sent = 0
+        for group, items in spikes_by_group.items():
+            if group not in TELEGRAM_ALERT_GROUPS:
+                print(f"({len(items)} volume spike(s) for '{group}' — Telegram off for this group)")
+                continue
+            chat = chat_id_for_group(group)
+            if not chat:
+                continue
+            header = f"🔥 <b>Volume alerts</b> · {date.today().strftime('%d %b %Y')}\n\n"
+            send_telegram(header + "\n\n".join(m for _, m, _ in items), chat_id=chat)
+            for ticker, _, pace in items:
+                try:
+                    client.table("volume_alert_log").upsert({
+                        "ticker": ticker, "grp": group,
+                        "alert_date": today_iso, "pace_ratio": round(pace, 2),
+                    }).execute()
+                except Exception as e:
+                    print(f"⚠️ volume_alert_log write failed for {ticker}: {e}")
+            v_sent += len(items)
+        if v_sent:
+            print(f"Sent {v_sent} volume-spike alert(s).")
 
 
 # ---------------------------------------------------------------------------
