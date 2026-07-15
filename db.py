@@ -346,7 +346,7 @@ def get_fundamentals(tickers: tuple) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         res = (_client().table("fundamentals_daily")
-               .select("ticker, market_cap_cr, pe, pb, sector")
+               .select("ticker, market_cap_cr, pe, pb, book_value, sector")
                .in_("ticker", list(tickers)).execute())
         return pd.DataFrame(res.data or [])
     except Exception:
