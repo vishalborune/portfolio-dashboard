@@ -335,6 +335,24 @@ def get_trade_journal() -> pd.DataFrame:
 # ===============================================================
 
 @st.cache_data(ttl=60 * 60 * 4)
+@st.cache_data(ttl=60 * 60 * 4)
+def get_fundamentals(tickers: tuple) -> pd.DataFrame:
+    """Market Cap / PE / P/B / Sector from the fundamentals_daily table
+    (fed by fundamentals.py, scraping screener.in daily -- see that file
+    for why Yahoo's .info endpoint isn't used here). Empty df if the
+    table has nothing yet or is unreachable; caller must degrade
+    gracefully, same as every other optional data layer in this codebase."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        res = (_client().table("fundamentals_daily")
+               .select("ticker, market_cap_cr, pe, pb, sector")
+               .in_("ticker", list(tickers)).execute())
+        return pd.DataFrame(res.data or [])
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_delivery_pct(tickers: tuple) -> pd.DataFrame:
     """Latest delivery % + 4-week rolling average per ticker, from the
     delivery_daily table (fed by delivery.py, NSE only in v1).
