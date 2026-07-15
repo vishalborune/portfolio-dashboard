@@ -43,6 +43,15 @@ HEADERS = {
 BASE = "https://www.screener.in/company/{sym}/{view}/"
 TIMEOUT = 15
 
+# Manually verified screener.in slugs where the trading symbol is NOT the
+# right URL (BSE-SME stocks resolve by scrip code; add more here as the
+# job's "no data / identity mismatch" log lines identify them).
+SLUG_OVERRIDES = {
+    "CWD-MS.BO": "543378",       # CWD Ltd
+    "HSIL-MT.BO": "543916",      # Hemant Surgical
+    "TRUECOLORS.BO": "544531",   # True Colors
+}
+
 
 def _client():
     return create_client(os.environ["SUPABASE_URL"],
@@ -63,19 +72,24 @@ def tracked_tickers(client) -> dict:
             continue
         sym = m.group(1).strip()
         ticker = f"{sym}.NS" if "XNSE:" in name else f"{sym}.BO"
-        # v2 (15-Jul-2026): no more skipping. Numeric BSE scrip codes ARE
-        # valid screener.in slugs (screener.in/company/540737/ resolves),
-        # and screener covers many SME stocks by symbol too. Attempt all;
-        # fetch_one fails gracefully and the log names every miss.
-        out[sym] = ticker
+        display = name[:name.rfind("(")].strip()
+        # v3: attempt every ticker. Slug priority: manual override (verified),
+        # else the trading symbol. Numeric BSE codes are valid slugs as-is.
+        slug = SLUG_OVERRIDES.get(ticker, sym)
+        out[ticker] = {"slug": slug, "display": display}
     return out
 
 
-def fetch_one(symbol: str) -> dict:
+def fetch_one(symbol: str, expected_name: str = "") -> dict:
     """Market Cap / PE / Book Value / Sector for one company. Tries
-    consolidated first, falls back to standalone (some companies, esp.
-    banks/NBFCs and smaller ones, only have standalone). Returns {} on
-    total failure -- caller logs and moves on, never crashes."""
+    consolidated first, falls back to standalone. Returns {} on failure.
+
+    IDENTITY CHECK (v3, 15-Jul-2026): slugs can collide -- /company/TCL/
+    might be a different company than Thaai Castings. If expected_name is
+    given, the page's <h1> company name must share at least one
+    significant word with it, else the fetch is REJECTED and logged.
+    Storing another company's numbers against our stock is the
+    wrong-instrument bug all over again; a blank beats a lie."""
     for view in ("consolidated", ""):
         url = BASE.format(sym=symbol, view=view).replace("//", "/").replace("https:/", "https://")
         try:
@@ -95,6 +109,18 @@ def fetch_one(symbol: str) -> dict:
                 m = re.search(pat, text, re.DOTALL)
                 return float(m.group(1).replace(",", "")) if m else None
 
+            # Identity gate BEFORE trusting any numbers
+            if expected_name:
+                hm = re.search(r"<h1[^>]*>([^<]+)</h1>", text)
+                page_name = (hm.group(1) if hm else "").upper()
+                stop = {"LIMITED", "LTD", "INDIA", "INDUSTRIES", "THE", "AND", "&"}
+                want = {w for w in re.split(r"[^A-Z0-9]+", expected_name.upper())
+                        if len(w) >= 3 and w not in stop}
+                if want and not any(w in page_name for w in want):
+                    print(f"  [fundamentals] identity MISMATCH for slug '{symbol}': "
+                          f"page is '{page_name.title().strip()}', expected ~'{expected_name}'. "
+                          f"Rejected -- add correct slug to SLUG_OVERRIDES.")
+                    return {}
             mcap = grab("Market Cap")
             pe = grab("Stock P/E")
             bv = grab("Book Value")
@@ -144,11 +170,11 @@ def update_all(client):
     # fails, P/B is simply left null rather than guessed.
     import yfinance as yf
     ok, failed = 0, []
-    for symbol, ticker in tracked.items():
-        data = fetch_one(symbol)
+    for ticker, meta in tracked.items():
+        data = fetch_one(meta["slug"], expected_name=meta["display"])
         if not data:
-            print(f"  [fundamentals] no data found for {symbol} ({ticker}) — "
-                  f"tried consolidated + standalone, both empty/unreachable")
+            print(f"  [fundamentals] no data for {ticker} via slug '{meta['slug']}' — "
+                  f"empty, unreachable, or identity mismatch (see above)")
             failed.append(ticker)
             time.sleep(0.5)
             continue
