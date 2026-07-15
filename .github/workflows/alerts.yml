@@ -118,6 +118,14 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      # Fundamentals (added 15-Jul-2026): Market Cap/PE/P-B from screener.in,
+      # once daily. Replaces live Yahoo .info calls, which got wholesale
+      # blocked from this IP under today's load. Best-effort: a failed or
+      # unreachable stock is skipped, never fails the job.
+      - run: python fundamentals.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
   delivery-backfill:
     # ONE-TIME job: ~6 weeks of delivery history so the 4-week rolling
