@@ -115,25 +115,37 @@ def extract_prices_for_date(d: date) -> dict:
                   if v["exchange"] == "NSE"}
     if nse_needed:
         nse_df = fetch_nse_bhavcopy(d)
-        if not nse_df.empty:
+        if nse_df.empty:
+            print(f"  [bhavcopy] NSE bhavcopy for {d} came back empty "
+                  f"(download failed, or not yet published) -- "
+                  f"{list(nse_needed.values())} will be missing this run.")
+        else:
             o_col = next((c for c in nse_df.columns if c in ("OPEN_PRICE", "OPEN")), None)
             h_col = next((c for c in nse_df.columns if c in ("HIGH_PRICE", "HIGH")), None)
             l_col = next((c for c in nse_df.columns if c in ("LOW_PRICE", "LOW")), None)
             v_col = next((c for c in nse_df.columns if c in ("TTL_TRD_QNTY", "TOTTRDQTY", "VOLUME")), None)
             for sym, ticker in nse_needed.items():
                 match = nse_df[nse_df["SYMBOL"] == sym]
-                if not match.empty:
-                    row = match.iloc[0]
-                    try:
-                        out[ticker] = {
-                            "open": float(row[o_col]) if o_col else float(row["CLOSE"]),
-                            "high": float(row[h_col]) if h_col else float(row["CLOSE"]),
-                            "low": float(row[l_col]) if l_col else float(row["CLOSE"]),
-                            "close": float(row["CLOSE"]),
-                            "volume": float(row[v_col]) if v_col else 0.0,
-                        }
-                    except (ValueError, KeyError):
-                        pass
+                if match.empty:
+                    # THIS is the line that was missing before 15-Jul-2026 --
+                    # NSE failures were previously silent, indistinguishable
+                    # from "never tried". Now every miss is visible.
+                    sample = nse_df["SYMBOL"].head(5).tolist()
+                    print(f"  [bhavcopy] No NSE row matched symbol '{sym}' for {ticker} "
+                          f"on {d}. Sample symbols in file: {sample}")
+                    continue
+                row = match.iloc[0]
+                try:
+                    out[ticker] = {
+                        "open": float(row[o_col]) if o_col else float(row["CLOSE"]),
+                        "high": float(row[h_col]) if h_col else float(row["CLOSE"]),
+                        "low": float(row[l_col]) if l_col else float(row["CLOSE"]),
+                        "close": float(row["CLOSE"]),
+                        "volume": float(row[v_col]) if v_col else 0.0,
+                    }
+                except (ValueError, KeyError) as e:
+                    print(f"  [bhavcopy] Matched NSE row for {ticker} on {d} but "
+                          f"couldn't parse price fields: {e}")
 
     bse_needed = {k: v for k, v in SME_STOCKS.items() if v["exchange"] == "BSE"}
     if bse_needed:
@@ -248,9 +260,22 @@ def backfill(client, days: int = 730):
 
 if __name__ == "__main__":
     import os
+    mode = sys.argv[1] if len(sys.argv) > 1 else "today"
+    if mode == "check":
+        # Fast diagnostic: no Supabase needed, just prints whether each
+        # tracked symbol is found in the MOST RECENT trading day's file.
+        # Answers "is the symbol right?" in seconds instead of a 30-min backfill.
+        d = date.today()
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        print(f"[check] Testing against {d} (most recent weekday)...")
+        prices = extract_prices_for_date(d)
+        for ticker in SME_STOCKS:
+            status = f"FOUND close={prices[ticker]['close']}" if ticker in prices else "NOT FOUND"
+            print(f"  {ticker:16s} {status}")
+        sys.exit(0)
     from supabase import create_client
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    mode = sys.argv[1] if len(sys.argv) > 1 else "today"
     if mode == "backfill":
         backfill(client)
     else:
