@@ -475,7 +475,7 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
     """
     row_defaults = {"Sector": "Unknown", "Industry": "Unknown",
                     "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
-                    "P/B": np.nan, "EV/EBITDA": np.nan}
+                    "P/B": np.nan, "EV/EBITDA": np.nan, "Book Value": np.nan}
     if not tickers:
         return pd.DataFrame(columns=["Ticker", *row_defaults])
     try:
@@ -496,6 +496,8 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
                     row["PE (live)"] = r["pe"]
                 if pd.notna(r.get("pb")):
                     row["P/B"] = r["pb"]
+                if pd.notna(r.get("book_value")):
+                    row["Book Value"] = r["book_value"]
                 if r.get("sector"):
                     row["Sector"] = r["sector"]
         rows.append(row)
@@ -542,6 +544,16 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.merge(prices, on="Ticker", how="left")
     df = df.merge(fundamentals, on="Ticker", how="left")
+
+    # P/B computed HERE from the dashboard's own live CMP / stored Book
+    # Value (15-Jul-2026). The fetch job originally derived P/B using a
+    # Yahoo price -- which is exactly the blocked dependency this whole
+    # table exists to remove, so every P/B came back null. The dashboard
+    # always has a CMP; Book Value changes quarterly. CMP/BV is the same
+    # arithmetic every screener site uses, and it's always current.
+    if "Book Value" in df.columns:
+        computed_pb = df["CMP"] / df["Book Value"]
+        df["P/B"] = df["P/B"].fillna(computed_pb).round(2)
 
     # Flowchart states (Lakshmi's TheWrap TA rules) — one per ticker
     with st.spinner("Computing flowchart states (weekly TA)..."):
