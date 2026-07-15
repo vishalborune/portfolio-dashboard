@@ -50,6 +50,8 @@ SLUG_OVERRIDES = {
     "CWD-MS.BO": "543378",       # CWD Ltd
     "HSIL-MT.BO": "543916",      # Hemant Surgical
     "TRUECOLORS.BO": "544531",   # True Colors
+    "LEHAR.BO": "532829",        # Lehar Footwears — BSE-only, slug = scrip code
+    "SGRL.BO": "540737",         # Shree Ganesh Remedies — BSE-only, slug = scrip code
 }
 
 
