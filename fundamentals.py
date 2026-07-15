@@ -54,12 +54,6 @@ def tracked_tickers(client) -> dict:
     screener.in's URL slug is almost always the NSE trading symbol (even
     for BSE-only stocks it's usually the same root), so we strip the
     .NS/.BO suffix and try that first."""
-    try:
-        import bhavcopy
-        sme_tickers = set(bhavcopy.SME_STOCKS.keys())
-    except Exception:
-        sme_tickers = set()
-
     res = client.table("holdings").select("stock_name").execute()
     out = {}
     for row in (res.data or []):
@@ -69,12 +63,10 @@ def tracked_tickers(client) -> dict:
             continue
         sym = m.group(1).strip()
         ticker = f"{sym}.NS" if "XNSE:" in name else f"{sym}.BO"
-        if ticker in sme_tickers:
-            continue
-        # numeric BSE scrip codes have no screener.in slug we can guess --
-        # skip rather than fetch garbage.
-        if sym.isdigit():
-            continue
+        # v2 (15-Jul-2026): no more skipping. Numeric BSE scrip codes ARE
+        # valid screener.in slugs (screener.in/company/540737/ resolves),
+        # and screener covers many SME stocks by symbol too. Attempt all;
+        # fetch_one fails gracefully and the log names every miss.
         out[sym] = ticker
     return out
 
@@ -93,7 +85,13 @@ def fetch_one(symbol: str) -> dict:
             text = r.text
             # The top-ratios block is a <li> list: "<span class="name">Market Cap</span> ... <span class="number">41,599</span>"
             def grab(label):
-                pat = rf'"name"[^>]*>\s*{re.escape(label)}\s*</span>.*?"number"[^>]*>\s*([\d,\.]+)'
+                # Tempered pattern: the number must appear BEFORE the next
+                # </li>. Without this, a stock whose P/E is blank on screener
+                # made the regex run into the NEXT ratio and grab its number
+                # (caught live 15-Jul-2026: Cockerill "PE 0.07" was actually
+                # the following ratio's value). Wrong number > missing number
+                # is the worst failure mode for financial data.
+                pat = rf'"name"[^>]*>\s*{re.escape(label)}\s*</span>(?:(?!</li>).)*?"number"[^>]*>\s*([\d,\.]+)'
                 m = re.search(pat, text, re.DOTALL)
                 return float(m.group(1).replace(",", "")) if m else None
 
