@@ -61,6 +61,8 @@ BSE_SCRIP_OVERRIDES = {
     "CWD-MS": "543378",     # CWD Ltd
     "HSIL-MT": "543916",    # Hemant Surgical Industries
     "TRUECOLORS": "544531", # True Colors (Abinaya) — BSE SME, scrip 544531
+    "LEHAR": "532829",      # Lehar Footwears (Abinaya) — BSE mainboard
+    "SGRL": "540737",       # Shree Ganesh Remedies (Abinaya) — BSE mainboard
 }
 
 
