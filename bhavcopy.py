@@ -43,6 +43,13 @@ SME_STOCKS = {
     # standard NSE sec_bhavdata_full file under symbol SSEGL, so the same
     # exact-symbol match works.
     "SSEGL.NS":  {"exchange": "NSE", "symbol": "SSEGL"},
+    # Yahoo blind spots (added 15-Jul-2026): these two are MAINBOARD NSE
+    # stocks with verified-correct symbols, but Yahoo persistently serves
+    # nothing for them. This pipeline works for any NSE stock, not just
+    # SME -- the official daily file has every symbol. So they're priced
+    # here instead of relying on Yahoo ever fixing its coverage.
+    "LEHAR.NS":  {"exchange": "NSE", "symbol": "LEHAR"},   # Lehar Footwears (Abinaya)
+    "SGRL.NS":   {"exchange": "NSE", "symbol": "SGRL"},    # Shree Ganesh Remedies (Abinaya)
     # BSE's SC_NAME field is a short abbreviated code (e.g. "AEGISLOG" for
     # Aegis Logistics), NOT a full company name -- confirmed against a real
     # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
