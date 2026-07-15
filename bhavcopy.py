@@ -43,13 +43,16 @@ SME_STOCKS = {
     # standard NSE sec_bhavdata_full file under symbol SSEGL, so the same
     # exact-symbol match works.
     "SSEGL.NS":  {"exchange": "NSE", "symbol": "SSEGL"},
-    # Yahoo blind spots (added 15-Jul-2026): these two are MAINBOARD NSE
-    # stocks with verified-correct symbols, but Yahoo persistently serves
-    # nothing for them. This pipeline works for any NSE stock, not just
-    # SME -- the official daily file has every symbol. So they're priced
-    # here instead of relying on Yahoo ever fixing its coverage.
-    "LEHAR.NS":  {"exchange": "NSE", "symbol": "LEHAR"},   # Lehar Footwears (Abinaya)
-    "SGRL.NS":   {"exchange": "NSE", "symbol": "SGRL"},    # Shree Ganesh Remedies (Abinaya)
+    # Yahoo blind spots (added 15-Jul-2026, corrected same day): initially
+    # assumed NSE-listed based on a web search that turned out to conflate
+    # exchanges. Ground truth from the ACTUAL NSE bhavcopy file (checked via
+    # `python bhavcopy.py check`) proved neither symbol exists there. Both
+    # are BSE-ONLY. Scrip codes confirmed directly from bseindia.com URLs:
+    # Lehar Footwears -> bseindia.com/.../lehar/532829
+    # Shree Ganesh Remedies -> bseindia.com/.../sgrl/540737 (also directly
+    # confirmed BSE volume nonzero / NSE volume zero on a 3rd-party quote page).
+    "LEHAR.BO":  {"exchange": "BSE", "name_hint": "LEHAR", "scrip_code": "532829"},
+    "SGRL.BO":   {"exchange": "BSE", "name_hint": "SGRL", "scrip_code": "540737"},
     # BSE's SC_NAME field is a short abbreviated code (e.g. "AEGISLOG" for
     # Aegis Logistics), NOT a full company name -- confirmed against a real
     # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
