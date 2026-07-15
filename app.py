@@ -459,54 +459,46 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
 
 @st.cache_data(ttl=INFO_CACHE_TTL)
 def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
-    """Company fundamentals from Yahoo.
+    """Company fundamentals: Market Cap / PE / P/B / Sector.
 
-    Yahoo's company-info endpoint is heavily rate-limited from datacenter
-    IPs (cloud hosts like Render), so .info often fails there even though
-    price endpoints work fine. Strategy: try .info per ticker with a tiny
-    pause to stay under rate limits; independently pull market cap from
-    fast_info (a lighter endpoint that usually still works) so at least
-    that column populates when the rich data is blocked.
+    HARDENED 15-Jul-2026: no longer calls Yahoo live. Yahoo's .info /
+    fast_info endpoints went from "sometimes fails" to "100% blank for
+    every stock, including large caps" under today's load -- a wholesale
+    block on Render's IP, not a per-ticker rate limit that more throttling
+    could fix. Instead: read from fundamentals_daily, a table filled once
+    daily by fundamentals.py (scrapes screener.in, a source that answers
+    India-based requests fine). Instant, no live dependency, no crash risk.
+
+    EV/EBITDA isn't in this table (unreliable on screener's free page
+    across companies) -- shows as "--" same as before, now honestly
+    rather than silently. Industry isn't tracked either (only Sector).
     """
-    import time
-    rows = []
-    # SME-tracked tickers: Yahoo has no fundamentals for them (only 404s and
-    # retries -- the quoteSummary "Not Found" errors in the logs). Skip.
+    row_defaults = {"Sector": "Unknown", "Industry": "Unknown",
+                    "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
+                    "P/B": np.nan, "EV/EBITDA": np.nan}
+    if not tickers:
+        return pd.DataFrame(columns=["Ticker", *row_defaults])
     try:
-        _sme = set(db.get_sme_daily_prices(tuple(sorted(tickers)))["ticker"].unique())
+        stored = db.get_fundamentals(tickers)
     except Exception:
-        _sme = set()
+        stored = pd.DataFrame()
+
+    rows = []
     for t in tickers:
-        row = {"Ticker": t, "Sector": "Unknown", "Industry": "Unknown",
-               "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
-               "P/B": np.nan, "EV/EBITDA": np.nan}
-        if t in _sme:
-            rows.append(row)
-            continue
-        tk = yf.Ticker(t)
-        # Lighter endpoint first: market cap via fast_info
-        try:
-            mc = tk.fast_info.get("market_cap") if hasattr(tk.fast_info, "get") else getattr(tk.fast_info, "market_cap", None)
-            if mc:
-                row["Market Cap (Cr)"] = mc / 1e7
-        except Exception:
-            pass
-        # Rich endpoint: full info (may be blocked from cloud IPs)
-        try:
-            info = tk.info or {}
-            if info.get("sector"):
-                row["Sector"] = info["sector"]
-            if info.get("industry"):
-                row["Industry"] = info["industry"]
-            if info.get("marketCap"):
-                row["Market Cap (Cr)"] = info["marketCap"] / 1e7
-            row["PE (live)"] = info.get("trailingPE")
-            row["P/B"] = info.get("priceToBook")
-            row["EV/EBITDA"] = info.get("enterpriseToEbitda")
-        except Exception:
-            pass
+        row = {"Ticker": t, **row_defaults}
+        if not stored.empty:
+            match = stored[stored["ticker"] == t]
+            if not match.empty:
+                r = match.iloc[0]
+                if pd.notna(r.get("market_cap_cr")):
+                    row["Market Cap (Cr)"] = r["market_cap_cr"]
+                if pd.notna(r.get("pe")):
+                    row["PE (live)"] = r["pe"]
+                if pd.notna(r.get("pb")):
+                    row["P/B"] = r["pb"]
+                if r.get("sector"):
+                    row["Sector"] = r["sector"]
         rows.append(row)
-        time.sleep(0.25)   # stay under Yahoo's rate limit for this endpoint
     return pd.DataFrame(rows)
 
 
