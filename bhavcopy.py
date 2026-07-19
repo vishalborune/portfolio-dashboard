@@ -108,11 +108,65 @@ def fetch_bse_bhavcopy(d: date) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+
+
+# --- Benchmark index (added 19-Jul-2026) -----------------------------------
+# The digest benchmarks portfolio XIRR against the Nifty Smallcap 100.
+# Yahoo's ^CNXSC proved unreliable, so we own the data: NSE publishes
+# official daily index closes on the same archives host as the bhavcopy.
+# Stored in sme_daily_prices under a synthetic ticker -- the table fits
+# (ticker/date/OHLC), no new schema. Rides the daily job AND the backfill.
+INDEX_TRACK = {"NIFTYSMLCAP100.IDX": "Nifty Smallcap 100"}
+
+
+def fetch_index_closes(d: date) -> dict:
+    """{synthetic_ticker: ohlcv} from NSE's official daily index file.
+    Empty dict on any failure (holiday, not published, unreachable)."""
+    url = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{d:%d%m%Y}.csv"
+    out = {}
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200 or len(r.content) < 200:
+            return {}
+        df = pd.read_csv(io.StringIO(r.text))
+        df.columns = [c.strip() for c in df.columns]
+        name_col = next((c for c in df.columns if "Index Name" in c), None)
+        close_col = next((c for c in df.columns if "Closing" in c), None)
+        o_col = next((c for c in df.columns if "Open" in c), None)
+        h_col = next((c for c in df.columns if "High" in c), None)
+        l_col = next((c for c in df.columns if "Low" in c), None)
+        if not name_col or not close_col:
+            print(f"  [bhavcopy] index file {d}: unrecognised columns "
+                  f"{list(df.columns)[:6]} — skipped")
+            return {}
+        names = df[name_col].astype(str).str.strip().str.upper()
+        for ticker, idx_name in INDEX_TRACK.items():
+            m = df[names == idx_name.upper()]
+            if m.empty:
+                print(f"  [bhavcopy] index '{idx_name}' not found in file for {d}")
+                continue
+            row = m.iloc[0]
+            try:
+                close = float(row[close_col])
+                out[ticker] = {
+                    "open": float(row[o_col]) if o_col else close,
+                    "high": float(row[h_col]) if h_col else close,
+                    "low": float(row[l_col]) if l_col else close,
+                    "close": close, "volume": 0.0,
+                }
+            except (ValueError, KeyError) as e:
+                print(f"  [bhavcopy] index row parse failed for {d}: {e}")
+    except Exception as e:
+        print(f"  [bhavcopy] index fetch failed for {d}: {e}")
+    return out
+
+
 def extract_prices_for_date(d: date) -> dict:
     """Returns {ticker: close_price} for whichever of the 6 stocks were
     found in that day's bhavcopy files. Missing ones are simply absent
     from the dict — never a crash, never a fabricated price."""
     out = {}
+    out.update(fetch_index_closes(d))   # benchmark index rides every fetch
 
     nse_needed = {v["symbol"]: k for k, v in SME_STOCKS.items()
                   if v["exchange"] == "NSE"}
