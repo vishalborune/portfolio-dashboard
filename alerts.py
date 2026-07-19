@@ -657,8 +657,25 @@ def run_filings():
         chat = chat_id_for_group(g)
         if not chat:
             continue
-        send_telegram("🗞 <b>Exchange filings</b>\n\n" + "\n\n".join(alerts[:15]),
-                      chat_id=chat)
+        # Chunked dispatch (19-Jul-2026): pack alerts into as many messages
+        # as needed, budgeted by CHARACTERS not count. Replaces a [:15] cap
+        # that silently dropped overflow on cluster days (results season),
+        # and fixes a worse latent bug: Telegram rejects messages over
+        # 4096 chars outright -- with AI gists at up to ~800 chars each,
+        # a single capped message could have exceeded that and lost ALL
+        # of the day's filing alerts at once.
+        header = "🗞 <b>Exchange filings</b>\n\n"
+        budget = 3500
+        chunk = []
+        chunk_len = len(header)
+        for a in alerts:
+            if chunk and chunk_len + len(a) + 2 > budget:
+                send_telegram(header + "\n\n".join(chunk), chat_id=chat)
+                chunk, chunk_len = [], len(header)
+            chunk.append(a)
+            chunk_len += len(a) + 2
+        if chunk:
+            send_telegram(header + "\n\n".join(chunk), chat_id=chat)
         total += len(alerts)
     if total:
         print(f"Sent {total} filing alert(s).")
