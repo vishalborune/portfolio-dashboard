@@ -464,12 +464,34 @@ def _fingerprint(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:32]
 
 
+# BSE's announcements API needs the NUMERIC scrip code -- these XBOM
+# symbols aren't codes, so queries with them can never match ("No Record
+# Found!", caught live 19-Jul-2026). Codes verified during the bhavcopy
+# and fundamentals builds.
+BSE_FILING_SCRIPS = {
+    "CWD-MS": "543378",
+    "HSIL-MT": "543916",
+    "TRUECOLORS": "544531",
+    "LEHAR": "532829",
+    "SGRL": "540737",
+}
+
+
 def fetch_bse_announcements(scrip_code: str) -> list:
-    """BSE announcements for one scrip. Returns list of dicts; [] on any failure."""
+    """BSE announcements for one scrip. Returns list of dicts; [] on any failure.
+    Hardened 19-Jul-2026: explicit 7-day date range (empty date params now
+    return 'No Record Found!' even for valid codes), symbol->code mapping,
+    and BSE's quirky bare-string empty response treated as normal."""
+    scrip_code = BSE_FILING_SCRIPS.get(scrip_code, scrip_code)
+    if not str(scrip_code).isdigit():
+        print(f"  (BSE: no scrip code known for '{scrip_code}' — add to BSE_FILING_SCRIPS)")
+        return []
     try:
+        d_to = date.today().strftime("%Y%m%d")
+        d_from = (date.today() - timedelta(days=7)).strftime("%Y%m%d")
         url = ("https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w"
-               f"?pageno=1&strCat=-1&strPrevDate=&strScrip={scrip_code}"
-               "&strSearch=P&strToDate=&strType=C")
+               f"?pageno=1&strCat=-1&strPrevDate={d_from}&strScrip={scrip_code}"
+               f"&strSearch=P&strToDate={d_to}&strType=C")
         r = requests.get(url, timeout=15, headers={
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://www.bseindia.com/",
@@ -483,6 +505,8 @@ def fetch_bse_announcements(scrip_code: str) -> list:
         # "'str' object has no attribute 'get'" and hid what BSE actually
         # sent. Now the log shows the real payload so we can react.
         if not isinstance(payload, dict):
+            if "no record" in str(payload).lower():
+                return []          # BSE's way of saying "nothing filed" — normal
             print(f"  (BSE unexpected payload for {scrip_code}: "
                   f"{type(payload).__name__} = {str(payload)[:120]!r})")
             return []
