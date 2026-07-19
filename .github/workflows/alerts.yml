@@ -23,6 +23,10 @@ on:
         description: "Send the Sunday digest right now?"
         type: boolean
         default: false
+      run_filings_now:
+        description: "Check filings right now (tests the AI summaries)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -42,7 +46,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
   filings:
-    if: github.event.schedule == '15 5,9 * * 1-5'
+    # Runs on the two trading-day crons, OR when manually requested with
+    # the tick-box (manual Run workflow otherwise SKIPS this job -- same
+    # gap the digest button closed). Safe to re-run: the filings_seen
+    # fingerprint table means already-alerted filings stay silent.
+    if: github.event.schedule == '15 5,9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_filings_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
