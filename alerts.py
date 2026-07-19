@@ -271,6 +271,84 @@ def run_states():
 # MODE: filings — NSE/BSE corporate announcements (best-effort)
 # ---------------------------------------------------------------------------
 
+# --- Filing summarization (requested by Lakshmi, 17-Jul-2026) -------------
+# ScoutQuest-style: don't just say a filing exists, say WHAT it says.
+# Chain: download attachment PDF -> extract text -> Claude Haiku summary
+# (2-4 bullets). Every step degrades gracefully: no API key, scanned PDF,
+# download failure, API error -- all fall back to headline+link, never
+# block the alert itself.
+
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, headline-only
+
+
+MAX_PDF_BYTES = 8 * 1024 * 1024   # 8 MB guard: annual reports etc. get headline-only
+
+
+def _download_pdf_b64(url: str):
+    """Filing PDF as base64, or None. Size-capped: giant documents (annual
+    reports, investor decks) fall back to headline-only rather than burning
+    tokens on 300 pages nobody asked to summarize."""
+    try:
+        import base64
+        r = requests.get(url, headers=HEADERS, timeout=30)
+        if r.status_code != 200 or not r.content[:5].startswith(b"%PDF"):
+            return None
+        if len(r.content) > MAX_PDF_BYTES:
+            print(f"  [filings] PDF too large ({len(r.content)//1024} KB) — headline-only")
+            return None
+        return base64.standard_b64encode(r.content).decode()
+    except Exception:
+        return None
+
+
+def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
+    """2-4 bullet gist via Claude reading the PDF NATIVELY (v2, 17-Jul-2026).
+    The document goes to the model as-is and is read visually -- so scanned
+    BSE filings, stamped faxes, and digital PDFs all take the identical
+    path. Replaces the old text-extraction step, which returned nothing for
+    scanned documents. '' on any failure -> alert falls back to headline."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return ""
+    pdf_b64 = _download_pdf_b64(pdf_url)
+    if not pdf_b64:
+        return ""
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={
+                "model": SUMMARY_MODEL, "max_tokens": 250,
+                "messages": [{"role": "user", "content": [
+                    {"type": "document",
+                     "source": {"type": "base64", "media_type": "application/pdf",
+                                "data": pdf_b64}},
+                    {"type": "text", "text":
+                        f"This is an Indian stock exchange filing by {company} "
+                        f"(subject: {headline}). Summarize it for a retail "
+                        f"investor's Telegram alert.\n"
+                        f"Output EXACTLY this format, nothing else:\n"
+                        f"Line 1: one emoji + a 5-10 word gist title\n"
+                        f"Then 2-4 bullets starting with '- ', each under 15 words, "
+                        f"only concrete facts (amounts, dates, names, percentages). "
+                        f"No advice, no speculation, no preamble. If the document "
+                        f"is unreadable, output exactly: UNREADABLE"}]}],
+            }, timeout=90)
+        if r.status_code != 200:
+            print(f"  [filings] summary API {r.status_code} for {company} — headline-only")
+            return ""
+        blocks = r.json().get("content", [])
+        out = "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+        if not out or out.upper().startswith("UNREADABLE"):
+            return ""
+        return out[:600]
+    except Exception as e:
+        print(f"  [filings] summary failed for {company}: {e} — headline-only")
+        return ""
+
+
 MATERIAL_KEYWORDS = [
     "order", "contract", "dividend", "bonus", "split", "buyback", "results",
     "financial result", "acquisition", "pledge", "resignation", "appointment",
@@ -348,6 +426,7 @@ def run_filings():
 
     alerts_by_group = {}
     seen_syms = set()
+    summaries_done = 0
     for _, h in holdings.iterrows():
         name = h["stock_name"]
         m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(name))
@@ -372,11 +451,18 @@ def run_filings():
             fp = _fingerprint(sym, a["headline"], a["date"])
             if fp in seen:
                 continue
+            # ScoutQuest-style gist (17-Jul-2026): summarize the PDF when
+            # possible; silently fall back to headline-only otherwise.
+            gist = ""
+            if summaries_done < MAX_SUMMARIES_PER_RUN:
+                gist = summarize_filing(short_name(name), a["headline"], a["url"])
+                if gist:
+                    summaries_done += 1
+            body = (f"📢 <b>{short_name(name)}</b>: {a['headline'][:200]}"
+                    + (f"\n\n{gist}" if gist else "")
+                    + f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>")
             for g in holder_groups:
-                alerts_by_group.setdefault(g, []).append(
-                    f"📢 <b>{short_name(name)}</b>: {a['headline'][:200]}"
-                    f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>"
-                )
+                alerts_by_group.setdefault(g, []).append(body)
             client.table("filings_seen").insert({
                 "fingerprint": fp, "ticker": sym,
                 "headline": a["headline"][:300], "filing_date": a["date"] or None,
