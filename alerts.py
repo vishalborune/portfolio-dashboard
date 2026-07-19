@@ -475,8 +475,21 @@ def fetch_bse_announcements(scrip_code: str) -> list:
             "Referer": "https://www.bseindia.com/",
         })
         if r.status_code != 200:
+            print(f"  (BSE HTTP {r.status_code} for {scrip_code}: {r.text[:100]!r})")
             return []
-        data = r.json().get("Table", []) or []
+        payload = r.json()
+        # Defensive: BSE sometimes returns a JSON *string* (block/error page)
+        # instead of the expected dict -- the old code crashed with
+        # "'str' object has no attribute 'get'" and hid what BSE actually
+        # sent. Now the log shows the real payload so we can react.
+        if not isinstance(payload, dict):
+            print(f"  (BSE unexpected payload for {scrip_code}: "
+                  f"{type(payload).__name__} = {str(payload)[:120]!r})")
+            return []
+        data = payload.get("Table") or []
+        if not isinstance(data, list):
+            print(f"  (BSE 'Table' not a list for {scrip_code}: {str(data)[:120]!r})")
+            return []
         out = []
         for a in data[:10]:
             out.append({
@@ -491,32 +504,72 @@ def fetch_bse_announcements(scrip_code: str) -> list:
         return []
 
 
-def fetch_nse_announcements(symbol: str) -> list:
-    """NSE announcements for one symbol. Session-warmup approach; [] on failure."""
+_NSE_RSS_CACHE = None
+
+def fetch_nse_rss() -> list:
+    """ALL recent NSE corporate announcements in one fetch, via the RSS feed
+    on nsearchives.nseindia.com (rewritten 19-Jul-2026).
+
+    WHY: the old per-symbol approach hit www.nseindia.com's API, which
+    stonewalls datacenter IPs -- a manual run showed 60/60 read-timeouts,
+    meaning the filings feed had silently died for NSE stocks. The archives
+    host is the same one bhavcopy.py fetches from daily without issue.
+    One request replaces sixty. Cached per process run."""
+    global _NSE_RSS_CACHE
+    if _NSE_RSS_CACHE is not None:
+        return _NSE_RSS_CACHE
+    items = []
     try:
-        s = requests.Session()
-        s.headers.update({
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"),
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        s.get("https://www.nseindia.com", timeout=15)  # cookie warmup
-        r = s.get(f"https://www.nseindia.com/api/corporate-announcements"
-                  f"?index=equities&symbol={symbol}", timeout=15)
+        import xml.etree.ElementTree as ET
+        from email.utils import parsedate_to_datetime
+        r = requests.get(
+            "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=25)
         if r.status_code != 200:
+            print(f"  (NSE RSS HTTP {r.status_code})")
+            _NSE_RSS_CACHE = []
             return []
-        data = r.json() or []
-        out = []
-        for a in (data if isinstance(data, list) else [])[:10]:
-            out.append({
-                "headline": a.get("desc") or a.get("attchmntText") or "",
-                "date": (a.get("an_dt") or a.get("sort_date") or "")[:10],
-                "url": a.get("attchmntFile") or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-            })
-        return out
+        root = ET.fromstring(r.content)
+        for it in root.iter("item"):
+            title = (it.findtext("title") or "").strip()
+            desc = (it.findtext("description") or "").strip()
+            link = (it.findtext("link") or "").strip()
+            pub = (it.findtext("pubDate") or "").strip()
+            d = ""
+            try:
+                d = parsedate_to_datetime(pub).date().isoformat()
+            except Exception:
+                pass
+            items.append({"title": title, "desc": desc, "url": link, "date": d})
+        print(f"  (NSE RSS: {len(items)} announcements fetched in one request)")
     except Exception as e:
-        print(f"  (NSE fetch failed for {symbol}: {e})")
-        return []
+        print(f"  (NSE RSS fetch failed: {e})")
+    _NSE_RSS_CACHE = items
+    return items
+
+
+def fetch_nse_announcements(symbol: str) -> list:
+    """Announcements for one NSE symbol, filtered from the shared RSS feed.
+    Word-boundary match on the symbol in title/description avoids substring
+    collisions (e.g. 'TCL' matching inside another company's text)."""
+    out = []
+    # Match the TITLE ONLY, anchored at the start ("SYMBOL - Subject" is the
+    # feed's convention). Matching descriptions false-positives on short
+    # symbols like TCL whenever those letters appear as a word in another
+    # company's text -- caught in testing.
+    pat = re.compile(rf"^\s*{re.escape(symbol)}\b", re.IGNORECASE)
+    for it in fetch_nse_rss():
+        if not pat.search(it["title"]):
+            continue
+        out.append({
+            "headline": (it["desc"] or it["title"])[:300],
+            "date": it["date"],
+            "url": it["url"] or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
+        })
+        if len(out) >= 10:
+            break
+    return out
 
 
 def run_filings():
