@@ -105,6 +105,104 @@ def vol_context(vol_ratio) -> str:
     return f"\nVolume: {vol_ratio:.1f}x 10-wk avg"
 
 
+def check_watchlist_entries(client):
+    """Watchlist ENTRY alerts (added 17-Jul-2026) — the mirror image of the
+    exit-side state alerts. Sweeps every portfolio's watchlist hourly:
+    - ZONE alert when a stock touches the 10DMA (1st tranche) or 21DMA
+      (2nd & final tranche) per Lakshmi's staged-entry system
+    - TARGET alert when CMP reaches the stored target buy price
+    Dedup: once per stock per group per day per kind (entry_alert_log).
+    Known limit: entry math runs off Yahoo daily bars, so SME-tracked
+    watchlist names get skipped silently (same Yahoo blind spot as
+    everywhere; bhavcopy-based entry math is a future add if needed)."""
+    rows = client.table("watchlist").select("*").execute().data or []
+    if not rows:
+        return
+
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    # group watchlist rows per ticker: which groups watch it, min target
+    by_ticker = {}
+    for r in rows:
+        m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(r.get("stock_name") or ""))
+        if not m:
+            continue
+        exch, sym = m.group(1), m.group(2).strip()
+        ticker = f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+        grp = PF_GROUP.get(int(r.get("portfolio_id", 1)), "vishal")
+        e = by_ticker.setdefault(ticker, {"name": short_name(r["stock_name"]),
+                                          "groups": {}, })
+        ge = e["groups"].setdefault(grp, {"pfs": [], "targets": []})
+        pf = int(r.get("portfolio_id", 1))
+        ge["pfs"].append(pf)
+        t = r.get("target_buy_price")
+        if t:
+            # targets are PERSONAL: keep (pf, target) pairs, fire when ANY
+            # member's target is hit. (A min() here was caught in testing
+            # suppressing one member's legit alert when another's deeper
+            # target hadn't been reached yet.)
+            ge["targets"].append((pf, float(t)))
+
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        d = signals.daily_entry_state(ticker)
+        if not d:
+            continue                       # Yahoo blind spot or fetch failure
+        zone = d["Entry Zone"]
+        cmp_ = d["CMP (d)"]
+        for grp, ge in e["groups"].items():
+            uniq = sorted(set(ge["pfs"]))
+            tag = ""
+            if grp == "lakshmi":
+                tag = "[Both] " if len(uniq) > 1 else f"[{PF_NAME.get(uniq[0], uniq[0])}] "
+            if zone in ("TRANCHE 1", "TRANCHE 2") and (ticker, grp, "ZONE") not in already:
+                which = ("1st tranche (10DMA ₹{:,.2f})".format(d["10DMA"])
+                         if zone == "TRANCHE 1"
+                         else "2nd & FINAL tranche (21DMA ₹{:,.2f})".format(d["21DMA"]))
+                msgs_by_group.setdefault(grp, []).append(
+                    f"🎯 {tag}<b>{e['name']}</b> — entry zone reached\n"
+                    f"CMP ₹{cmp_:,.2f} at the {which}")
+                to_log.append((ticker, grp, "ZONE"))
+            hits = [(pf, t) for pf, t in ge["targets"] if cmp_ <= t]
+            if hits and (ticker, grp, "TARGET") not in already:
+                whose = ", ".join(
+                    f"₹{t:,.2f} ({PF_NAME.get(pf, pf)})" if grp == "lakshmi"
+                    else f"₹{t:,.2f}" for pf, t in hits)
+                msgs_by_group.setdefault(grp, []).append(
+                    f"💰 {tag}<b>{e['name']}</b> — target buy price hit\n"
+                    f"CMP ₹{cmp_:,.2f} ≤ target {whose}")
+                to_log.append((ticker, grp, "TARGET"))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} entry alert(s) for '{grp}' — Telegram off for this group)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("🛒 <b>Watchlist entry alerts</b>\n\n" + "\n\n".join(msgs),
+                      chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp,
+                "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} watchlist entry alert(s).")
+    else:
+        print(f"No watchlist entry alerts. ({len(by_ticker)} watchlist tickers checked)")
+
+
 def run_states():
     client = sb()
     holdings = get_holdings(client)
@@ -265,6 +363,12 @@ def run_states():
             v_sent += len(items)
         if v_sent:
             print(f"Sent {v_sent} volume-spike alert(s).")
+
+    # Watchlist entry sweep — the buy-side mirror of everything above
+    try:
+        check_watchlist_entries(client)
+    except Exception as e:
+        print(f"⚠️ watchlist entry sweep failed (holdings alerts unaffected): {e}")
 
 
 # ---------------------------------------------------------------------------
