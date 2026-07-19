@@ -816,8 +816,8 @@ def _benchmark_series():
         df = yf.download(BENCHMARK_TICKER, period="3y", interval="1d",
                          progress=False, auto_adjust=False)
         if df.empty:
-            _BENCH_CACHE = False
-            return None
+            print("(digest: Yahoo returned EMPTY for ^CNXSC — falling back to our table)")
+            raise ValueError("empty")
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         s = df["Close"].dropna()
@@ -825,7 +825,29 @@ def _benchmark_series():
         _BENCH_CACHE = s
         return s
     except Exception as e:
-        print(f"(digest: benchmark fetch failed: {e})")
+        if str(e) != "empty":
+            print(f"(digest: Yahoo benchmark fetch failed: {e} — falling back to our table)")
+        # AUTHORITATIVE FALLBACK (19-Jul-2026): our own index history,
+        # stored daily by bhavcopy.py from NSE's official ind_close_all
+        # file (ticker NIFTYSMLCAP100.IDX in sme_daily_prices). Same
+        # own-the-data pattern as every other Yahoo blind spot this week.
+        try:
+            client = sb()
+            res = (client.table("sme_daily_prices")
+                   .select("price_date, close").eq("ticker", "NIFTYSMLCAP100.IDX")
+                   .order("price_date", desc=True).limit(900).execute())
+            rows = res.data or []
+            if rows:
+                rows.sort(key=lambda r: r["price_date"])
+                s = pd.Series([float(r["close"]) for r in rows],
+                              index=[date.fromisoformat(str(r["price_date"])[:10]) for r in rows])
+                print(f"(digest: benchmark from own table — {len(s)} days)")
+                _BENCH_CACHE = s
+                return s
+            print("(digest: own index table empty too — run the bhavcopy backfill "
+                  "to populate NIFTYSMLCAP100.IDX)")
+        except Exception as e2:
+            print(f"(digest: own-table benchmark fallback failed: {e2})")
         _BENCH_CACHE = False
         return None
 
@@ -879,6 +901,21 @@ def _fmt_l(x):
         return f"₹{x/1e7:,.2f} Cr"
     return f"₹{x/1e5:,.1f} L"
 
+
+
+
+def _box(title, inner_html, accent="#1e3a8a", bg="#ffffff"):
+    """A titled section card. Inline styles only -- email clients ignore
+    stylesheets, so every visual decision must travel inside the tag."""
+    if not inner_html:
+        return ""
+    return (f"<div style='background:{bg};border:1px solid #e2e8f0;"
+            f"border-left:4px solid {accent};border-radius:8px;"
+            f"padding:14px 18px;margin:14px 0'>"
+            f"<div style='font-size:15px;font-weight:700;color:{accent};"
+            f"margin-bottom:8px'>{title}</div>"
+            f"<div style='font-size:14px;color:#334155;line-height:1.55'>{inner_html}</div>"
+            f"</div>")
 
 
 def _bench_html(xirr, bench):
@@ -1051,17 +1088,34 @@ def _digest_for(client, holdings):
             except Exception:
                 pass
 
+            up = unreal >= 0
+            pnl_col = "#16a34a" if up else "#dc2626"
             pf_sections.append(f"""
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
-                        padding:12px 16px;margin:10px 0">
-              <h3 style="margin:0 0 8px">{PF_NAME.get(pf, pf)}</h3>
-              <p style="margin:4px 0">Invested <b>{_fmt_l(inv)}</b> ·
-                 Value <b>{_fmt_l(val)}</b> ·
-                 Unrealised <b>{_fmt_l(unreal)}</b> ({(unreal/inv*100 if inv else 0):+.1f}%)
-                 &nbsp;{trend_pnl}</p>
-              <p style="margin:4px 0">XIRR (annualised):
-                 <b>{f"{xirr:.1f}%" if xirr is not None else "—"}</b> {trend_xirr}</p>
-              {_bench_html(xirr, bench)}
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                        padding:16px 20px;margin:12px 0">
+              <div style="font-size:17px;font-weight:800;color:#0f172a;
+                          border-bottom:2px solid #1e3a8a;padding-bottom:6px;
+                          margin-bottom:10px">{PF_NAME.get(pf, pf)}</div>
+              <table style="width:100%;border-collapse:collapse;font-size:14px">
+                <tr>
+                  <td style="padding:4px 0;color:#64748b;width:34%">Invested</td>
+                  <td style="padding:4px 0;font-weight:700">{_fmt_l(inv)}</td>
+                </tr><tr>
+                  <td style="padding:4px 0;color:#64748b">Current value</td>
+                  <td style="padding:4px 0;font-weight:700">{_fmt_l(val)}</td>
+                </tr><tr>
+                  <td style="padding:4px 0;color:#64748b">Unrealised P&amp;L</td>
+                  <td style="padding:4px 0;font-weight:700;color:{pnl_col}">
+                    {_fmt_l(unreal)} ({(unreal/inv*100 if inv else 0):+.1f}%)
+                    &nbsp;<span style="font-weight:400;font-size:13px">{trend_pnl}</span></td>
+                </tr><tr>
+                  <td style="padding:4px 0;color:#64748b">XIRR (annualised)</td>
+                  <td style="padding:4px 0;font-weight:700">
+                    {f"{xirr:.1f}%" if xirr is not None else "—"}
+                    &nbsp;<span style="font-weight:400;font-size:13px">{trend_xirr}</span></td>
+                </tr>
+              </table>
+              <div style="margin-top:8px">{_bench_html(xirr, bench)}</div>
               {tiers_html}{conc_html}
             </div>""")
 
@@ -1099,8 +1153,7 @@ def _digest_for(client, holdings):
             lines.append(f"{short_name(j['ticker'])} sold @ ₹{float(j['exit_price']):,.1f} "
                          f"({j['reason']})" + (f" — <i>{j['notes']}</i>" if j.get("notes") else ""))
         if lines or verdicts:
-            journal_html = ("<h3 style='color:#1e3a8a'>📓 Journal & audits</h3><p>"
-                            + "<br>".join(lines + verdicts) + "</p>")
+            journal_html = "<br>".join(lines + verdicts)
     except Exception:
         pass
 
@@ -1114,16 +1167,15 @@ def _digest_for(client, holdings):
             if avg >= 60 and e.get("state") in ("MAINTAIN/ADD", "BULLISH SIGNAL"):
                 conv.append(f"{e['name']} ({avg:.0f}% delivery)")
         if conv:
-            deliv_html = ("<p>🏛 <b>Conviction moves</b> (healthy state + 60%+ delivery): "
-                          + ", ".join(sorted(conv)[:8]) + "</p>")
+            deliv_html = ", ".join(sorted(conv)[:8])
     except Exception:
         pass
 
     # ---- dead money ----
     dead_html = ""
     if dead_money:
-        dm = ", ".join(f"{n} ({m:+.0f}% in 13wk)" for n, m in sorted(dead_money)[:8])
-        dead_html = f"<p>💤 <b>Dead money watch</b> (90+ days sideways): {dm}</p>"
+        dead_html = ", ".join(f"{n} <span style='color:#64748b'>({m:+.0f}% in 13wk)</span>"
+                              for n, m in sorted(dead_money)[:8])
 
     # ---- states table (unchanged core) ----
     color = {"EXIT": "#dc2626", "BE CAUTIOUS": "#d97706", "MOMENTUM FADING": "#7c3aed",
@@ -1137,26 +1189,52 @@ def _digest_for(client, holdings):
         f"font-size:13px'>{r}</td></tr>"
         for n, s, r in sorted(rows, key=lambda x: x[1]))
 
+    action_box = ""
+    if exits:
+        action_box = ("<div style='background:#fef2f2;border:1px solid #fecaca;"
+                      "border-left:4px solid #dc2626;border-radius:8px;"
+                      "padding:14px 18px;margin:14px 0'>"
+                      "<div style='font-size:15px;font-weight:800;color:#dc2626'>"
+                      "⚠️ ACTION NEEDED — EXIT signals</div>"
+                      "<div style='font-size:14px;color:#7f1d1d;margin-top:6px'>"
+                      + ", ".join(exits) +
+                      "</div></div>")
+
     html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:720px">
-      <h2 style="color:#1e3a8a">Weekly Portfolio Digest — {today.strftime('%d %b %Y')}</h2>
+    <div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:700px;
+                margin:0 auto;background:#f1f5f9;padding:18px">
+      <div style="background:#1e3a8a;color:#ffffff;border-radius:10px;
+                  padding:20px 24px;margin-bottom:6px">
+        <div style="font-size:21px;font-weight:800">📊 Weekly Portfolio Digest</div>
+        <div style="font-size:13px;opacity:.85;margin-top:4px">
+          {today.strftime('%A, %d %B %Y')} · {len(rows)} holdings scanned ·
+          {len(exits)} EXIT · {len(cautions)} caution · {len(adds)} healthy</div>
+      </div>
+
+      {action_box}
       {''.join(pf_sections)}
-      <p><b>{len(rows)}</b> holdings scanned ·
-         <span style="color:#dc2626"><b>{len(exits)}</b> EXIT</span> ·
-         <span style="color:#d97706"><b>{len(cautions)}</b> caution</span> ·
-         <span style="color:#16a34a"><b>{len(adds)}</b> healthy</span></p>
-      {"<p style='color:#dc2626'><b>Action needed:</b> " + ", ".join(exits) + "</p>" if exits else ""}
-      {dead_html}{deliv_html}{journal_html}
-      <table style="border-collapse:collapse;width:100%">
-        <tr style="background:#1e3a8a;color:#fff">
-          <th style="padding:8px 10px;text-align:left">Stock</th>
-          <th style="padding:8px 10px;text-align:left">State</th>
-          <th style="padding:8px 10px;text-align:left">Reason</th></tr>
-        {trs}
-      </table>
-      <p style="color:#888;font-size:12px;margin-top:16px">
+
+      {_box("💤 Dead money watch — 90+ days sideways", dead_html, accent="#64748b")}
+      {_box("🏛 Conviction moves — healthy state + 60%+ delivery", deliv_html, accent="#0891b2")}
+      {_box("📓 Journal &amp; audits this week", journal_html, accent="#7c3aed")}
+
+      <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;
+                  padding:16px 18px;margin:14px 0">
+        <div style="font-size:15px;font-weight:700;color:#1e3a8a;margin-bottom:10px">
+          📋 All holdings — flowchart states</div>
+        <table style="border-collapse:collapse;width:100%;font-size:13px">
+          <tr style="background:#1e3a8a;color:#fff">
+            <th style="padding:8px 10px;text-align:left;border-radius:6px 0 0 0">Stock</th>
+            <th style="padding:8px 10px;text-align:left">State</th>
+            <th style="padding:8px 10px;text-align:left;border-radius:0 6px 0 0">Reason</th></tr>
+          {trs}
+        </table>
+      </div>
+
+      <div style="color:#94a3b8;font-size:11px;text-align:center;margin-top:14px">
         Generated by the alert engine · flowchart v1.0 (40W EMA) · prices via
-        yfinance + official NSE/BSE files · trends vs last Sunday's snapshot</p>
+        yfinance + official NSE/BSE files · benchmark: Nifty Smallcap 100 ·
+        trends vs last Sunday's snapshot</div>
     </div>"""
 
     send_email(f"Portfolio Weekly Digest — {today.strftime('%d %b')}", html)
