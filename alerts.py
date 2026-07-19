@@ -724,6 +724,183 @@ def run_calendar():
 # MODE: digest — Sunday email summary
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Digest v2 helpers (19-Jul-2026) — the weekly review meeting, in one email
+# ---------------------------------------------------------------------------
+
+def _xirr(cashflows):
+    """Annualised XIRR via bisection. cashflows: [(date, amount)], buys
+    negative, sells + final value positive. None when undefined."""
+    if len(cashflows) < 2:
+        return None
+    amts = [a for _, a in cashflows]
+    if all(a >= 0 for a in amts) or all(a <= 0 for a in amts):
+        return None
+    t0 = min(d for d, _ in cashflows)
+    flows = [((d - t0).days / 365.0, a) for d, a in cashflows]
+
+    def npv(rate):
+        return sum(a / ((1.0 + rate) ** t) for t, a in flows)
+
+    lo, hi = -0.95, 15.0
+    try:
+        if npv(lo) * npv(hi) > 0:
+            return None
+        for _ in range(120):
+            mid = (lo + hi) / 2
+            v = npv(mid)
+            if abs(v) < 1e-7:
+                break
+            if npv(lo) * v < 0:
+                hi = mid
+            else:
+                lo = mid
+        return round(mid * 100, 2)
+    except (OverflowError, ZeroDivisionError):
+        return None
+
+
+def _pf_cashflows(client, pf: int):
+    """(date, amount) list from the transactions table for one portfolio.
+    Buys negative, sells positive."""
+    res = client.table("transactions").select(
+        "transaction_type, amount, transaction_date").eq("portfolio_id", pf).execute()
+    out = []
+    for r in (res.data or []):
+        try:
+            d = date.fromisoformat(str(r["transaction_date"])[:10])
+            amt = float(r["amount"] or 0)
+        except (ValueError, TypeError):
+            continue
+        if amt <= 0:
+            continue
+        out.append((d, -amt if str(r.get("transaction_type", "buy")).lower() == "buy" else amt))
+    return out
+
+
+def _digest_deliv_strength(client, tickers):
+    """{ticker: 4wk delivery avg} for tickers with >=10 stored days."""
+    out = {}
+    try:
+        since = (date.today() - timedelta(days=45)).isoformat()
+        res = (client.table("delivery_daily").select("ticker, price_date, deliv_pct")
+               .in_("ticker", list(tickers)).gte("price_date", since)
+               .order("price_date", desc=True).execute())
+        rows = res.data or []
+        byt = {}
+        for r in rows:
+            byt.setdefault(r["ticker"], []).append(float(r["deliv_pct"]))
+        for t, vals in byt.items():
+            if len(vals) >= 10:
+                out[t] = sum(vals[:20]) / min(len(vals), 20)
+    except Exception:
+        pass
+    return out
+
+
+
+BENCHMARK_TICKER = "^CNXSC"   # Nifty Smallcap 100 on Yahoo
+_BENCH_CACHE = None
+
+
+def _benchmark_series():
+    """Daily closes of the Nifty Smallcap 100, ~3 years, as a pandas Series
+    indexed by date. None on failure -- benchmark sections then degrade to
+    a note, per house rules. Cached per process run."""
+    global _BENCH_CACHE
+    if _BENCH_CACHE is not None:
+        return _BENCH_CACHE if _BENCH_CACHE is not False else None
+    try:
+        import yfinance as yf
+        df = yf.download(BENCHMARK_TICKER, period="3y", interval="1d",
+                         progress=False, auto_adjust=False)
+        if df.empty:
+            _BENCH_CACHE = False
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        s = df["Close"].dropna()
+        s.index = pd.to_datetime(s.index).date
+        _BENCH_CACHE = s
+        return s
+    except Exception as e:
+        print(f"(digest: benchmark fetch failed: {e})")
+        _BENCH_CACHE = False
+        return None
+
+
+def _level_on(series, d):
+    """Index level on date d, or the nearest trading day BEFORE it."""
+    for back in range(0, 8):
+        dd = d - timedelta(days=back)
+        if dd in series.index:
+            return float(series[dd])
+    return None
+
+
+def _benchmark_xirr(cashflows):
+    """Lakshmi's benchmark rule (19-Jul-2026): the shadow portfolio.
+    Every actual cashflow (same rupees, same dates) buys/sells the Nifty
+    Smallcap 100 instead. XIRR of that shadow book is the fair yardstick;
+    portfolio XIRR minus this = true alpha. None if the index series or
+    any needed level is unavailable."""
+    series = _benchmark_series()
+    if series is None or len(cashflows) < 1:
+        return None
+    units = 0.0
+    for d, a in cashflows:
+        lvl = _level_on(series, d)
+        if lvl is None:
+            return None
+        if a < 0:
+            units += (-a) / lvl          # buy day: rupees into the index
+        else:
+            units = max(0.0, units - a / lvl)   # sell day: rupees out
+    final_val = units * float(series.iloc[-1])
+    return _xirr(cashflows + [(date.today(), final_val)])
+
+
+def _benchmark_week_move():
+    """Index % move over the last ~5 trading days, or None."""
+    s = _benchmark_series()
+    if s is None or len(s) < 6:
+        return None
+    return (float(s.iloc[-1]) / float(s.iloc[-6]) - 1) * 100
+
+
+def _fmt_l(x):
+    """Rupees in lakh/crore, compact."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(x) >= 1e7:
+        return f"₹{x/1e7:,.2f} Cr"
+    return f"₹{x/1e5:,.1f} L"
+
+
+
+def _bench_html(xirr, bench):
+    """Alpha verdict per Lakshmi's rule: beating the Nifty Smallcap 100 by
+    5+ pts = clearly worth it; 2-5 = marginal; below 2 = the index would
+    have done the job. Honest '--' when either side is unavailable."""
+    if xirr is None or bench is None:
+        return ("<p style='margin:4px 0;color:#888'>vs Nifty Smallcap 100: "
+                "benchmark unavailable this week</p>")
+    alpha = xirr - bench
+    if alpha >= 5:
+        col, verdict = "#16a34a", "beating the index — clearly worth it ✅"
+    elif alpha >= 2:
+        col, verdict = "#d97706", "ahead, but inside the 2–5pt grey zone"
+    else:
+        col, verdict = "#dc2626", "NOT beating the index meaningfully — review"
+    return (f"<p style='margin:4px 0'>vs <b>Nifty Smallcap 100</b> "
+            f"(same money, same dates): index would have made {bench:.1f}% "
+            f"→ alpha <b style='color:{col}'>{alpha:+.1f} pts</b> — "
+            f"<span style='color:{col}'>{verdict}</span></p>")
+
+
 def run_digest():
     """One weekly digest, sent to the existing DIGEST_EMAILS recipients,
     reporting Lakshmi + Abinaya's holdings (matches the Telegram alert scope:
@@ -741,38 +918,214 @@ def run_digest():
 
 
 def _digest_for(client, holdings):
-    import os as _os
-    rows, exits, cautions, adds = [], [], [], []
+    """Digest v2 (19-Jul-2026): the weekly review meeting. Per-portfolio
+    money numbers with week-over-week trend, states, dead-money flags,
+    profit tiers, journal+audit corner, delivery conviction, concentration.
+    Every section is individually try/excepted: one broken data layer
+    degrades that section to a note, never kills the digest."""
+    import json as _json
+    today = date.today()
+    pf_ids = sorted(holdings["portfolio_id"].unique())
 
-    # Compute once per ticker, then note WHICH portfolios hold it —
-    # same duplicate-collapse logic as the Telegram alerts: [Both] when
-    # Lakshmi and Abinaya both hold it, otherwise [Lakshmi]/[Abinaya].
+    # ---- per-ticker compute (once), incl. bars for dead-money ----
     by_ticker = {}
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
         if not ticker:
             continue
-        entry = by_ticker.setdefault(ticker, {
-            "name": short_name(h["stock_name"]), "pfs": set()})
-        entry["pfs"].add(int(h.get("portfolio_id", 2)))
+        e = by_ticker.setdefault(ticker, {"name": short_name(h["stock_name"]),
+                                          "pfs": {}, "state": None, "d": {}})
+        pf = int(h.get("portfolio_id", 2))
+        e["pfs"][pf] = {"qty": float(h.get("quantity") or 0),
+                        "cost": float(h.get("purchase_cost") or 0)}
 
+    dead_money, rows, exits, cautions, adds = [], [], [], [], []
     for ticker, e in by_ticker.items():
         try:
             d = signals.current_state(ticker)
+            e["d"] = d or {}
+            e["state"] = (d or {}).get("state")
         except Exception:
             continue
         owners = sorted(e["pfs"])
         tag = "[Both] " if len(owners) > 1 else f"[{PF_NAME.get(owners[0], owners[0])}] "
         name = f"{tag}{e['name']}"
-        st_ = d["state"]
-        rows.append((name, st_, d.get("reason", "")))
+        st_ = e["state"] or "NO DATA"
+        rows.append((name, st_, e["d"].get("reason", "")))
         if st_ == "EXIT":
             exits.append(name)
         elif st_ in ("BE CAUTIOUS", "MOMENTUM FADING"):
             cautions.append(name)
         elif st_ == "MAINTAIN/ADD":
             adds.append(name)
+        # dead money: ~13 weeks sideways (within ±10%), state not EXIT
+        try:
+            bars = signals.fetch_weekly(ticker)
+            if len(bars) >= 14 and st_ != "EXIT":
+                move = bars["Close"].iloc[-1] / bars["Close"].iloc[-14] - 1
+                if abs(move) < 0.10:
+                    dead_money.append((name, move * 100))
+        except Exception:
+            pass
 
+    # ---- per-portfolio money numbers + snapshot diffs ----
+    pf_sections = []
+    detail_by_pf = {}
+    for pf in pf_ids:
+        try:
+            inv = val = 0.0
+            detail = {}
+            for ticker, e in by_ticker.items():
+                if pf not in e["pfs"]:
+                    continue
+                p = e["pfs"][pf]
+                inv += p["qty"] * p["cost"]
+                close = e["d"].get("close")
+                v = p["qty"] * float(close) if close else p["qty"] * p["cost"]
+                val += v
+                pnl_pct = ((float(close) - p["cost"]) / p["cost"] * 100
+                           if close and p["cost"] else 0.0)
+                detail[ticker] = {"state": e["state"], "pnl_pct": round(pnl_pct, 2)}
+            unreal = val - inv
+            raw_cfs = _pf_cashflows(client, pf)
+            cfs = raw_cfs + [(today, val)]
+            xirr = _xirr(cfs)
+            bench = _benchmark_xirr(raw_cfs)
+            detail_by_pf[pf] = detail
+
+            # previous snapshot for trend
+            prev = None
+            try:
+                r = (client.table("digest_history").select("*")
+                     .eq("portfolio_id", pf).lt("snap_date", today.isoformat())
+                     .order("snap_date", desc=True).limit(1).execute())
+                prev = (r.data or [None])[0]
+            except Exception:
+                pass
+
+            def _delta(cur, prev_v, pct=False, pts=False):
+                if prev_v is None or cur is None:
+                    return "<span style='color:#888'>(baseline set this week)</span>"
+                dv = cur - float(prev_v)
+                col = "#16a34a" if dv >= 0 else "#dc2626"
+                arrow = "▲" if dv >= 0 else "▼"
+                if pts:
+                    return f"<span style='color:{col}'>{arrow} {abs(dv):.2f} pts WoW</span>"
+                return f"<span style='color:{col}'>{arrow} {_fmt_l(abs(dv))} WoW</span>"
+
+            trend_pnl = _delta(unreal, prev.get("unrealised") if prev else None)
+            trend_xirr = (_delta(xirr, prev.get("xirr") if prev else None, pts=True)
+                          if xirr is not None else "")
+
+            # profit tiers: crossings vs last week's per-ticker pnl_pct
+            tiers_html = ""
+            try:
+                prev_detail = (prev or {}).get("detail") or {}
+                if isinstance(prev_detail, str):
+                    prev_detail = _json.loads(prev_detail)
+                crossed = []
+                for t, cur_d in detail.items():
+                    cur_p = cur_d["pnl_pct"]
+                    prev_p = (prev_detail.get(t) or {}).get("pnl_pct")
+                    for tier in (150, 100, 50):
+                        if cur_p >= tier and (prev_p is None or prev_p < tier):
+                            nm = by_ticker[t]["name"]
+                            crossed.append(f"{nm} crossed <b>+{tier}%</b> (now {cur_p:+.0f}%)")
+                            break
+                if crossed:
+                    tiers_html = ("<p>🏆 <b>Profit tiers this week:</b> "
+                                  + " · ".join(crossed[:6]) + "</p>")
+            except Exception:
+                pass
+
+            # concentration: top-5 share
+            conc_html = ""
+            try:
+                vals = sorted((e["pfs"][pf]["qty"] * float(e["d"].get("close") or e["pfs"][pf]["cost"]), e["name"])
+                              for t, e in by_ticker.items() if pf in e["pfs"])
+                top5 = sum(v for v, _ in vals[-5:])
+                share = top5 / val * 100 if val else 0
+                warn = " style='color:#d97706'" if share >= 50 else ""
+                conc_html = (f"<p{warn}>Top-5 concentration: <b>{share:.0f}%</b> of the book"
+                             + (" — worth a look" if share >= 50 else "") + "</p>")
+            except Exception:
+                pass
+
+            pf_sections.append(f"""
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
+                        padding:12px 16px;margin:10px 0">
+              <h3 style="margin:0 0 8px">{PF_NAME.get(pf, pf)}</h3>
+              <p style="margin:4px 0">Invested <b>{_fmt_l(inv)}</b> ·
+                 Value <b>{_fmt_l(val)}</b> ·
+                 Unrealised <b>{_fmt_l(unreal)}</b> ({(unreal/inv*100 if inv else 0):+.1f}%)
+                 &nbsp;{trend_pnl}</p>
+              <p style="margin:4px 0">XIRR (annualised):
+                 <b>{f"{xirr:.1f}%" if xirr is not None else "—"}</b> {trend_xirr}</p>
+              {_bench_html(xirr, bench)}
+              {tiers_html}{conc_html}
+            </div>""")
+
+            # store this week's snapshot (upsert -> reruns safe)
+            try:
+                client.table("digest_history").upsert({
+                    "portfolio_id": pf, "snap_date": today.isoformat(),
+                    "invested": round(inv, 2), "current_value": round(val, 2),
+                    "unrealised": round(unreal, 2), "xirr": xirr,
+                    "bench_xirr": bench,
+                    "detail": detail,
+                }, on_conflict="portfolio_id,snap_date").execute()
+            except Exception as ex:
+                print(f"(digest: snapshot store failed for pf {pf}: {ex})")
+        except Exception as ex:
+            pf_sections.append(f"<p>({PF_NAME.get(pf, pf)}: numbers unavailable — {ex})</p>")
+
+    # ---- journal + audits this week ----
+    journal_html = ""
+    try:
+        wk_ago = (today - timedelta(days=7)).isoformat()
+        jr = client.table("trade_journal").select("*") \
+            .in_("portfolio_id", [int(p) for p in pf_ids]).execute().data or []
+        entries = [j for j in jr if str(j.get("exit_date", "")) >= wk_ago]
+        verdicts = []
+        for j in jr:
+            for w in (30, 60, 90):
+                if str(j.get(f"audited_{w}d") or "") >= wk_ago and j.get(f"price_{w}d"):
+                    chg = (float(j[f"price_{w}d"]) - float(j["exit_price"])) / float(j["exit_price"]) * 100
+                    verdict = "saved" if chg < 0 else "cost"
+                    verdicts.append(f"{short_name(j['ticker'])} +{w}d: exit "
+                                    f"<b>{verdict} {abs(chg):.1f}%</b>")
+        lines = []
+        for j in entries:
+            lines.append(f"{short_name(j['ticker'])} sold @ ₹{float(j['exit_price']):,.1f} "
+                         f"({j['reason']})" + (f" — <i>{j['notes']}</i>" if j.get("notes") else ""))
+        if lines or verdicts:
+            journal_html = ("<h3 style='color:#1e3a8a'>📓 Journal & audits</h3><p>"
+                            + "<br>".join(lines + verdicts) + "</p>")
+    except Exception:
+        pass
+
+    # ---- delivery conviction ----
+    deliv_html = ""
+    try:
+        strengths = _digest_deliv_strength(client, tuple(by_ticker.keys()))
+        conv = []
+        for t, avg in strengths.items():
+            e = by_ticker.get(t) or {}
+            if avg >= 60 and e.get("state") in ("MAINTAIN/ADD", "BULLISH SIGNAL"):
+                conv.append(f"{e['name']} ({avg:.0f}% delivery)")
+        if conv:
+            deliv_html = ("<p>🏛 <b>Conviction moves</b> (healthy state + 60%+ delivery): "
+                          + ", ".join(sorted(conv)[:8]) + "</p>")
+    except Exception:
+        pass
+
+    # ---- dead money ----
+    dead_html = ""
+    if dead_money:
+        dm = ", ".join(f"{n} ({m:+.0f}% in 13wk)" for n, m in sorted(dead_money)[:8])
+        dead_html = f"<p>💤 <b>Dead money watch</b> (90+ days sideways): {dm}</p>"
+
+    # ---- states table (unchanged core) ----
     color = {"EXIT": "#dc2626", "BE CAUTIOUS": "#d97706", "MOMENTUM FADING": "#7c3aed",
              "MAINTAIN/ADD": "#16a34a", "BULLISH SIGNAL": "#16a34a",
              "WAIT/WATCH": "#0891b2"}
@@ -786,12 +1139,14 @@ def _digest_for(client, holdings):
 
     html = f"""
     <div style="font-family:Arial,sans-serif;max-width:720px">
-      <h2 style="color:#1e3a8a">Weekly Portfolio Digest — {date.today().strftime('%d %b %Y')}</h2>
+      <h2 style="color:#1e3a8a">Weekly Portfolio Digest — {today.strftime('%d %b %Y')}</h2>
+      {''.join(pf_sections)}
       <p><b>{len(rows)}</b> holdings scanned ·
          <span style="color:#dc2626"><b>{len(exits)}</b> EXIT</span> ·
          <span style="color:#d97706"><b>{len(cautions)}</b> caution</span> ·
          <span style="color:#16a34a"><b>{len(adds)}</b> healthy</span></p>
       {"<p style='color:#dc2626'><b>Action needed:</b> " + ", ".join(exits) + "</p>" if exits else ""}
+      {dead_html}{deliv_html}{journal_html}
       <table style="border-collapse:collapse;width:100%">
         <tr style="background:#1e3a8a;color:#fff">
           <th style="padding:8px 10px;text-align:left">Stock</th>
@@ -800,11 +1155,41 @@ def _digest_for(client, holdings):
         {trs}
       </table>
       <p style="color:#888;font-size:12px;margin-top:16px">
-        Generated by the alert engine · flowchart v1.0 (40W EMA, 2% convergence,
-        buffered EXIT) · data via yfinance weekly bars</p>
+        Generated by the alert engine · flowchart v1.0 (40W EMA) · prices via
+        yfinance + official NSE/BSE files · trends vs last Sunday's snapshot</p>
     </div>"""
 
-    send_email(f"Portfolio Weekly Digest — {date.today().strftime('%d %b')}", html)
+    send_email(f"Portfolio Weekly Digest — {today.strftime('%d %b')}", html)
+
+    # compact Telegram version of the same review
+    try:
+        tg = [f"🗓 <b>Weekly digest</b> · {today.strftime('%d %b')}"]
+        for pf, sec in zip(pf_ids, pf_sections):
+            det = detail_by_pf.get(pf)
+            if det is None:
+                continue
+        for pf in pf_ids:
+            det = detail_by_pf.get(pf)
+            if det is None:
+                continue
+            snap = client.table("digest_history").select("*") \
+                .eq("portfolio_id", pf).eq("snap_date", today.isoformat()) \
+                .limit(1).execute().data
+            if snap:
+                s = snap[0]
+                x = f" · XIRR {float(s['xirr']):.1f}%" if s.get("xirr") is not None else ""
+                tg.append(f"<b>{PF_NAME.get(pf, pf)}</b>: {_fmt_l(s['current_value'])} "
+                          f"({float(s['unrealised'])/float(s['invested'])*100:+.1f}%){x}")
+        if exits:
+            tg.append("🔴 EXIT: " + ", ".join(exits))
+        if dead_money:
+            tg.append(f"💤 {len(dead_money)} stock(s) on dead-money watch")
+        tg.append("Full review in the email 📧")
+        chat = chat_id_for_group("lakshmi")
+        if chat:
+            send_telegram("\n".join(tg), chat_id=chat)
+    except Exception as ex:
+        print(f"(digest: telegram summary failed: {ex})")
     print(f"Digest sent: {len(rows)} holdings, {len(exits)} exits, {len(cautions)} cautions.")
 
 
