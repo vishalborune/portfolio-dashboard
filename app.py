@@ -212,6 +212,20 @@ def build_stock_name(company: str, exchange: str, symbol: str) -> str:
     return f"{company} ({exch_code}:{symbol.strip().upper()})"
 
 
+def parse_stock_name(name: str):
+    """Inverse of build_stock_name: 'COMPANY LIMITED (XNSE:SYMBOL)' ->
+    (company, exchange, symbol), for pre-filling the edit form. Trailing
+    'LIMITED' is stripped for a clean field (build_stock_name re-adds it)."""
+    exchange, symbol = "NSE", ""
+    m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", name or "")
+    if m:
+        exchange = "NSE" if m.group(1) == "XNSE" else "BSE"
+        symbol = m.group(2).strip()
+    company = re.sub(r"\s*\([^)]*\)\s*$", "", name or "").strip()
+    company = re.sub(r"\s+LIMITED$", "", company, flags=re.IGNORECASE).strip()
+    return company, exchange, symbol
+
+
 # ---------------------------------------------------------------------------
 # LIVE PRICES
 # ---------------------------------------------------------------------------
@@ -1134,6 +1148,8 @@ def tab_watchlist():
     with c2:
         with st.expander("🗑️ Remove from watchlist", expanded=False):
             _form_remove_watchlist(wl)
+    with st.expander("✏️ Edit a watchlist item", expanded=False):
+        _form_edit_watchlist(wl)
 
 
 def _form_add_watchlist():
@@ -1182,6 +1198,58 @@ def _form_remove_watchlist(wl: pd.DataFrame):
             row = options[options["label"] == pick].iloc[0]
             db.delete_watchlist(int(row["id"]))
             st.success("Removed")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Failed: {e}")
+
+
+def _form_edit_watchlist(wl: pd.DataFrame):
+    """Edit an existing watchlist item: fix a mistyped symbol/company, switch
+    exchange, or update the target price / thesis. The item picker sits OUTSIDE
+    the form so changing the selection re-fills the fields; the form key is
+    keyed to the row id so Streamlit re-applies the defaults on each switch."""
+    if wl.empty:
+        st.caption("Watchlist is empty.")
+        return
+    options = wl.copy()
+    options["label"] = options["stock_name"].apply(short_name)
+    pick = st.selectbox("Select item to edit", options["label"].tolist(), key="edit_wl_pick")
+    row = options[options["label"] == pick].iloc[0]
+    rid = int(row["id"])
+    company0, exch0, sym0 = parse_stock_name(row["stock_name"])
+    target0 = float(row["target_buy_price"]) if pd.notna(row.get("target_buy_price")) else 0.0
+    notes0 = row.get("notes") or ""
+
+    with st.form(f"edit_wl_form_{rid}"):
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            company = st.text_input("Company name", value=company0)
+        with c2:
+            exchange = st.radio("Exchange", ["NSE", "BSE"],
+                                index=0 if exch0 == "NSE" else 1, horizontal=True)
+        symbol = st.text_input("Symbol", value=sym0,
+                               help="No spaces — e.g. JITFINFRA, not 'JITF INFRA'")
+        target = st.number_input("Target buy price (0 = clear it)", min_value=0.0,
+                                 step=0.01, format="%.2f", value=target0)
+        note = st.text_area("Notes / thesis", value=notes0, height=80)
+        submitted = st.form_submit_button("💾 Save changes", type="primary")
+
+    if submitted:
+        if not company or not symbol.strip():
+            st.error("Company and symbol are required.")
+            return
+        # Guard the exact bug that made this feature necessary: a space in the
+        # symbol breaks the price lookup (was 'JITF INFRA.NS' -> no CMP).
+        if " " in symbol.strip():
+            st.error("Symbol can't contain spaces — that breaks the price lookup. "
+                     "e.g. use JITFINFRA, not 'JITF INFRA'.")
+            return
+        try:
+            new_name = build_stock_name(company, exchange, symbol)
+            db.update_watchlist(rid, stock_name=new_name,
+                                target_buy_price=target if target > 0 else None,
+                                notes=note or None)
+            st.success("✅ Watchlist item updated")
             st.rerun()
         except Exception as e:
             st.error(f"Failed: {e}")

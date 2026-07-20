@@ -441,11 +441,15 @@ def delete_watchlist(watchlist_id: int):
 
 
 def update_watchlist(watchlist_id: int, **kwargs):
-    payload = {k: v for k, v in kwargs.items() if v is not None}
-    if "target_buy_price" in payload and payload["target_buy_price"] is not None:
-        payload["target_buy_price"] = float(payload["target_buy_price"])
-    _client().table("watchlist").update(payload).eq("id", watchlist_id).execute()
-    _bust()
+    # Every field the caller explicitly passes is written -- passing None
+    # clears that column (e.g. removing a target price), which the edit form
+    # relies on. Fields not passed are left untouched.
+    payload = dict(kwargs)
+    if payload.get("target_buy_price") is not None:
+        payload["target_buy_price"] = float(payload["target_buy_price"])  # numpy->py, rule #6
+    if payload:
+        _client().table("watchlist").update(payload).eq("id", watchlist_id).execute()
+        _bust()
 
 
 # ===============================================================
