@@ -83,23 +83,35 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 
 def fetch_nse_bhavcopy(d: date) -> pd.DataFrame:
-    """Full NSE bhavcopy for one date. Empty df on any failure (holiday,
-    not-yet-published, network issue) — caller should just skip the day."""
-    url = f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{d:%d%m%Y}.csv"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        if r.status_code != 200 or len(r.content) < 500:
-            return pd.DataFrame()
-        df = pd.read_csv(io.StringIO(r.text))
-        df.columns = [c.strip() for c in df.columns]
-        # Known column name across NSE bhavcopy vintages: SYMBOL, CLOSE_PRICE
-        # (older files use 'CLOSE'). Normalize once here.
-        if "CLOSE_PRICE" in df.columns:
-            df = df.rename(columns={"CLOSE_PRICE": "CLOSE"})
-        df["SYMBOL"] = df["SYMBOL"].astype(str).str.strip()
-        return df
-    except Exception:
-        return pd.DataFrame()
+    """Full NSE bhavcopy for one date. Empty df on any failure.
+
+    Hardened 21-Jul-2026 after an evening where every NSE endpoint failed
+    while BSE worked: (a) tries BOTH mirror hosts -- nsearchives threw
+    503s that night while its sibling may serve fine; (b) FORENSIC logging
+    on every failure: status, bytes, and a snippet of the actual response,
+    so "came back empty" can never again hide whether it's timing (404),
+    blocking (403), their outage (5xx), or a format change (200 + junk)."""
+    for host in ("nsearchives.nseindia.com", "archives.nseindia.com"):
+        url = f"https://{host}/products/content/sec_bhavdata_full_{d:%d%m%Y}.csv"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code != 200:
+                print(f"  [bhavcopy] NSE {host} for {d}: HTTP {r.status_code}, "
+                      f"{len(r.content)} bytes")
+                continue
+            if len(r.content) < 500 or "SYMBOL" not in r.text[:300]:
+                print(f"  [bhavcopy] NSE {host} for {d}: 200 OK but unexpected "
+                      f"content ({len(r.content)} bytes, starts: {r.text[:80]!r})")
+                continue
+            df = pd.read_csv(io.StringIO(r.text))
+            df.columns = [c.strip() for c in df.columns]
+            if "CLOSE_PRICE" in df.columns:
+                df = df.rename(columns={"CLOSE_PRICE": "CLOSE"})
+            df["SYMBOL"] = df["SYMBOL"].astype(str).str.strip()
+            return df
+        except Exception as e:
+            print(f"  [bhavcopy] NSE {host} for {d}: {type(e).__name__}: {e}")
+    return pd.DataFrame()
 
 
 def fetch_bse_bhavcopy(d: date) -> pd.DataFrame:
@@ -361,10 +373,10 @@ if __name__ == "__main__":
         # Fast diagnostic: no Supabase needed, just prints whether each
         # tracked symbol is found in the MOST RECENT trading day's file.
         # Answers "is the symbol right?" in seconds instead of a 30-min backfill.
-        d = date.today()
-        while d.weekday() >= 5:
-            d -= timedelta(days=1)
-        print(f"[check] Testing against {d} (most recent weekday)...")
+        d = date.today() - timedelta(days=1)   # last COMPLETED trading day:
+        while d.weekday() >= 5:                # today's file doesn't exist
+            d -= timedelta(days=1)             # until evening, so morning
+        print(f"[check] Testing against {d} (last completed trading day)...")
         prices = extract_prices_for_date(d)
         for ticker in SME_STOCKS:
             status = f"FOUND close={prices[ticker]['close']}" if ticker in prices else "NOT FOUND"
