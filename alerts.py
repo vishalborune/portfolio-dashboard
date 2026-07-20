@@ -823,6 +823,17 @@ def _benchmark_series():
             df.columns = df.columns.get_level_values(0)
         s = df["Close"].dropna()
         s.index = pd.to_datetime(s.index).date
+        # STUB GUARD (21-Jul-2026): Yahoo once answered with a ~1-day series;
+        # "non-empty" let it beat our 257-day ETF table, every old buy got
+        # approximated at a flat level, and the digest printed "index made
+        # -0.0%" with a fake full-XIRR alpha. A benchmark series must carry
+        # real history to be allowed to win.
+        if len(s) < 60:
+            print(f"(digest: Yahoo ^CNXSC returned a stub ({len(s)} days) — "
+                  f"falling back to our table)")
+            raise ValueError("empty")
+        global _BENCH_LABEL
+        _BENCH_LABEL = "Nifty Smallcap 100"
         _BENCH_CACHE = s
         return s
     except Exception as e:
