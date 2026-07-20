@@ -6,7 +6,9 @@ on:
     - cron: "45 3,4,5,6,7,8,9 * * 1-5"   # states: hourly-ish during market hours
     - cron: "15 5,9 * * 1-5"              # filings: twice on trading days
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
-    - cron: "30 4 * * 0"                  # digest: Sunday 10:00 IST
+    - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
+                                          # 20:00/20:30 data jobs, so it computes on
+                                          # tonight's closes; Lakshmi plans Saturdays
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
     - cron: "0 15 * * 1-5"                # exit audit: 20:30 IST, after bhavcopy so SME prices exist
   workflow_dispatch:                       # manual run button
@@ -91,10 +93,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
   digest:
-    # Runs on the Sunday 10:00 IST cron, OR when manually triggered with the
+    # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
     # "Send the Sunday digest right now?" tick-box (GitHub sometimes drops
     # scheduled runs entirely -- this is the recovery button for that).
-    if: github.event.schedule == '30 4 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
+    if: github.event.schedule == '30 15 * * 5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
