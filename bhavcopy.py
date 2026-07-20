@@ -54,6 +54,16 @@ SME_STOCKS = {
     # confirmed BSE volume nonzero / NSE volume zero on a 3rd-party quote page).
     "LEHAR.BO":  {"exchange": "BSE", "name_hint": "LEHAR", "scrip_code": "532829"},
     "SGRL.BO":   {"exchange": "BSE", "name_hint": "SGRL", "scrip_code": "540737"},
+    # Benchmark ETF proxies (20-Jul-2026): NSE discontinued the legacy
+    # index CSV (their all-reports page: old formats dead w.e.f. 08-Jul-2024),
+    # and exact Smallcap-100 data sits behind IP-blocked endpoints. These
+    # ETFs track the Nifty Smallcap 250 and trade as ordinary NSE equities,
+    # so the SAME daily bhavcopy we already fetch prices them. Both
+    # candidates listed; whichever the real NSE file contains gets stored,
+    # the other logs NOT FOUND daily and is harmless. The digest tries them
+    # in order and labels the benchmark as an ETF proxy.
+    "HDFCSML250.NS": {"exchange": "NSE", "symbol": "HDFCSML250"},
+    "MOSMALL250.NS": {"exchange": "NSE", "symbol": "MOSMALL250"},
     # BSE's SC_NAME field is a short abbreviated code (e.g. "AEGISLOG" for
     # Aegis Logistics), NOT a full company name -- confirmed against a real
     # bhavcopy pull on 12-Jul-2026. These are the ticker root before the
