@@ -27,6 +27,10 @@ on:
         description: "Check filings right now (tests the AI summaries)?"
         type: boolean
         default: false
+      run_index_backfill:
+        description: "Backfill the Nifty Smallcap 100 index history (~20 min)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -149,6 +153,23 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python delivery.py backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  index-backfill:
+    # Fast dedicated benchmark backfill (~2yrs of Nifty Smallcap 100 daily
+    # closes from NSE's official index file). ~15-20 min. Run once; the
+    # daily 20:00 job keeps it current afterwards.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_index_backfill == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python bhavcopy.py index-backfill
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
