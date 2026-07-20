@@ -809,7 +809,7 @@ def _benchmark_series():
     """Daily closes of the Nifty Smallcap 100, ~3 years, as a pandas Series
     indexed by date. None on failure -- benchmark sections then degrade to
     a note, per house rules. Cached per process run."""
-    global _BENCH_CACHE
+    global _BENCH_CACHE, _BENCH_LABEL
     if _BENCH_CACHE is not None:
         return _BENCH_CACHE if _BENCH_CACHE is not False else None
     try:
@@ -832,7 +832,6 @@ def _benchmark_series():
             print(f"(digest: Yahoo ^CNXSC returned a stub ({len(s)} days) — "
                   f"falling back to our table)")
             raise ValueError("empty")
-        global _BENCH_LABEL
         _BENCH_LABEL = "Nifty Smallcap 100"
         _BENCH_CACHE = s
         return s
@@ -863,7 +862,6 @@ def _benchmark_series():
                     rows.sort(key=lambda r: r["price_date"])
                     s = pd.Series([float(r["close"]) for r in rows],
                                   index=[date.fromisoformat(str(r["price_date"])[:10]) for r in rows])
-                    global _BENCH_LABEL
                     _BENCH_LABEL = label
                     print(f"(digest: benchmark = {label}, {len(s)} days from own table)")
                     _BENCH_CACHE = s
