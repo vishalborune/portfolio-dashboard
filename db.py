@@ -11,6 +11,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 from supabase import create_client, Client
+import corporate_actions
 
 
 @st.cache_resource
@@ -620,7 +621,7 @@ def buy_more(holding_id: int, additional_qty: float, price: float,
 # ---------------------------------------------------------------------------
 # SME daily prices (bhavcopy pipeline — Sprint 3)
 # ---------------------------------------------------------------------------
-def get_sme_daily_prices(tickers: tuple) -> pd.DataFrame:
+def get_sme_daily_prices(tickers: tuple, apply_adjustments: bool = True) -> pd.DataFrame:
     """All stored bhavcopy rows for the given tickers, oldest first.
     Empty df if none of these tickers have any bhavcopy data yet
     (e.g. before the first backfill has run) -- callers must handle that
@@ -633,7 +634,16 @@ def get_sme_daily_prices(tickers: tuple) -> pd.DataFrame:
     So: query DESCENDING (newest guaranteed in), then re-sort ascending
     in pandas for callers that resample chronologically. If the cap ever
     bites now, it only trims the oldest history, which merely shortens
-    the EMA lookback instead of corrupting current prices."""
+    the EMA lookback instead of corrupting current prices.
+
+    SPLIT/BONUS ADJUSTMENT (21 Jul 2026): the raw table stores UNadjusted
+    exchange prices, so a stock's split/bonus leaves old high prices next to
+    new low prices and corrupts every EMA/weekly signal (root-caused via CWD's
+    4:1 bonus firing a false EXIT). This is the single chokepoint every caller
+    (holdings/signals/fundamentals/exit-audit) goes through, so we correct
+    on read here via corporate_actions.adjust_prices. Raw prices in the DB stay
+    untouched (authoritative + reversible). Pass apply_adjustments=False to get
+    the RAW series (used by the corporate-action gap detector)."""
     if not tickers:
         return pd.DataFrame()
     try:
@@ -645,6 +655,8 @@ def get_sme_daily_prices(tickers: tuple) -> pd.DataFrame:
             df["price_date"] = pd.to_datetime(df["price_date"])
             # callers expect chronological order (weekly resampling etc.)
             df = df.sort_values(["ticker", "price_date"]).reset_index(drop=True)
+            if apply_adjustments:
+                df = corporate_actions.adjust_prices(df)
         return df
     except Exception:
         return pd.DataFrame()

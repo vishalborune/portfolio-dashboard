@@ -345,6 +345,18 @@ def update_today(client):
     else:
         print(f"[bhavcopy] {d}: no data found (holiday, weekend, or not yet published)")
 
+    # SPLIT/BONUS WATCHDOG (21-Jul-2026): scan the raw table for the >25%
+    # overnight step that means an UNADJUSTED corporate action. Catches the
+    # next split/bonus the day it lands, instead of it silently corrupting
+    # EMA states for months (as CWD's 4:1 bonus did). Best-effort: never let
+    # this diagnostic break the daily price job.
+    try:
+        import corporate_actions
+        findings = corporate_actions.scan_supabase(client)
+        corporate_actions.report(findings)
+    except Exception as e:
+        print(f"  [bhavcopy] corporate-action scan skipped: {type(e).__name__}: {e}")
+
 
 def backfill(client, days: int = 730):
     """One-time backfill of ~2 years so the weekly EMA system has enough

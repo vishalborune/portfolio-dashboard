@@ -35,6 +35,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `delivery.py` | NSE + BSE daily delivery % pipeline |
 | `fundamentals.py` | Screener.in scraper — Market Cap/PE/Book Value (Yahoo `.info` is blocked) |
 | `exit_audit.py` | 30/60/90-day post-exit price checks |
+| `corporate_actions.py` | Split/bonus adjustment for bhavcopy prices + unadjusted-gap detector (see House Rule 10) |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | `*_schema.sql` | One-time Supabase schema additions, already applied |
 
@@ -74,6 +75,19 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 9. **`@st.cache_data` on functions that depend on session state (like
    active portfolio) must include ALL discriminating params in the cache
    key** — caching just `_active_pf()` caused cross-portfolio bugs.
+10. **bhavcopy stores RAW, split/bonus-UNADJUSTED prices.** A corporate
+   action steps the price overnight (CWD's 4:1 bonus, ex-date 02-Jan-2026:
+   ₹1970→₹415), leaving old high prices beside new low ones — which inflated
+   the 40W EMA to ₹567 and fired a FALSE 🔴 EXIT while the stock never broke
+   its real 40W EMA (~₹302). Fix (21-Jul-2026): `corporate_actions.py` holds a
+   registry of events and adjusts pre-ex-date prices ON READ at the single
+   chokepoint `db.get_sme_daily_prices` (raw DB rows stay untouched —
+   authoritative + reversible). A >25% overnight-gap detector runs in the
+   daily bhavcopy job and via `python corporate_actions.py`; any gap with no
+   registry entry is flagged loudly (fail-visible). **To add an event: verify
+   the ratio against the BSE/NSE filing (rule #5), append one dict to
+   `CORPORATE_ACTIONS`.** `price_divisor` = shares multiplier (4:1 bonus or
+   1:5 split → 5).
 
 ## Architecture: portfolio-scoping
 Every table has `portfolio_id`. Alerts aggregate per (group, ticker) so a
