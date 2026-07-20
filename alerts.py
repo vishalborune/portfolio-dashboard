@@ -874,24 +874,45 @@ def _level_on(series, d):
     return None
 
 
+_BENCH_APPROX_FROM = None
+
 def _benchmark_xirr(cashflows):
     """Lakshmi's benchmark rule (19-Jul-2026): the shadow portfolio.
-    Every actual cashflow (same rupees, same dates) buys/sells the Nifty
-    Smallcap 100 instead. XIRR of that shadow book is the fair yardstick;
-    portfolio XIRR minus this = true alpha. None if the index series or
-    any needed level is unavailable."""
+    Every actual cashflow (same rupees, same dates) buys/sells the index
+    proxy instead; XIRR of that shadow book is the yardstick, portfolio
+    XIRR minus it = true alpha.
+
+    PARTIAL-HISTORY HANDLING (21-Jul-2026): the ETF proxy's stored history
+    starts ~mid-2025, but real buys predate it. A flow older than the
+    series now uses the EARLIEST available level, and the email discloses
+    the approximation ("index history from <date>; earlier flows
+    approximated"). This slightly flatters the index (assumes it went
+    nowhere before its first data point), i.e. it UNDERSTATES alpha --
+    the conservative direction for a "should we even be doing this"
+    verdict. Honest partial benchmark > eternal 'unavailable'."""
+    global _BENCH_APPROX_FROM
+    _BENCH_APPROX_FROM = None
     series = _benchmark_series()
     if series is None or len(cashflows) < 1:
         return None
+    first_d = series.index[0]
+    first_lvl = float(series.iloc[0])
     units = 0.0
+    approx = False
     for d, a in cashflows:
         lvl = _level_on(series, d)
         if lvl is None:
-            return None
+            if d < first_d:
+                lvl = first_lvl
+                approx = True
+            else:
+                return None      # gap INSIDE the series: genuinely broken
         if a < 0:
             units += (-a) / lvl          # buy day: rupees into the index
         else:
             units = max(0.0, units - a / lvl)   # sell day: rupees out
+    if approx:
+        _BENCH_APPROX_FROM = first_d
     final_val = units * float(series.iloc[-1])
     return _xirr(cashflows + [(date.today(), final_val)])
 
@@ -945,10 +966,15 @@ def _bench_html(xirr, bench):
         col, verdict = "#d97706", "ahead, but inside the 2–5pt grey zone"
     else:
         col, verdict = "#dc2626", "NOT beating the index meaningfully — review"
+    note = ""
+    if _BENCH_APPROX_FROM:
+        note = (f"<br><span style='color:#94a3b8;font-size:12px'>index history from "
+                f"{_BENCH_APPROX_FROM.strftime('%d %b %Y')}; older buys approximated "
+                f"at its first level (understates alpha)</span>")
     return (f"<p style='margin:4px 0'>vs <b>{_BENCH_LABEL}</b> "
             f"(same money, same dates): index would have made {bench:.1f}% "
             f"→ alpha <b style='color:{col}'>{alpha:+.1f} pts</b> — "
-            f"<span style='color:{col}'>{verdict}</span></p>")
+            f"<span style='color:{col}'>{verdict}</span>{note}</p>")
 
 
 def run_digest():
