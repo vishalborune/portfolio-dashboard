@@ -1,0 +1,10 @@
+# Secrets — NEVER commit these (contain database keys, API keys)
+.streamlit/secrets.toml
+.env
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
