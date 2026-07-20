@@ -962,7 +962,7 @@ def _digest_for(client, holdings):
     degrades that section to a note, never kills the digest."""
     import json as _json
     today = date.today()
-    pf_ids = sorted(holdings["portfolio_id"].unique())
+    pf_ids = sorted(int(p) for p in holdings["portfolio_id"].unique())
 
     # ---- per-ticker compute (once), incl. bars for dead-money ----
     by_ticker = {}
@@ -1022,7 +1022,8 @@ def _digest_for(client, holdings):
                 val += v
                 pnl_pct = ((float(close) - p["cost"]) / p["cost"] * 100
                            if close and p["cost"] else 0.0)
-                detail[ticker] = {"state": e["state"], "pnl_pct": round(pnl_pct, 2)}
+                detail[ticker] = {"state": (str(e["state"]) if e["state"] else None),
+                                  "pnl_pct": float(round(pnl_pct, 2))}
             unreal = val - inv
             raw_cfs = _pf_cashflows(client, pf)
             cfs = raw_cfs + [(today, val)]
@@ -1122,10 +1123,12 @@ def _digest_for(client, holdings):
             # store this week's snapshot (upsert -> reruns safe)
             try:
                 client.table("digest_history").upsert({
-                    "portfolio_id": pf, "snap_date": today.isoformat(),
-                    "invested": round(inv, 2), "current_value": round(val, 2),
-                    "unrealised": round(unreal, 2), "xirr": xirr,
-                    "bench_xirr": bench,
+                    "portfolio_id": int(pf), "snap_date": today.isoformat(),
+                    "invested": float(round(inv, 2)),
+                    "current_value": float(round(val, 2)),
+                    "unrealised": float(round(unreal, 2)),
+                    "xirr": float(xirr) if xirr is not None else None,
+                    "bench_xirr": float(bench) if bench is not None else None,
                     "detail": detail,
                 }, on_conflict="portfolio_id,snap_date").execute()
             except Exception as ex:
