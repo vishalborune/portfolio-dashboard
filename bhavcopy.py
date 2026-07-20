@@ -122,11 +122,16 @@ INDEX_TRACK = {"NIFTYSMLCAP100.IDX": "Nifty Smallcap 100"}
 def fetch_index_closes(d: date) -> dict:
     """{synthetic_ticker: ohlcv} from NSE's official daily index file.
     Empty dict on any failure (holiday, not published, unreachable)."""
-    url = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{d:%d%m%Y}.csv"
+    # archives.nseindia.com: the host delivery.py provably fetches from
+    # GitHub Actions daily. The nsearchives variant HUNG to timeout on every
+    # request during the 19-Jul backfill (490 x 20s = the 5.5-hour run).
+    url = f"https://archives.nseindia.com/content/indices/ind_close_all_{d:%d%m%Y}.csv"
     out = {}
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         if r.status_code != 200 or len(r.content) < 200:
+            print(f"  [bhavcopy] index file for {d}: HTTP {r.status_code}, "
+                  f"{len(r.content)} bytes — skipped")
             return {}
         df = pd.read_csv(io.StringIO(r.text))
         df.columns = [c.strip() for c in df.columns]
@@ -166,7 +171,6 @@ def extract_prices_for_date(d: date) -> dict:
     found in that day's bhavcopy files. Missing ones are simply absent
     from the dict — never a crash, never a fabricated price."""
     out = {}
-    out.update(fetch_index_closes(d))   # benchmark index rides every fetch
 
     nse_needed = {v["symbol"]: k for k, v in SME_STOCKS.items()
                   if v["exchange"] == "NSE"}
@@ -283,10 +287,34 @@ def store_prices(client, d: date, prices: dict):
             print(f"  [bhavcopy] store failed for {ticker} on {d}: {e}")
 
 
+def index_backfill(client, days: int = 760):
+    """DEDICATED fast index backfill (20-Jul-2026). The index fetch was
+    originally bolted into the main backfill -- one extra hanging request
+    inside every one of ~490 day-iterations turned a ~1hr job into 5.5hrs
+    with zero rows to show. Lesson: never couple a new fragile fetch into
+    the longest-running job. This walks the same dates fetching ONLY the
+    small official index CSV; ~15-20 min, every day logged."""
+    d = date.today() - timedelta(days=days)
+    stored = 0
+    while d <= date.today():
+        if d.weekday() < 5:
+            prices = fetch_index_closes(d)
+            if prices:
+                store_prices(client, d, prices)
+                stored += 1
+                if stored % 20 == 0:
+                    print(f"  [index backfill] {stored} trading days stored (at {d})")
+            time.sleep(0.6)
+        d += timedelta(days=1)
+    print(f"[bhavcopy] Index backfill complete: {stored} trading days of "
+          f"{', '.join(INDEX_TRACK)} stored")
+
+
 def update_today(client):
     """Called by the daily scheduled job, after market close."""
     d = date.today()
     prices = extract_prices_for_date(d)
+    prices.update(fetch_index_closes(d))   # benchmark index: daily only
     if prices:
         store_prices(client, d, prices)
         print(f"[bhavcopy] {d}: stored {len(prices)}/{len(SME_STOCKS)} prices "
@@ -335,5 +363,7 @@ if __name__ == "__main__":
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
     if mode == "backfill":
         backfill(client)
+    elif mode == "index-backfill":
+        index_backfill(client)
     else:
         update_today(client)
