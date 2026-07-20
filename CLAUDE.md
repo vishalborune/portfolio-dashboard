@@ -143,7 +143,110 @@ break.
 - Resend domain verification still pending on Vishal's side (digest email
   deliverability)
 
-## Debugging philosophy for this project
+## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
+- **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,
+  there's no point doing all this, we should just stop." This is WHY the
+  digest has a colored verdict (green ≥5pts / amber 2-5pts / red <2pts) —
+  it's answering his literal stop/continue question every week, not just
+  showing a number.
+- **Staged entry system ("TheWrap")**: weekly 10w/20w/40w EMA flowchart.
+  States include EXIT, BE CAUTIOUS, MOMENTUM FADING, MAINTAIN/ADD, BULLISH
+  SIGNAL, WAIT/WATCH, INSUFFICIENT DATA (<45wk history). Entries staged:
+  10-DMA = tranche 1 (partial), 21-DMA = tranche 2 (final/full position).
+- **Profit booking framework**: tiers at +50% / +100% / +150% — digest
+  flags when a stock CROSSES a tier this week (not just "is above").
+- **Weekly review habit**: reviews the portfolio Saturday mornings — this
+  is WHY the digest moved from Sunday 10am to Friday 9pm (after Friday's
+  close, so Saturday's review uses fresh data, not day-old).
+- Wants delivery % as CONTEXT ONLY — it must never gate/change a flowchart
+  state, only displayed alongside for the human to weigh.
+
+## Feature request backlog, in Lakshmi's own framing
+- **Volume spike alerts**: wanted something like a ScoutQuest alert he
+  showed ("Capacite Infraprojects — 2.02x average volume") — built as
+  pace-adjusted (scales partial-week volume vs a full week's average, so
+  a Monday-morning spike doesn't need to wait till Friday to trigger).
+  Threshold 2.0x, one alert per stock per group per day.
+- **Watchlist entry alerts**: system was silently NOT alerting on
+  watchlist stocks (only holdings) — a real gap Vishal caught by asking
+  "how does the watchlist work in our system?". Now fires on 10/21-DMA
+  zone touches and personal target-price hits (per-person, not a min() —
+  an early bug suppressed one person's alert because of the other's
+  deeper target; fixed to fire on ANY member's target).
+- **AI filing summaries**: inspired by ScoutQuest's format (headline +
+  bullet gist). Built using Claude reading the filing PDF NATIVELY (base64
+  document block) rather than text-extraction — handles scanned/image PDFs
+  that a text-extraction pipeline (pypdf) could not. Cost-capped at
+  10 summaries/run, 8MB/PDF max.
+- **NOT YET BUILT — discussed 20-Jul-2026**: Vishal found a competitor
+  (myalerts.in) whose results-filing summaries use a TYPED template
+  (Revenue/EBITDA/EBITDA-margin/PAT/EPS, each with YoY AND QoQ deltas,
+  segment-level breakdown) rather than generic bullets. Agreed direction:
+  classify each filing by TYPE first (results / order win / fund-raise /
+  pledge change / acquisition / auditor-resignation / capex / dividend),
+  then apply a type-specific extraction template. Results filings contain
+  the prior-period comparison columns already, so YoY/QoQ can be computed
+  from the single PDF Claude already reads — no historical DB needed.
+  Pledge changes and auditor/CFO resignations should get an urgent
+  emoji/flag (classic smallcap red flags). Separately, myalerts.in also
+  does bulk/block-deal and insider-trading alerts — DIFFERENT data feeds
+  entirely (not filings), same bhavcopy-style daily-file pattern, not
+  started. This whole item is the natural "next session" build.
+
+## Detailed debugging war stories (context for why the rules above exist)
+- **SME pricing bug**: Yahoo served STALE/WRONG prices for 5 of 6 SME
+  stocks (e.g. CWD showed a fake ₹1,180 vs real ₹311) while PORTFOLIO
+  TOTALS coincidentally still matched Kite — only caught via PER-STOCK
+  reconciliation against the broker statement. Totals can lie by
+  coincidence; always reconcile stock-by-stock, not just in aggregate.
+- **The 5.5-hour backfill**: adding ONE new fragile fetch (index CSV)
+  inside the existing per-day loop of a ~490-day backfill meant EVERY
+  iteration paid a 20s hang on top of normal work. Lesson became rule #4
+  above. The fix was a dedicated fast `index-backfill` mode isolated from
+  the main backfill, tested via `check` mode first.
+- **NSE benchmark hunt**: tried nsearchives host (503s) → tried nseindia
+  legacy `ind_close_all` CSV (uniform 404 across 500+ dates, confirmed
+  discontinued around their July-2024 format changes) → Yahoo `^CNXSC`
+  (empty, then a useless 1-day stub that produced a nonsensical "-0.0%"
+  index return and a fake "alpha = entire XIRR") → landed on
+  HDFCSML250.NS/MOSMALL250.NS ETF proxies priced via the ALREADY-WORKING
+  daily bhavcopy job. Total resolution took 3 real days across several
+  false starts — the lesson each time was "verify against the actual file
+  response, don't trust that a fix worked just because code deployed
+  without errors."
+- **Global-declaration SyntaxError**: `ast.parse()` did NOT catch a
+  Python "name assigned before global declaration" error — only a full
+  `compile()` did. Now use `compile(src, filename, "exec")` as the
+  stricter verification step for any file with `global` statements.
+- **Filing feed rewrite**: the original per-symbol NSE announcement fetch
+  hit `www.nseindia.com`'s API, which stonewalled Actions' IP with 60/60
+  read-timeouts (the whole filings feature was silently dead for a
+  stretch). Rewrote to pull the ENTIRE feed once via
+  `nsearchives.nseindia.com/content/RSS/Online_announcements.xml` (RSS,
+  same friendly host bhavcopy uses) and filter client-side by symbol,
+  title-anchored (`^SYMBOL\b`) to avoid short-symbol collisions (e.g.
+  "TCL" matching inside unrelated text). BSE announcements needed an
+  explicit date range param (empty dates now return "No Record Found!"
+  even for valid scrip codes) and numeric-scrip-code mapping (XBOM
+  symbols aren't valid API params, only their numeric codes are).
+- **Chunked Telegram dispatch**: original filings sender capped output at
+  `alerts[:15]` — silently dropping any 16th+ filing on a busy day AND
+  risking exceeding Telegram's 4096-char message limit on fat AI-gist
+  messages (could have lost an ENTIRE day's batch, not just excess).
+  Replaced with character-budget-based chunking (~3500 chars/message,
+  splits into as many messages as needed, nothing ever dropped).
+
+## Environment / access notes
+- Vishal is non-technical, Windows, now using **VS Code + the official
+  Claude Code extension** (chosen over Claude Desktop's Code tab and over
+  Google Antigravity — decided 21-Jul-2026 for staying on native Claude
+  with a visual file tree).
+- Local repo cloned via GitHub Desktop to a folder on his PC; this
+  CLAUDE.md sits at that folder's root alongside app.py.
+- Git workflow going forward: Source Control panel in VS Code (stage →
+  commit message → Commit → Sync/Push) — replaces the manual
+  copy-paste-upload-to-GitHub dance used throughout this chat's history.
+
 When something fails: (1) check the log says WHY, not just THAT it failed
 — if it doesn't, that's a logging gap to fix first; (2) verify against the
 real exchange file/API response before trusting docs or search results;
