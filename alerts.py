@@ -802,6 +802,7 @@ def _digest_deliv_strength(client, tickers):
 
 BENCHMARK_TICKER = "^CNXSC"   # Nifty Smallcap 100 on Yahoo
 _BENCH_CACHE = None
+_BENCH_LABEL = "Nifty Smallcap 100"
 
 
 def _benchmark_series():
@@ -833,19 +834,31 @@ def _benchmark_series():
         # own-the-data pattern as every other Yahoo blind spot this week.
         try:
             client = sb()
-            res = (client.table("sme_daily_prices")
-                   .select("price_date, close").eq("ticker", "NIFTYSMLCAP100.IDX")
-                   .order("price_date", desc=True).limit(900).execute())
-            rows = res.data or []
-            if rows:
-                rows.sort(key=lambda r: r["price_date"])
-                s = pd.Series([float(r["close"]) for r in rows],
-                              index=[date.fromisoformat(str(r["price_date"])[:10]) for r in rows])
-                print(f"(digest: benchmark from own table — {len(s)} days)")
-                _BENCH_CACHE = s
-                return s
-            print("(digest: own index table empty too — run the bhavcopy backfill "
-                  "to populate NIFTYSMLCAP100.IDX)")
+            # Fallback chain: exact index (if NSE ever restores the file),
+            # then Smallcap-250 ETF proxies (priced by our own daily
+            # bhavcopy -- the proven path). _BENCH_LABEL records which
+            # source won so the email can say so honestly.
+            candidates = [
+                ("NIFTYSMLCAP100.IDX", "Nifty Smallcap 100"),
+                ("HDFCSML250.NS", "Nifty Smallcap 250 (HDFC ETF proxy)"),
+                ("MOSMALL250.NS", "Nifty Smallcap 250 (MO ETF proxy)"),
+            ]
+            for tick, label in candidates:
+                res = (client.table("sme_daily_prices")
+                       .select("price_date, close").eq("ticker", tick)
+                       .order("price_date", desc=True).limit(900).execute())
+                rows = res.data or []
+                if len(rows) >= 60:      # need real history, not a few days
+                    rows.sort(key=lambda r: r["price_date"])
+                    s = pd.Series([float(r["close"]) for r in rows],
+                                  index=[date.fromisoformat(str(r["price_date"])[:10]) for r in rows])
+                    global _BENCH_LABEL
+                    _BENCH_LABEL = label
+                    print(f"(digest: benchmark = {label}, {len(s)} days from own table)")
+                    _BENCH_CACHE = s
+                    return s
+            print("(digest: no benchmark series has enough history yet — "
+                  "run the standard bhavcopy backfill to build the ETF proxy history)")
         except Exception as e2:
             print(f"(digest: own-table benchmark fallback failed: {e2})")
         _BENCH_CACHE = False
@@ -923,7 +936,7 @@ def _bench_html(xirr, bench):
     5+ pts = clearly worth it; 2-5 = marginal; below 2 = the index would
     have done the job. Honest '--' when either side is unavailable."""
     if xirr is None or bench is None:
-        return ("<p style='margin:4px 0;color:#888'>vs Nifty Smallcap 100: "
+        return (f"<p style='margin:4px 0;color:#888'>vs {_BENCH_LABEL}: "
                 "benchmark unavailable this week</p>")
     alpha = xirr - bench
     if alpha >= 5:
@@ -932,7 +945,7 @@ def _bench_html(xirr, bench):
         col, verdict = "#d97706", "ahead, but inside the 2–5pt grey zone"
     else:
         col, verdict = "#dc2626", "NOT beating the index meaningfully — review"
-    return (f"<p style='margin:4px 0'>vs <b>Nifty Smallcap 100</b> "
+    return (f"<p style='margin:4px 0'>vs <b>{_BENCH_LABEL}</b> "
             f"(same money, same dates): index would have made {bench:.1f}% "
             f"→ alpha <b style='color:{col}'>{alpha:+.1f} pts</b> — "
             f"<span style='color:{col}'>{verdict}</span></p>")
