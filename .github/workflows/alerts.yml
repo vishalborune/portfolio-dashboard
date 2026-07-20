@@ -31,6 +31,10 @@ on:
         description: "Backfill the Nifty Smallcap 100 index history (~20 min)?"
         type: boolean
         default: false
+      run_symbol_check:
+        description: "Diagnostic: test all tracked symbols against the last trading day's NSE/BSE files (2 min)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -156,6 +160,21 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  symbol-check:
+    # 2-minute diagnostic: fetches the last completed trading day's real
+    # exchange files and prints FOUND/NOT FOUND for every tracked ticker,
+    # plus forensic detail on any fetch failure. The cheap answer before
+    # any expensive backfill.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_symbol_check == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python bhavcopy.py check
 
   index-backfill:
     # Fast dedicated benchmark backfill (~2yrs of Nifty Smallcap 100 daily
