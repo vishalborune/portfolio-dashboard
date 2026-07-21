@@ -4,13 +4,15 @@ on:
   schedule:
     # Times are UTC. IST = UTC+5:30. Market hours: 09:15-15:30 IST Mon-Fri.
     - cron: "45 3,4,5,6,7,8,9 * * 1-5"   # states: hourly-ish during market hours
-    - cron: "15 5,9 * * 1-5"              # filings: twice on trading days
+    - cron: "45 4,6,8,10,12,14,16 * * 1-5"  # filings: every 2h, 10:15-22:15 IST (catches evening results filings)
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
     - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
                                           # 20:00/20:30 data jobs, so it computes on
                                           # tonight's closes; Lakshmi plans Saturdays
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
     - cron: "0 15 * * 1-5"                # exit audit: 20:30 IST, after bhavcopy so SME prices exist
+    - cron: "*/15 3-9 * * 1-5"            # fast-poll: LIVE mainboard entry/add alerts (~1 min), market hours
+    - cron: "50 14 * * 1-5"               # eod-entries: SME + final mainboard entry pass, 20:20 IST (after bhavcopy)
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -37,6 +39,10 @@ on:
         description: "Diagnostic: test all tracked symbols against the last trading day's NSE/BSE files (2 min)?"
         type: boolean
         default: false
+      run_fast_poll_now:
+        description: "Run the LIVE entry poller now (~16 min loop)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -55,12 +61,52 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
+  fast-poll:
+    # LIVE mainboard entry/add-zone poller (~1-min latency, Lakshmi 21-Jul-2026).
+    # Fires every 15 min in market hours; each run loops ~16 min so coverage is
+    # continuous and a crash self-heals on the next tick. Manual runs only start
+    # it if the tick-box is set (so a normal dispatch doesn't hang for 16 min).
+    if: github.event.schedule == '*/15 3-9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_fast_poll_now == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python alerts.py fast-poll 16 60
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+  eod-entries:
+    # Evening entry/add pass after the 20:00 bhavcopy stores today's SME closes.
+    # The ONLY entry check for SME names (EOD data is fine per Lakshmi) + a final
+    # mainboard pass. 20:20 IST. Also runs on a manual dispatch (quick, harmless).
+    if: github.event.schedule == '50 14 * * 1-5' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python alerts.py eod-entries
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
   filings:
     # Runs on the two trading-day crons, OR when manually requested with
     # the tick-box (manual Run workflow otherwise SKIPS this job -- same
     # gap the digest button closed). Safe to re-run: the filings_seen
     # fingerprint table means already-alerted filings stay silent.
-    if: github.event.schedule == '15 5,9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_filings_now == 'true')
+    if: github.event.schedule == '45 4,6,8,10,12,14,16 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_filings_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

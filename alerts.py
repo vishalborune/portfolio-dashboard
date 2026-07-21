@@ -3,13 +3,17 @@ alerts.py — the headless alert engine (Sprint 2).
 
 Runs on GitHub Actions. Four modes:
 
-  python alerts.py states     # flowchart state-change alerts -> Telegram
-                              # (every 30 min during market hours)
-  python alerts.py filings    # NSE/BSE corporate announcements -> Telegram
-                              # (every few hours; best-effort, exchanges are
-                              #  bot-hostile — degrades gracefully)
-  python alerts.py calendar   # this week's results dates -> Telegram (Mondays)
-  python alerts.py digest     # Sunday summary -> email
+  python alerts.py states       # flowchart state-change + volume alerts -> Telegram
+                                # (hourly during market hours)
+  python alerts.py fast-poll    # LIVE mainboard entry/add-zone poller (~1 min);
+                                # loops ~16m, relaunched each market-hours cron
+                                # tick. Args: [minutes] [interval_secs]
+  python alerts.py eod-entries  # evening entry/add pass off EOD closes (SME +
+                                # final mainboard) — runs after the 20:00 bhavcopy
+  python alerts.py filings      # NSE/BSE corporate announcements -> Telegram
+                                # (twice daily; best-effort, degrades gracefully)
+  python alerts.py calendar     # this week's results dates -> Telegram (Mondays)
+  python alerts.py digest       # Friday summary -> email
 
 Shares signals.py with the dashboard: ONE flowchart engine, two consumers.
 
@@ -105,7 +109,7 @@ def vol_context(vol_ratio) -> str:
     return f"\nVolume: {vol_ratio:.1f}x 10-wk avg"
 
 
-def check_watchlist_entries(client):
+def check_watchlist_entries(client, price_fn=None):
     """Watchlist ENTRY alerts (added 17-Jul-2026) — the mirror image of the
     exit-side state alerts. Sweeps every portfolio's watchlist hourly:
     - ZONE alert when a stock touches the 10DMA (1st tranche) or 21DMA
@@ -151,9 +155,11 @@ def check_watchlist_entries(client):
 
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
-        d = signals.daily_entry_state(ticker)
+        # price_fn (fast intraday poller) injects a LIVE-price zone; when absent
+        # (EOD/hourly path) we classify off the latest daily close as before.
+        d = price_fn(ticker) if price_fn is not None else signals.daily_entry_state(ticker)
         if not d:
-            continue                       # Yahoo blind spot or fetch failure
+            continue                       # SME in fast mode / fetch failure
         zone = d["Entry Zone"]
         cmp_ = d["CMP (d)"]
         for grp, ge in e["groups"].items():
@@ -203,17 +209,18 @@ def check_watchlist_entries(client):
         print(f"No watchlist entry alerts. ({len(by_ticker)} watchlist tickers checked)")
 
 
-def check_holding_adds(client):
+def check_holding_adds(client, price_fn=None):
     """Portfolio ADD-zone alerts (added 21-Jul-2026, Lakshmi's request). For
-    stocks we ALREADY HOLD, ping when the price pulls back to a staged-entry
-    add level: the 10-DMA (1st-tranche add) or the 21-DMA (final-tranche add).
-    The buy-side mirror of check_watchlist_entries, but keyed to holdings.
+    stocks we ALREADY HOLD, ping when the price pulls back to the 21-DMA — the
+    final-tranche add level. (Lakshmi 21-Jul-2026: for holdings only the 21-DMA
+    matters; the 10-DMA tranche-1 signal is a watchlist/entry concern, not an
+    add-to-existing-position one.) The buy-side mirror of check_watchlist_entries.
 
-    Dedup: once per stock/group/day/tranche via entry_alert_log, using kinds
-    ADD10 / ADD21 (distinct from the watchlist 'ZONE' kind, so a stock that is
-    both held and watchlisted doesn't cross-suppress). Daily EMA math is now
-    bhavcopy-first (signals._fetch_daily), so SME holdings are covered — the
-    old Yahoo-only path skipped them silently."""
+    Dedup: once per stock/group/day via entry_alert_log, kind ADD21 (distinct
+    from the watchlist 'ZONE' kind, so a stock that is both held and watchlisted
+    doesn't cross-suppress). Daily EMA math is bhavcopy-first
+    (signals._fetch_daily), so SME holdings are covered — the old Yahoo-only
+    path skipped them silently."""
     holdings = get_holdings(client)
     if holdings.empty:
         return
@@ -239,20 +246,15 @@ def check_holding_adds(client):
 
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
-        d = signals.daily_entry_state(ticker)
+        d = price_fn(ticker) if price_fn is not None else signals.daily_entry_state(ticker)
         if not d:
-            continue                       # data unavailable — never a fake ping
+            continue                       # SME in fast mode / data unavailable
         zone, cmp_ = d["Entry Zone"], d["CMP (d)"]
         for grp, ge in e["groups"].items():
             uniq = sorted(set(ge["pfs"]))
             tag = ""
             if grp == "lakshmi":
                 tag = "[Both] " if len(uniq) > 1 else f"[{PF_NAME.get(uniq[0], uniq[0])}] "
-            if zone == "TRANCHE 1" and (ticker, grp, "ADD10") not in already:
-                msgs_by_group.setdefault(grp, []).append(
-                    f"➕ {tag}<b>{e['name']}</b> — add zone (holding)\n"
-                    f"CMP ₹{cmp_:,.2f} at the 1st-tranche 10DMA ₹{d['10DMA']:,.2f}")
-                to_log.append((ticker, grp, "ADD10"))
             if zone == "TRANCHE 2" and (ticker, grp, "ADD21") not in already:
                 msgs_by_group.setdefault(grp, []).append(
                     f"➕ {tag}<b>{e['name']}</b> — add zone (holding)\n"
@@ -280,6 +282,162 @@ def check_holding_adds(client):
         print(f"Sent {sent} holding add-zone alert(s).")
     else:
         print(f"No holding add-zone alerts. ({len(by_ticker)} holdings checked)")
+
+
+# ---------------------------------------------------------------------------
+# FAST INTRADAY ENTRY POLLING (mainboard) + EOD entry pass (all, incl SME)
+# Lakshmi 21-Jul-2026: alert latency is the app's core value. Mainboard names
+# get ~1-min live alerts; SME names (EOD-only data, and fine at day-end per
+# Lakshmi) get one authoritative pass after bhavcopy. Both reuse the SAME
+# proven check_* functions — the fast path just injects a live price.
+# ---------------------------------------------------------------------------
+
+def _sme_ticker_set() -> set:
+    """Tickers that are SME/bhavcopy-priced (EOD only) — excluded from the
+    live poller. Sourced from bhavcopy.SME_STOCKS, the single source of truth."""
+    try:
+        import bhavcopy
+        return set(bhavcopy.SME_STOCKS.keys())
+    except Exception as e:
+        print(f"⚠️ could not load SME_STOCKS ({e}); treating all as mainboard")
+        return set()
+
+
+def _all_entry_tickers(client) -> set:
+    """Every ticker we'd ever alert on: holdings + watchlist, both portfolios."""
+    ts = set()
+    h = get_holdings(client)
+    for _, r in h.iterrows():
+        t = extract_yf_ticker(r["stock_name"])
+        if t:
+            ts.add(t)
+    try:
+        rows = client.table("watchlist").select("stock_name").execute().data or []
+    except Exception:
+        rows = []
+    for r in rows:
+        t = extract_yf_ticker(r.get("stock_name"))
+        if t:
+            ts.add(t)
+    return ts
+
+
+def _live_quotes(tickers: list) -> dict:
+    """{ticker: (last_price, day_low)} live from Yahoo for MAINBOARD names.
+    Modest thread count (Render/Yahoo storm history, house rule #4). Failures
+    log WHY and return (None, None) for that ticker — never a fake price."""
+    import yfinance as yf
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(t):
+        try:
+            fi = yf.Ticker(t).fast_info
+
+            def g(key, attr):
+                try:
+                    v = fi[key]
+                except Exception:
+                    v = getattr(fi, attr, None)
+                try:
+                    v = float(v)
+                    return v if v > 0 else None
+                except (TypeError, ValueError):
+                    return None
+            return t, g("last_price", "last_price"), g("day_low", "day_low")
+        except Exception as e:
+            print(f"  [fast-poll] live quote failed for {t}: {type(e).__name__}: {e}")
+            return t, None, None
+
+    out = {}
+    try:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for t, lp, dl in ex.map(one, tickers):
+                out[t] = (lp, dl)
+    except Exception as e:
+        print(f"⚠️ [fast-poll] live quote batch failed: {type(e).__name__}: {e}")
+    return out
+
+
+def _make_live_price_fn(levels: dict, quotes: dict):
+    """Returns a price_fn(ticker) -> zone dict, classifying the LIVE price against
+    the pre-computed daily EMA levels. None when we have no level or no live
+    price (e.g. SME names — which the poller skips, leaving them to the EOD pass)."""
+    def fn(ticker):
+        lv = levels.get(ticker)
+        lp, dl = quotes.get(ticker, (None, None))
+        if not lv or lp is None:
+            return None
+        return signals.classify_entry_zone(
+            ticker, lp, dl if dl is not None else lp, lv["ema10"], lv["ema21"])
+    return fn
+
+
+def run_eod_entries():
+    """Evening pass (after the 20:00 bhavcopy): entry/add-zone alerts off the
+    latest DAILY close for EVERY tracked name. This is the ONLY entry check for
+    SME stocks (Lakshmi: SME at day-end is fine) and a final authoritative pass
+    for mainboard. Reuses the proven check_* functions with price_fn=None."""
+    client = sb()
+    print("[eod-entries] evening entry/add pass (EOD closes)…")
+    try:
+        check_watchlist_entries(client)
+    except Exception as e:
+        print(f"⚠️ eod watchlist entries failed: {e}")
+    try:
+        check_holding_adds(client)
+    except Exception as e:
+        print(f"⚠️ eod holding adds failed: {e}")
+
+
+def run_fast_poll(minutes: float = 16.0, interval: int = 60):
+    """Mainboard-only LIVE entry poller (~1-min latency). Computes the 10/21-DMA
+    LEVELS once (cheap history read; they only move EOD), then every `interval`s
+    fetches live prices and runs the same check_* logic against those fixed
+    levels. Runs ~`minutes` then exits; the workflow relaunches it every cron
+    tick so a crash self-heals within one interval. SME names are skipped here
+    (no live feed) and covered by run_eod_entries instead."""
+    import time as _time
+    client = sb()
+    sme = _sme_ticker_set()
+    mainboard = sorted(t for t in _all_entry_tickers(client) if t not in sme)
+    if not mainboard:
+        print("[fast-poll] no mainboard tickers to watch — exiting.")
+        return
+
+    # Levels computed ONCE up front (not per-cycle) — this is what keeps the
+    # per-minute loop from re-downloading history and starting a Yahoo storm.
+    levels, skipped = {}, []
+    for t in mainboard:
+        lv = signals.daily_entry_levels(t)
+        if lv:
+            levels[t] = lv
+        else:
+            skipped.append(t)
+    if skipped:
+        print(f"[fast-poll] no daily levels for {len(skipped)}: {skipped} (skipped)")
+    if not levels:
+        print("[fast-poll] no levels computed — exiting.")
+        return
+    print(f"[fast-poll] watching {len(levels)} mainboard tickers every "
+          f"{interval}s for ~{minutes:.0f}m: {list(levels)}")
+
+    end = _time.time() + minutes * 60
+    cycle = 0
+    while _time.time() < end:
+        cycle += 1
+        quotes = _live_quotes(list(levels))
+        priced = sum(1 for t in levels if quotes.get(t, (None,))[0] is not None)
+        fn = _make_live_price_fn(levels, quotes)
+        # Reuse the proven, deduped alert logic — just with live prices.
+        try:
+            check_holding_adds(client, price_fn=fn)
+            check_watchlist_entries(client, price_fn=fn)
+        except Exception as e:
+            print(f"⚠️ [fast-poll] cycle {cycle} check failed: {type(e).__name__}: {e}")
+        print(f"  [fast-poll] cycle {cycle}: {priced}/{len(levels)} priced")
+        if _time.time() < end:
+            _time.sleep(interval)
+    print(f"[fast-poll] done after {cycle} cycle(s).")
 
 
 def run_states():
@@ -443,17 +601,11 @@ def run_states():
         if v_sent:
             print(f"Sent {v_sent} volume-spike alert(s).")
 
-    # Watchlist entry sweep — the buy-side mirror of everything above
-    try:
-        check_watchlist_entries(client)
-    except Exception as e:
-        print(f"⚠️ watchlist entry sweep failed (holdings alerts unaffected): {e}")
-
-    # Portfolio add-zone sweep — 10/21-DMA add levels for stocks we already hold
-    try:
-        check_holding_adds(client)
-    except Exception as e:
-        print(f"⚠️ holding add-zone sweep failed (other alerts unaffected): {e}")
+    # NOTE (21-Jul-2026): entry/add-zone sweeps moved OUT of this hourly job.
+    # They now run (a) every ~1 min intraday for mainboard names via the
+    # dedicated fast poller (`python alerts.py fast-poll`), and (b) once each
+    # evening after bhavcopy for SME + a final EOD pass (`alerts.py eod-entries`).
+    # This job stays focused on weekly state changes + volume spikes.
 
 
 # ---------------------------------------------------------------------------
@@ -491,57 +643,216 @@ def _download_pdf_b64(url: str):
         return None
 
 
+def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int) -> str:
+    """POST a PDF + prompt to Claude, return the text response ('' on failure)."""
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"},
+        json={
+            "model": SUMMARY_MODEL, "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": [
+                {"type": "document",
+                 "source": {"type": "base64", "media_type": "application/pdf",
+                            "data": pdf_b64}},
+                {"type": "text", "text": prompt}]}],
+        }, timeout=90)
+    if r.status_code != 200:
+        print(f"  [filings] summary API {r.status_code}: {r.text[:120]!r}")
+        return ""
+    blocks = r.json().get("content", [])
+    return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+
+
+RESULTS_HEADLINE_HINTS = (
+    "financial result", "unaudited financial", "audited financial",
+    "quarterly result", "outcome of board meeting", "statement of financial",
+)
+
+
+def _is_results_filing(headline: str) -> bool:
+    """Loose classifier — false positives are harmless because the extraction
+    step returns nothing for a non-results PDF and we fall back to a generic
+    summary. Better to TRY the typed template than miss a real results filing."""
+    h = (headline or "").lower()
+    if any(k in h for k in RESULTS_HEADLINE_HINTS):
+        return True
+    return "result" in h and ("quarter" in h or "q1" in h or "q2" in h
+                              or "q3" in h or "q4" in h or "fy" in h)
+
+
 def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
-    """2-4 bullet gist via Claude reading the PDF NATIVELY (v2, 17-Jul-2026).
-    The document goes to the model as-is and is read visually -- so scanned
-    BSE filings, stamped faxes, and digital PDFs all take the identical
-    path. Replaces the old text-extraction step, which returned nothing for
-    scanned documents. '' on any failure -> alert falls back to headline."""
+    """Gist of a filing via Claude reading the PDF NATIVELY (scanned or digital).
+    RESULTS filings get Lakshmi's typed template (consolidated Revenue/EBITDA/
+    PBT/PAT/EPS with QoQ & YoY %); everything else gets the generic bullet gist.
+    '' on any failure -> the alert falls back to the headline."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return ""
     pdf_b64 = _download_pdf_b64(pdf_url)
     if not pdf_b64:
         return ""
+    if _is_results_filing(headline):
+        typed = _summarize_results(company, pdf_b64, api_key)
+        if typed:
+            return typed          # else fall through to the generic summary
+    return _summarize_generic(company, headline, pdf_b64, api_key)
+
+
+def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) -> str:
     try:
-        r = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-            json={
-                "model": SUMMARY_MODEL, "max_tokens": 250,
-                "messages": [{"role": "user", "content": [
-                    {"type": "document",
-                     "source": {"type": "base64", "media_type": "application/pdf",
-                                "data": pdf_b64}},
-                    {"type": "text", "text":
-                        f"This is an Indian stock exchange filing by {company} "
-                        f"(subject: {headline}). Summarize it for a retail "
-                        f"investor's Telegram alert.\n"
-                        f"Output EXACTLY this format, nothing else:\n"
-                        f"Line 1: one emoji + a 5-10 word gist title\n"
-                        f"Then 2-4 bullets starting with '- ', each under 15 words, "
-                        f"only concrete facts (amounts, dates, names, percentages). "
-                        f"No advice, no speculation, no preamble. If the document "
-                        f"is unreadable, output exactly: UNREADABLE"}]}],
-            }, timeout=90)
-        if r.status_code != 200:
-            print(f"  [filings] summary API {r.status_code} for {company} — headline-only")
-            return ""
-        blocks = r.json().get("content", [])
-        out = "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+        out = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=250, prompt=(
+            f"This is an Indian stock exchange filing by {company} "
+            f"(subject: {headline}). Summarize it for a retail investor's "
+            f"Telegram alert.\nOutput EXACTLY this format, nothing else:\n"
+            f"Line 1: one emoji + a 5-10 word gist title\n"
+            f"Then 2-4 bullets starting with '- ', each under 15 words, only "
+            f"concrete facts (amounts, dates, names, percentages). No advice, "
+            f"no speculation, no preamble. If the document is unreadable, "
+            f"output exactly: UNREADABLE"))
         if not out or out.upper().startswith("UNREADABLE"):
             return ""
         return out[:600]
     except Exception as e:
-        print(f"  [filings] summary failed for {company}: {e} — headline-only")
+        print(f"  [filings] generic summary failed for {company}: {e}")
         return ""
+
+
+# --- Typed RESULTS template (Lakshmi, 21-Jul-2026) -------------------------
+# Claude EXTRACTS the raw consolidated line items from the PDF (its strength);
+# Python does ALL the arithmetic — EBITDA sum, QoQ/YoY %, unit->Cr — so a model
+# arithmetic slip can't put a wrong number in front of a trading decision
+# (house rule #2). EBITDA is Lakshmi's definition: PBT + Finance costs + Depn.
+
+_RESULTS_JSON_PROMPT = (
+    "This is an Indian listed company's quarterly financial results filing.\n"
+    "Extract the CONSOLIDATED figures. 'Consolidated' = the statement/columns that "
+    "include 'share of profit of associates/joint ventures' or are headed "
+    "'Consolidated'. If the filing has ONLY standalone figures, use those and set "
+    "basis to 'standalone'.\n"
+    "From the columns, identify THREE periods: the current (latest) quarter, the "
+    "immediately preceding quarter (QoQ), and the SAME quarter of the previous year "
+    "(YoY). Do NOT use year-to-date/full-year columns.\n"
+    "Return ONLY a JSON object — no prose, no markdown fences. Numbers exactly as "
+    "printed: strip commas; a value in parentheses is negative; use null if absent. "
+    "Keep the statement's own unit.\n"
+    "Schema:\n"
+    '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
+    '"period_current":"str","period_prev_q":"str","period_year_ago":"str",'
+    '"revenue_from_operations":{"current":n,"prev_q":n,"year_ago":n},'
+    '"finance_costs":{"current":n,"prev_q":n,"year_ago":n},'
+    '"depreciation":{"current":n,"prev_q":n,"year_ago":n},'
+    '"pbt":{"current":n,"prev_q":n,"year_ago":n},'
+    '"pat":{"current":n,"prev_q":n,"year_ago":n},'
+    '"basic_eps":{"current":n,"prev_q":n,"year_ago":n}}\n'
+    "If this is NOT a quarterly results statement, return {\"basis\": null}."
+)
+
+
+def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
+    """Typed results summary, or '' to fall back to the generic gist."""
+    try:
+        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=700)
+        if not raw:
+            return ""
+        import json
+        m = re.search(r"\{.*\}", raw, re.DOTALL)   # tolerate stray prose/fences
+        if not m:
+            return ""
+        data = json.loads(m.group(0))
+        return _format_results(company, data)
+    except Exception as e:
+        print(f"  [filings] results extract failed for {company}: {e}")
+        return ""
+
+
+def _to_cr(v, unit):
+    """Value -> ₹ Crore when the unit is recognised, else None (so we show the
+    %s but never a wrong-magnitude absolute — rule #2)."""
+    if v is None:
+        return None
+    u = (unit or "").lower()
+    if "lakh" in u or "lac" in u:
+        return v / 100.0
+    if "million" in u:
+        return v / 10.0
+    if "crore" in u or "cr" in u:
+        return float(v)
+    return None
+
+
+def _pct(cur, base):
+    if cur is None or base is None or base == 0:
+        return None
+    return (cur - base) / abs(base) * 100.0
+
+
+def _format_results(company: str, data: dict) -> str:
+    basis = data.get("basis")
+    if not basis:
+        return ""                       # not a results statement -> fallback
+    unit = data.get("unit")
+
+    def trio(metric):
+        d = data.get(metric) or {}
+        g = lambda k: (float(d[k]) if isinstance(d.get(k), (int, float)) else None)
+        return g("current"), g("prev_q"), g("year_ago")
+
+    rev = trio("revenue_from_operations")
+    fin = trio("finance_costs")
+    dep = trio("depreciation")
+    pbt = trio("pbt")
+    pat = trio("pat")
+    eps = trio("basic_eps")
+    # EBITDA per period = PBT + Finance + Depreciation (Lakshmi's definition)
+    ebitda = tuple((pbt[i] + fin[i] + dep[i])
+                   if (pbt[i] is not None and fin[i] is not None and dep[i] is not None)
+                   else None for i in range(3))
+
+    # Guard: if we couldn't even read the current revenue AND PBT, it's not a
+    # usable results table — fall back rather than emit a hollow template.
+    if rev[0] is None and pbt[0] is None:
+        return ""
+
+    def line(label, triovals, as_eps=False):
+        cur, pq, ya = triovals
+        qoq, yoy = _pct(cur, pq), _pct(cur, ya)
+        if cur is None and qoq is None and yoy is None:
+            return None
+        if as_eps:
+            val = f"₹{cur:,.2f}" if cur is not None else "—"
+        else:
+            cr = _to_cr(cur, unit)
+            val = f"₹{cr:,.1f} Cr" if cr is not None else "—"
+        qs = f"{qoq:+.1f}%" if qoq is not None else "—"
+        ys = f"{yoy:+.1f}%" if yoy is not None else "—"
+        return f"• {label}: {val} (QoQ {qs} · YoY {ys})"
+
+    rows = [
+        line("Revenue", rev),
+        line("EBITDA", ebitda),
+        line("PBT", pbt),
+        line("PAT", pat),
+        line("EPS", eps, as_eps=True),
+    ]
+    rows = [r for r in rows if r]
+    if not rows:
+        return ""
+    period = data.get("period_current") or "latest quarter"
+    header = f"📊 <b>{company}</b> — {basis} results, {period}"
+    footer = "<i>EBITDA = PBT + finance costs + depreciation</i>"
+    return "\n".join([header] + rows + [footer])
 
 
 MATERIAL_KEYWORDS = [
     "order", "contract", "dividend", "bonus", "split", "buyback", "results",
     "financial result", "acquisition", "pledge", "resignation", "appointment",
     "rating", "fund raise", "preferential", "rights issue", "expansion",
+    # "board meeting" added 21-Jul-2026: results / dividends / splits / fund
+    # raises are all DECIDED at board meetings, so both the "Board Meeting to be
+    # held" notice and the "Outcome of Board Meeting" (which carries the actual
+    # results) are material — and were being dropped by the keyword filter.
+    "board meeting",
 ]
 
 
@@ -615,6 +926,36 @@ def fetch_bse_announcements(scrip_code: str) -> list:
 
 _NSE_RSS_CACHE = None
 
+
+def _parse_nse_date(pub: str) -> str:
+    """NSE RSS pubDate -> 'YYYY-MM-DD'. The feed uses '21-Jul-2026 13:33:17',
+    NOT RFC-2822 — so the old parsedate_to_datetime() failed on every item and
+    left the date BLANK (which also silently disabled the recency filter).
+    Try RFC-2822 first (in case NSE ever changes), then the real format."""
+    if not pub:
+        return ""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(pub)
+        if dt:
+            return dt.date().isoformat()
+    except Exception:
+        pass
+    for fmt in ("%d-%b-%Y %H:%M:%S", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(pub, fmt).date().isoformat()
+        except Exception:
+            pass
+    return ""
+
+
+def _norm_name(s: str) -> str:
+    """Squash a company name for fuzzy matching: drop Ltd/Limited/Pvt/The and all
+    non-alphanumerics. 'South West Pinnacle Exploration Limited' -> 'southwestpinnacleexploration'."""
+    s = re.sub(r"\b(limited|ltd|private|pvt|the)\b", "", (s or "").lower())
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
 def fetch_nse_rss() -> list:
     """ALL recent NSE corporate announcements in one fetch, via the RSS feed
     on nsearchives.nseindia.com (rewritten 19-Jul-2026).
@@ -627,49 +968,100 @@ def fetch_nse_rss() -> list:
     global _NSE_RSS_CACHE
     if _NSE_RSS_CACHE is not None:
         return _NSE_RSS_CACHE
-    items = []
-    try:
-        import xml.etree.ElementTree as ET
-        from email.utils import parsedate_to_datetime
-        r = requests.get(
-            "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            timeout=25)
-        if r.status_code != 200:
-            print(f"  (NSE RSS HTTP {r.status_code})")
-            _NSE_RSS_CACHE = []
-            return []
-        root = ET.fromstring(r.content)
-        for it in root.iter("item"):
-            title = (it.findtext("title") or "").strip()
-            desc = (it.findtext("description") or "").strip()
-            link = (it.findtext("link") or "").strip()
-            pub = (it.findtext("pubDate") or "").strip()
-            d = ""
-            try:
-                d = parsedate_to_datetime(pub).date().isoformat()
-            except Exception:
-                pass
-            items.append({"title": title, "desc": desc, "url": link, "date": d})
+
+    # Fetch with a couple of retries — the feed is ~600 KB and occasionally
+    # arrives truncated (seen live: "unclosed token" mid-stream). Because this
+    # job only runs twice a day, a single bad download must NOT cost the whole
+    # run, so we retry and, if the XML still won't parse, fall back to a lenient
+    # per-<item> regex that recovers every COMPLETE item before the break.
+    text = ""
+    for attempt in (1, 2, 3):
+        try:
+            r = requests.get(
+                "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=25)
+            if r.status_code != 200:
+                print(f"  (NSE RSS attempt {attempt}: HTTP {r.status_code})")
+                continue
+            text = r.text
+            break
+        except Exception as e:
+            print(f"  (NSE RSS attempt {attempt} failed: {type(e).__name__}: {e})")
+    if not text:
+        print("  (NSE RSS: all attempts failed — no filings this run)")
+        _NSE_RSS_CACHE = []
+        return []
+
+    items = _parse_rss_strict(text)
+    if not items:
+        items = _parse_rss_lenient(text)
+        print(f"  (NSE RSS: strict parse failed, lenient recovered {len(items)} items)")
+    else:
         print(f"  (NSE RSS: {len(items)} announcements fetched in one request)")
-    except Exception as e:
-        print(f"  (NSE RSS fetch failed: {e})")
     _NSE_RSS_CACHE = items
     return items
 
 
-def fetch_nse_announcements(symbol: str) -> list:
-    """Announcements for one NSE symbol, filtered from the shared RSS feed.
-    Word-boundary match on the symbol in title/description avoids substring
-    collisions (e.g. 'TCL' matching inside another company's text)."""
+def _rss_item(title, desc, link, pub) -> dict:
+    """Build one feed item. The trading SYMBOL is NOT in the title (that's the
+    company NAME); it's the prefix of the attachment filename in the link, e.g.
+    .../corporate/SOUTHWEST_2107...pdf -> SOUTHWEST — the reliable match key."""
+    msym = re.search(r"/corporate/([A-Za-z0-9&_-]+?)_\d", link or "")
+    return {"title": (title or "").strip(), "desc": (desc or "").strip(),
+            "url": (link or "").strip(), "date": _parse_nse_date((pub or "").strip()),
+            "sym": msym.group(1).upper() if msym else ""}
+
+
+def _parse_rss_strict(text: str) -> list:
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(text)
+    except Exception as e:
+        print(f"  (NSE RSS strict XML parse failed: {e})")
+        return []
+    return [_rss_item(it.findtext("title"), it.findtext("description"),
+                      it.findtext("link"), it.findtext("pubDate"))
+            for it in root.iter("item")]
+
+
+def _parse_rss_lenient(text: str) -> list:
+    """Regex-recover complete <item>…</item> blocks — survives a truncated tail."""
     out = []
-    # Match the TITLE ONLY, anchored at the start ("SYMBOL - Subject" is the
-    # feed's convention). Matching descriptions false-positives on short
-    # symbols like TCL whenever those letters appear as a word in another
-    # company's text -- caught in testing.
-    pat = re.compile(rf"^\s*{re.escape(symbol)}\b", re.IGNORECASE)
+    def field(block, tag):
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.DOTALL | re.IGNORECASE)
+        return re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1), flags=re.DOTALL).strip() if m else ""
+    for block in re.findall(r"<item>(.*?)</item>", text, re.DOTALL | re.IGNORECASE):
+        out.append(_rss_item(field(block, "title"), field(block, "description"),
+                             field(block, "link"), field(block, "pubDate")))
+    return out
+
+
+def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
+    """Announcements for one NSE stock from the shared RSS feed.
+
+    Rewritten 21-Jul-2026 after confirming the bug against the LIVE feed: the
+    feed's TITLE is the company NAME ('South West Pinnacle Exploration Limited'),
+    not the symbol, so the old '^SYMBOL' title match returned ZERO hits for such
+    stocks — their filings were silently never alerted. Now we match on the
+    SYMBOL parsed from each item's attachment link (exact, case-insensitive),
+    with normalised company-name containment as a fallback for the rare item
+    whose link has no parseable symbol."""
+    sym_u = (symbol or "").upper()
+    cnorm = _norm_name(company_name) if company_name else ""
+    out = []
     for it in fetch_nse_rss():
-        if not pat.search(it["title"]):
+        # Match on EITHER exact signal — never a substring. Substring matching
+        # (an earlier attempt) false-fired badly: 'EMS' matched inside 'R
+        # Systems', 'ZF ... Systems' etc., attributing other companies' filings
+        # to the wrong stock (portfolio-wide audit, 21-Jul-2026). Both signals
+        # are needed because NSE's filing-link token is often NOT the trading
+        # symbol (NEWGEN->NEWGEN2, CENTENKA->CENTURYENKA), so the exact
+        # company-name match is the reliable anchor; the link-symbol is a
+        # second exact chance when the stored name differs from NSE's.
+        matched = (bool(it.get("sym")) and it["sym"] == sym_u) \
+            or (bool(cnorm) and _norm_name(it["title"]) == cnorm)
+        if not matched:
             continue
         out.append({
             "headline": (it["desc"] or it["title"])[:300],
@@ -705,7 +1097,8 @@ def run_filings():
         if sym in seen_syms:
             continue
         seen_syms.add(sym)
-        anns = (fetch_nse_announcements(sym) if exch == "XNSE"
+        company_full = re.sub(r"\s*\(X(?:NSE|BOM):[^)]+\)\s*$", "", str(name)).strip()
+        anns = (fetch_nse_announcements(sym, company_full) if exch == "XNSE"
                 else fetch_bse_announcements(sym))
 
         cutoff = (date.today() - timedelta(days=3)).isoformat()
@@ -766,6 +1159,40 @@ def run_filings():
         print(f"Sent {total} filing alert(s).")
     else:
         print("No new material filings.")
+
+
+def run_filings_audit():
+    """Read-only diagnostic (NO Telegram): for every NSE holding, show which of
+    today's filings the engine matches. Built 21-Jul-2026 after the one-example-
+    at-a-time problem — run this anytime to spot-check filing coverage across the
+    WHOLE portfolio. Flags any matched item whose company name AND link-symbol
+    both differ from the holding (would signal a false-positive match)."""
+    client = sb()
+    holdings = get_holdings(client)
+    feed = fetch_nse_rss()
+    print(f"[filings-audit] {len(feed)} NSE announcements in today's feed\n")
+    seen, filed, suspicious = set(), 0, 0
+    for _, h in holdings.iterrows():
+        name = str(h["stock_name"])
+        m = re.search(r"\(XNSE:([^)]+)\)", name)
+        if not m:
+            continue
+        sym = m.group(1).strip()
+        if sym in seen:
+            continue
+        seen.add(sym)
+        company = re.sub(r"\s*\(XNSE:[^)]+\)\s*$", "", name).strip()
+        anns = fetch_nse_announcements(sym, company)
+        if not anns:
+            continue
+        filed += 1
+        print(f"  {sym} — {short_name(name)}: {len(anns)} filing(s)")
+        cn = _norm_name(company)
+        for a in anns[:5]:
+            material = any(k in a["headline"].lower() for k in MATERIAL_KEYWORDS)
+            print(f"     [{'MATERIAL' if material else 'routine '}] {a['date']} · {a['headline'][:72]}")
+    print(f"\n[filings-audit] {filed} NSE holdings have filings in today's feed. "
+          f"BSE-scrip holdings use the separate per-code path (not this feed).")
 
 
 # ---------------------------------------------------------------------------
@@ -1411,7 +1838,15 @@ def _digest_for(client, holdings):
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "states"
-    {"states": run_states,
-     "filings": run_filings,
-     "calendar": run_calendar,
-     "digest": run_digest}.get(mode, run_states)()
+    if mode == "fast-poll":
+        # optional args: minutes, interval-seconds
+        mins = float(sys.argv[2]) if len(sys.argv) > 2 else 16.0
+        secs = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+        run_fast_poll(minutes=mins, interval=secs)
+    else:
+        {"states": run_states,
+         "filings": run_filings,
+         "filings-audit": run_filings_audit,
+         "calendar": run_calendar,
+         "digest": run_digest,
+         "eod-entries": run_eod_entries}.get(mode, run_states)()

@@ -120,7 +120,23 @@ switch sources without disclosure.
 
 ## Schedule (`.github/workflows/alerts.yml`)
 - Hourly, 9:45–15:45 IST, Mon-Fri: flowchart states + volume spikes (2x
-  pace-adjusted) + watchlist entry-zone/target alerts
+  pace-adjusted). NOTE (21-Jul-2026): entry/add-zone alerts NO LONGER ride this
+  hourly job — see the two dedicated modes below.
+- **Every 15 min, market hours (`fast-poll`)**: LIVE mainboard entry/add-zone
+  alerts, ~1-min latency (Lakshmi: alert speed = the app's core value). Each run
+  loops ~16 min (relaunched by cron, so a crash self-heals). Design is storm-safe:
+  `signals.daily_entry_levels` computes the 10/21-DMA ONCE per launch, then only a
+  cheap live quote (`alerts._live_quotes`, Yahoo) is fetched each ~60s cycle and
+  run through the SAME deduped `check_holding_adds`/`check_watchlist_entries` via
+  an injected `price_fn`. SME names are SKIPPED here (no live feed).
+- **20:20 IST after bhavcopy (`eod-entries`)**: entry/add pass off EOD closes for
+  ALL names — the ONLY entry check for SME (Lakshmi: SME at day-end is fine) plus
+  a final mainboard pass. Dedup (entry_alert_log) means the evening pass never
+  double-alerts a mainboard name the live poller already caught.
+  Latency ceiling honesty: GitHub cron can lag; SME is EOD-only (no free intraday
+  feed — the bhavcopy blind spot). If Yahoo's mainboard live path proves flaky,
+  the insurance is a paid feed (Dhan ₹499/mo, 24h auto-refresh token, or TrueData
+  stable key) swapped into `_live_quotes` only — nothing else changes.
 - 10:45 & 14:45 IST: exchange filings + AI summaries (Claude reads the PDF
   natively — handles scanned docs; capped at 10 summaries/run, 8MB/PDF)
 - Daily 20:00 IST: bhavcopy + delivery + fundamentals
@@ -148,10 +164,37 @@ break.
 - Render free-tier stability under real load — watch for exit-139 crashes;
   root-caused once already to Yahoo retry storms (fixed by excluding SME
   tickers from Yahoo calls and reducing quote-fetch threads 8→4)
-- Filing-summary classification is currently generic (2-4 bullets for any
-  filing type). Discussed building TYPED templates (results filings get
-  Revenue/EBITDA/PAT/EPS with YoY/QoQ, order wins get value/client/timeline,
-  pledge changes get a 🚨 flag, etc.) — not yet built, next natural feature
+- Filing-summary classification: RESULTS filings now use a TYPED template
+  (21-Jul-2026) — consolidated Revenue/EBITDA/PBT/PAT/EPS, each with QoQ + YoY %
+  (`alerts._summarize_results`/`_format_results`). Claude EXTRACTS raw line items
+  from the PDF; Python computes EBITDA (=PBT+finance+depreciation), the %s, and
+  unit→Cr — so no model-arithmetic error reaches a number (rule #2); unusable
+  extraction falls back to the generic bullet gist. STILL generic for other
+  types (order wins value/client/timeline, pledge/auditor 🚨 flags) — next.
+- **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
+  silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
+  symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock
+  whose symbol ≠ first word of its name (e.g. South West Pinnacle / SOUTHWEST).
+  Confirmed against the live feed. Fix: match the symbol parsed from the
+  attachment link (`/corporate/SYMBOL_…pdf`), case-insensitive, company-name
+  fallback. Also fixed: pubDate was parsed with the wrong format so every NSE
+  filing had a BLANK date; and the RSS fetch now retries + tolerates a truncated
+  feed (lenient per-`<item>` regex) instead of losing the whole run.
+  - **Matching is EXACT, never substring** (portfolio-wide audit 21-Jul-2026):
+    match on exact link-symbol OR exact normalised company name. A substring
+    attempt false-fired badly ('EMS' inside 'R Systems'/'ZF…Systems' → other
+    companies' filings mis-attributed). NSE's filing-link token is often NOT the
+    trading symbol (NEWGEN→NEWGEN2, CENTENKA→CENTURYENKA, NORTHARC→NACL2020,
+    VIYASH→SEQUENT1), so the exact company NAME is the reliable anchor.
+  - **`python alerts.py filings-audit`** (new): read-only, no Telegram — lists,
+    for every NSE holding, which of today's filings the engine matches. Run it
+    anytime to spot-check coverage across the WHOLE portfolio (built after the
+    one-example-at-a-time problem — this is the scalable check).
+  - **Filings now run every 2h, 10:15–22:15 IST** (was twice, both daytime).
+    The NSE RSS is only a ~1-day rolling snapshot, and results/board outcomes
+    drop in the EVENING — after the old last run — so they aged off the feed
+    before the next morning check and were never seen. `MATERIAL_KEYWORDS` now
+    includes "board meeting" (results are decided there).
 - Bulk/block deals and insider-trading alerts (separate NSE/BSE daily data
   feeds, same bhavcopy-style pattern) — discussed, not yet built
 - Resend domain verification still pending on Vishal's side (digest email
@@ -188,12 +231,15 @@ break.
   an early bug suppressed one person's alert because of the other's
   deeper target; fixed to fire on ANY member's target).
 - **Portfolio add-zone alerts + instant entry zones (21-Jul-2026, Lakshmi)**:
-  (a) held stocks now also get 10-DMA (tranche-1 add) and 21-DMA (final add)
-  alerts — `alerts.check_holding_adds`, dedup kinds ADD10/ADD21, portfolio-
-  scoped like everything else; (b) the 10/21-DMA entry zones show INSTANTLY on
-  both tabs (watchlist + holdings' 21-DMA column) via cached
-  `app.fetch_entry_zones` — the old watchlist "Check entry zones" button is
-  gone; (c) CRUCIAL fix underneath: `signals.daily_entry_state` daily EMA math
+  (a) held stocks now get a 21-DMA (final add) alert — `alerts.check_holding_adds`,
+  dedup kind ADD21, portfolio-scoped like everything else. (Lakshmi, 21-Jul-2026:
+  holdings need ONLY the 21-DMA add signal, not the 10-DMA — that tranche-1 level
+  stays a watchlist-only concern. Holdings table likewise shows 21-DMA only.)
+  (b) the 10/21-DMA entry zones show automatically on both tabs (watchlist shows
+  both 10+21-DMA; holdings shows 21-DMA) via cached `app.fetch_entry_zones` — the
+  old watchlist "Check entry zones" button is gone. NOTE the "instant" Lakshmi
+  wanted was for the TELEGRAM ALERTS (act fast to buy/sell), NOT dashboard load —
+  the dashboard is review-only, a brief compute-on-load is fine; (c) CRUCIAL fix underneath: `signals.daily_entry_state` daily EMA math
   is now **bhavcopy-first** (`signals._fetch_daily`), Yahoo only for mainboard —
   the old Yahoo-only path silently skipped every SME name (same blind spot as
   rule #1). SME daily EMAs ride the split-adjusted bhavcopy read (House Rule 10).

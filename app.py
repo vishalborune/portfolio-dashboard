@@ -739,7 +739,7 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA",
-                "10DMA", "21DMA", "% vs 21DMA", "Vol vs 10wk",
+                "21DMA", "% vs 21DMA", "Vol vs 10wk",
                 "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",

@@ -364,40 +364,62 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def daily_entry_state(ticker: str) -> dict | None:
-    """Entry-tranche status off daily bars. None if data unavailable."""
-    try:
-        d = _fetch_daily(ticker)
-        if d.empty or len(d) < 30:
-            return None
-        close = d["close"]
-        low = d["low"]
-        ema10 = close.ewm(span=10, adjust=False).mean().iloc[-1]
-        ema21 = close.ewm(span=21, adjust=False).mean().iloc[-1]
-        cmp_ = float(close.iloc[-1])
-        day_low = float(low.iloc[-1])
-
-        def touching(ema):
-            # intraday low pierced the EMA, or close sits within the band
-            return day_low <= ema or abs(cmp_ / ema - 1) <= TOUCH_BAND
-
-        pct10 = (cmp_ / ema10 - 1) * 100
-        pct21 = (cmp_ / ema21 - 1) * 100
-
-        if cmp_ < ema21 * (1 - TOUCH_BAND):
-            zone, advice = "BELOW 21DMA", "🔴 Below both — no add, wait for repair"
-        elif touching(ema21):
-            zone, advice = "TRANCHE 2", "🎯 At 21DMA — 2nd & FINAL tranche zone"
-        elif touching(ema10):
-            zone, advice = "TRANCHE 1", "🟢 At 10DMA — 1st tranche zone"
-        else:
-            zone, advice = "EXTENDED", f"⏳ {pct10:+.1f}% above 10DMA — wait for pullback"
-
-        return {"Ticker": ticker, "CMP (d)": cmp_, "10DMA": round(float(ema10), 2),
-                "21DMA": round(float(ema21), 2), "% vs 10DMA": round(pct10, 1),
-                "% vs 21DMA": round(pct21, 1), "Entry Zone": zone, "Entry Advice": advice}
-    except Exception:
+def daily_entry_levels(ticker: str) -> dict | None:
+    """The 10/21-day EMA LEVELS off daily bars (bhavcopy-first). None if data
+    unavailable. These levels only change once a day (built on completed daily
+    closes), so the fast intraday poller computes them ONCE and reuses them for
+    many cheap live-price checks — never re-downloading history each minute
+    (that per-minute history fetch would be exactly the Yahoo-storm that crashed
+    Render before, house rule #4). Also returns the last daily close/low so the
+    EOD path can classify without a second fetch."""
+    d = _fetch_daily(ticker)
+    if d.empty or len(d) < 30:
         return None
+    close = d["close"]
+    low = d["low"]
+    return {
+        "ema10": float(close.ewm(span=10, adjust=False).mean().iloc[-1]),
+        "ema21": float(close.ewm(span=21, adjust=False).mean().iloc[-1]),
+        "ref_close": float(close.iloc[-1]),
+        "ref_low": float(low.iloc[-1]),
+    }
+
+
+def classify_entry_zone(ticker: str, cmp_: float, day_low: float,
+                        ema10: float, ema21: float) -> dict:
+    """PURE classification (no fetch): where does price `cmp_` sit vs the 10/21-
+    day EMAs? Shared by the EOD path (cmp_ = last daily close) and the fast
+    intraday poller (cmp_ = live quote) so both produce identical zones/wording."""
+    def touching(ema):
+        # intraday low pierced the EMA, or price sits within the band
+        return day_low <= ema or abs(cmp_ / ema - 1) <= TOUCH_BAND
+
+    pct10 = (cmp_ / ema10 - 1) * 100
+    pct21 = (cmp_ / ema21 - 1) * 100
+
+    if cmp_ < ema21 * (1 - TOUCH_BAND):
+        zone, advice = "BELOW 21DMA", "🔴 Below both — no add, wait for repair"
+    elif touching(ema21):
+        zone, advice = "TRANCHE 2", "🎯 At 21DMA — 2nd & FINAL tranche zone"
+    elif touching(ema10):
+        zone, advice = "TRANCHE 1", "🟢 At 10DMA — 1st tranche zone"
+    else:
+        zone, advice = "EXTENDED", f"⏳ {pct10:+.1f}% above 10DMA — wait for pullback"
+
+    return {"Ticker": ticker, "CMP (d)": cmp_, "10DMA": round(float(ema10), 2),
+            "21DMA": round(float(ema21), 2), "% vs 10DMA": round(pct10, 1),
+            "% vs 21DMA": round(pct21, 1), "Entry Zone": zone, "Entry Advice": advice}
+
+
+def daily_entry_state(ticker: str) -> dict | None:
+    """Entry-tranche status off the latest DAILY bar (EOD / hourly path). None if
+    data unavailable. Kept identical to before — now built from the split
+    levels + classify helpers so the fast poller can share the exact logic."""
+    lv = daily_entry_levels(ticker)
+    if not lv:
+        return None
+    return classify_entry_zone(ticker, lv["ref_close"], lv["ref_low"],
+                               lv["ema10"], lv["ema21"])
 
 
 def entry_states_for_watchlist(tickers: tuple) -> "pd.DataFrame":
