@@ -20,6 +20,14 @@ TG_API = "https://api.telegram.org/bot{token}/sendMessage"
 TG_MAX_LEN = 3500   # Telegram hard limit is 4096; keep headroom for HTML tags
 
 
+def _dry_run() -> bool:
+    """When ALERTS_DRY_RUN is set, NOTHING is delivered — messages are printed to
+    the console/Actions log instead. Lets any alert mode be run safely (locally
+    or via a manual Actions dispatch) to see exactly what WOULD be sent, without
+    spamming the Telegram group. Added 21-Jul-2026."""
+    return os.environ.get("ALERTS_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+
+
 def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
     """Split a long message into chunks on blank-line boundaries."""
     if len(text) <= max_len:
@@ -44,6 +52,10 @@ def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
 
 def send_telegram(text: str, chat_id: str = None) -> bool:
     """Send a message to a Telegram group (default: TELEGRAM_CHAT_ID), auto-splitting if long."""
+    if _dry_run():
+        print(f"\n──[DRY-RUN telegram → {chat_id or os.environ.get('TELEGRAM_CHAT_ID','?')}]──"
+              f"\n{text}\n──[end]──")
+        return True
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
@@ -77,6 +89,10 @@ def send_telegram(text: str, chat_id: str = None) -> bool:
 
 def send_email(subject: str, html: str) -> bool:
     """Send the digest email via Resend. Returns success."""
+    if _dry_run():
+        print(f"\n──[DRY-RUN email] subject: {subject}\n({len(html)} chars of HTML "
+              f"suppressed)\n──[end]──")
+        return True
     api_key = os.environ.get("RESEND_API_KEY")
     to = os.environ.get("DIGEST_EMAILS", "")
     if not api_key or not to:

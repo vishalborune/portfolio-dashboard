@@ -36,6 +36,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `fundamentals.py` | Screener.in scraper — Market Cap/PE/Book Value (Yahoo `.info` is blocked) |
 | `exit_audit.py` | 30/60/90-day post-exit price checks |
 | `corporate_actions.py` | Split/bonus adjustment for bhavcopy prices + unadjusted-gap detector (see House Rule 10) |
+| `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | `*_schema.sql` | One-time Supabase schema additions, already applied |
 
@@ -207,15 +208,16 @@ break.
     board outcomes drop in the EVENING and the NSE feed is only a ~1-day snapshot,
     so infrequent polling let them age off unseen. `MATERIAL_KEYWORDS` now
     includes "board meeting" (results are decided there).
-- Bulk/block deals: NSE BUILT (21-Jul-2026) — `alerts.run_deals` / `fetch_nse_deals`
-  reads NSE's daily bulk.csv + block.csv (friendly archives host), matches by
-  trading SYMBOL against holdings+watchlist, alerts portfolio-scoped in the
-  evening (`deals` job, 21:15 IST — EOD data, no intraday feed exists). Dedup
-  reuses filings_seen (fingerprint store; no new table). Insider/promoter trades
-  + pledge come via the filings feed (added keywords: insider/encumbr/acquisition
-  of shares/disposal of shares) — the dedicated NSE PIT API returns empty/blocked.
-  STILL TODO: BSE bulk/block (BSE API endpoint wrong in spike) for BSE-only names;
-  a richer typed insider format.
+- Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
+  NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
+  matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
+  (routes found by inspecting bseindia.com's JS bundle — the naive BulkDeals/w
+  guesses were invalid routes; verified vs live 200/JSON), matched by SCRIP_CODE
+  so BSE-only SME names (CWD/HSIL/etc.) are covered. Evening `deals` job, 21:15
+  IST (EOD data). Dedup reuses filings_seen. Insider/promoter + pledge come via
+  the filings feed keywords (insider/encumbr/acquisition of shares/disposal of
+  shares) — the dedicated NSE PIT API returns empty/blocked.
+  STILL TODO: a richer typed insider format (who/how many shares).
 - Resend domain verification still pending on Vishal's side (digest email
   deliverability)
 
@@ -335,6 +337,17 @@ break.
 - Git workflow going forward: Source Control panel in VS Code (stage →
   commit message → Commit → Sync/Push) — replaces the manual
   copy-paste-upload-to-GitHub dance used throughout this chat's history.
+
+## Testing alerts safely (no Telegram spam) — `ALERTS_DRY_RUN`
+Set env `ALERTS_DRY_RUN=1` and (a) `notify.send_telegram`/`send_email` PRINT the
+message instead of delivering, and (b) `alerts.sb()` returns a READ-ONLY client
+so NO dedup/state row is written (a real dry-run must not mark items "seen" or
+the next scheduled run would skip them). Two ways to use it:
+- **Locally:** `python dryrun.py <mode>` (reads .streamlit/secrets.toml, sets the
+  flag). Tests logic + data fetches + exact message text from your own IP.
+- **Real Actions env:** the `workflow_dispatch` **dry_run** tick-box sets
+  ALERTS_DRY_RUN for that run — proves the datacenter-IP data fetches (BSE/Yahoo)
+  and secrets without sending. Scheduled runs are never dry (input is empty).
 
 When something fails: (1) check the log says WHY, not just THAT it failed
 — if it doesn't, that's a logging gap to fix first; (2) verify against the

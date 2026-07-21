@@ -32,15 +32,55 @@ import requests
 from supabase import create_client
 
 import signals
-from notify import send_telegram, send_email
+from notify import send_telegram, send_email, _dry_run as _dry
+# _dry() is True when ALERTS_DRY_RUN is set. In dry-run NOTHING is sent AND no
+# dedup/state rows are written — otherwise a test run would mark items "seen"
+# and the next REAL run would silently skip them (read-only is the whole point).
 
 # ---------------------------------------------------------------------------
 # Supabase
 # ---------------------------------------------------------------------------
 
+class _NoOpQuery:
+    """Swallows a write chain (.insert/.upsert(...).execute()) and returns an
+    empty result — used only in dry-run so no dedup/state row is ever written."""
+    def __getattr__(self, _):
+        return lambda *a, **k: self
+    def execute(self):
+        return type("R", (), {"data": []})()
+
+
+class _ReadOnlyTable:
+    """Reads pass through to the real table; writes become no-ops (dry-run)."""
+    def __init__(self, real):
+        self._real = real
+    def insert(self, *a, **k):
+        return _NoOpQuery()
+    def upsert(self, *a, **k):
+        return _NoOpQuery()
+    def update(self, *a, **k):
+        return _NoOpQuery()
+    def delete(self, *a, **k):
+        return _NoOpQuery()
+    def __getattr__(self, name):   # select, and anything else, hit the real one
+        return getattr(self._real, name)
+
+
+class _ReadOnlyClient:
+    def __init__(self, real):
+        self._real = real
+    def table(self, name):
+        return _ReadOnlyTable(self._real.table(name))
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 def sb():
-    return create_client(os.environ["SUPABASE_URL"],
-                         os.environ["SUPABASE_SERVICE_KEY"])
+    client = create_client(os.environ["SUPABASE_URL"],
+                           os.environ["SUPABASE_SERVICE_KEY"])
+    # In dry-run, hand back a read-only view so a test run can NEVER write a
+    # dedup/state row (which would make the next real run skip that alert).
+    return _ReadOnlyClient(client) if _dry() else client
 
 
 def get_holdings(client) -> pd.DataFrame:
@@ -1322,12 +1362,13 @@ def run_filings_audit():
 
 
 # ---------------------------------------------------------------------------
-# MODE: deals — NSE bulk & block deals in portfolio/watchlist stocks
-# (built 21-Jul-2026, Lakshmi). EOD data: NSE publishes these daily CSVs after
-# market close, so this is an evening alert — no intraday feed exists for free.
-# Friendly archives host (same one bhavcopy uses). Matched by trading SYMBOL
-# (the CSV's own key), so none of the company-name fuzziness of filings. BSE-
-# only names aren't in the NSE deal files; a BSE deals feed is a later add.
+# MODE: deals — NSE + BSE bulk & block deals in portfolio/watchlist stocks
+# (built 21-Jul-2026, Lakshmi). EOD data: exchanges publish these after close,
+# so this is an evening alert — no intraday feed exists. NSE = daily CSV from the
+# friendly archives host, matched by SYMBOL. BSE = BulkDeal_Beta/BlockDeal_Beta
+# JSON (routes found by inspecting the BSE site's own JS bundle), matched by
+# SCRIP_CODE — so BSE-only SME names (CWD, HSIL, ...) are covered too. Matching
+# by symbol/code, so none of the company-name fuzziness of filings.
 # ---------------------------------------------------------------------------
 
 def fetch_nse_deals() -> list:
@@ -1363,10 +1404,47 @@ def fetch_nse_deals() -> list:
     return out
 
 
+def fetch_bse_deals() -> list:
+    """Today's BSE bulk + block deals via BulkDeal_Beta / BlockDeal_Beta — the
+    routes the live BSE site itself uses (found by inspecting its JS bundle,
+    21-Jul-2026; the older BulkDeals/w guesses were invalid routes). Matched by
+    SCRIP_CODE, so BSE-only SME names are covered. Session-primed with BSE
+    headers, same pattern as fetch_bse_announcements. [] on failure (logged)."""
+    out = []
+    hdr = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+           "Referer": "https://www.bseindia.com/",
+           "Accept": "application/json, text/plain, */*"}
+    try:
+        s = requests.Session(); s.headers.update(hdr)
+        s.get("https://www.bseindia.com/", timeout=15)
+    except Exception as e:
+        print(f"  (BSE deals prime failed: {e})")
+        return []
+    for kind, route in (("BULK", "BulkDeal_Beta"), ("BLOCK", "BlockDeal_Beta")):
+        try:
+            r = s.get(f"https://api.bseindia.com/BseIndiaAPI/api/{route}/w", timeout=20)
+            if r.status_code != 200 or "json" not in r.headers.get("content-type", "").lower():
+                print(f"  (BSE {kind} deals: HTTP {r.status_code}, {len(r.content)} bytes)")
+                continue
+            tbl = (r.json() or {}).get("Table") or []
+            for a in tbl:
+                out.append({
+                    "kind": kind, "scrip": str(a.get("SCRIP_CODE", "")).strip(),
+                    "name": a.get("ScripName", ""), "client": a.get("CLIENT_NAME", ""),
+                    "side": str(a.get("TRANSACTION_TYPE", "")),
+                    "qty": a.get("QUANTITY", ""), "price": a.get("PRICE", ""),
+                    "date": a.get("DEAL_DATE", ""),
+                })
+            print(f"  (BSE {kind} deals: {len(tbl)} rows fetched)")
+        except Exception as e:
+            print(f"  (BSE {kind} deals fetch failed: {type(e).__name__}: {e})")
+    return out
+
+
 def run_deals():
-    """Alert on any bulk/block deal in a stock we hold OR watch. Portfolio-scoped
-    and [Both]-tagged like every other alert; deduped via filings_seen (reused as
-    a generic fingerprint store — no new table needed)."""
+    """Alert on any bulk/block deal in a stock we hold OR watch — NSE (by symbol)
+    AND BSE (by scrip code, covering BSE-only SME names). Portfolio-scoped,
+    [Both]-tagged, deduped via filings_seen (generic fingerprint store)."""
     client = sb()
     holdings = get_holdings(client)
     try:
@@ -1374,43 +1452,55 @@ def run_deals():
     except Exception:
         watch = []
 
-    scope = {}   # NSE symbol -> {name, groups:set}
+    nse_scope, bse_scope = {}, {}   # symbol / scrip-code -> {name, groups:set}
     def add(nm, pf):
-        m = re.search(r"\(XNSE:([^)]+)\)", str(nm))
-        if not m:
-            return
-        sym = m.group(1).strip().upper()
-        e = scope.setdefault(sym, {"name": short_name(nm), "groups": set()})
-        e["groups"].add(PF_GROUP.get(int(pf or 1), "vishal"))
+        s_ = str(nm)
+        grp = PF_GROUP.get(int(pf or 1), "vishal")
+        mn = re.search(r"\(XNSE:([^)]+)\)", s_)
+        mb = re.search(r"\(XBOM:([^)]+)\)", s_)
+        if mn:
+            e = nse_scope.setdefault(mn.group(1).strip().upper(),
+                                     {"name": short_name(nm), "groups": set()})
+            e["groups"].add(grp)
+        elif mb:
+            code = mb.group(1).strip()
+            code = BSE_FILING_SCRIPS.get(code, code)   # SME symbol -> numeric scrip
+            e = bse_scope.setdefault(str(code), {"name": short_name(nm), "groups": set()})
+            e["groups"].add(grp)
     for _, h in holdings.iterrows():
         add(h["stock_name"], h.get("portfolio_id", 1))
     for r in watch:
         add(r.get("stock_name"), r.get("portfolio_id", 1))
-    if not scope:
+    if not nse_scope and not bse_scope:
         return
 
-    deals = fetch_nse_deals()
+    matched = []   # (scope_entry, key, deal)
+    for d in fetch_nse_deals():
+        if d["symbol"] in nse_scope:
+            matched.append((nse_scope[d["symbol"]], d["symbol"], d))
+    for d in fetch_bse_deals():
+        if d["scrip"] in bse_scope:
+            matched.append((bse_scope[d["scrip"]], d["scrip"], d))
+
     seen = {r["fingerprint"] for r in
             (client.table("filings_seen").select("fingerprint").execute().data or [])}
     by_group, to_store = {}, []
-    for d in deals:
-        if d["symbol"] not in scope:
-            continue
-        fp = _fingerprint("DEAL", d["kind"], d["symbol"], d["date"], d["client"], d["side"], d["qty"])
+    for e, key, d in matched:
+        fp = _fingerprint("DEAL", d["kind"], key, d["date"], d["client"], d["side"], str(d["qty"]))
         if fp in seen:
             continue
         seen.add(fp)
-        e = scope[d["symbol"]]
         try:
-            qtxt = f"{int(float(d['qty'].replace(',', ''))):,}"
+            qtxt = f"{int(float(str(d['qty']).replace(',', ''))):,}"
         except (ValueError, AttributeError):
-            qtxt = d["qty"]
-        emoji = "🟢" if d["side"].upper().startswith("B") else "🔴"
+            qtxt = str(d["qty"])
+        is_buy = str(d["side"]).upper().startswith("B")
+        emoji, side = ("🟢", "BUY") if is_buy else ("🔴", "SELL")
         msg = (f"🏦 <b>{e['name']}</b> — {d['kind'].title()} deal\n"
-               f"{emoji} {d['side'].upper()} {qtxt} @ ₹{d['price']} — {d['client']}")
+               f"{emoji} {side} {qtxt} @ ₹{d['price']} — {d['client']}")
         for g in e["groups"]:
             by_group.setdefault(g, []).append(msg)
-        to_store.append((fp, d["symbol"], f"{d['kind']} {d['side']} {d['client']}"[:300]))
+        to_store.append((fp, str(key), f"{d['kind']} {d['side']} {d['client']}"[:300]))
 
     total = 0
     for g, msgs in by_group.items():
@@ -1420,8 +1510,8 @@ def run_deals():
         chat = chat_id_for_group(g)
         if not chat:
             continue
-        header, budget, chunk, clen = "🏦 <b>Bulk / block deals</b>\n\n", 3500, [], 0
-        clen = len(header)
+        header, budget = "🏦 <b>Bulk / block deals</b>\n\n", 3500
+        chunk, clen = [], len(header)
         for m in msgs:
             if chunk and clen + len(m) + 2 > budget:
                 send_telegram(header + "\n\n".join(chunk), chat_id=chat)
@@ -1430,14 +1520,13 @@ def run_deals():
         if chunk:
             send_telegram(header + "\n\n".join(chunk), chat_id=chat)
         total += len(msgs)
-    for fp, sym, head in to_store:
+    for fp, key, head in to_store:
         try:
             client.table("filings_seen").insert(
-                {"fingerprint": fp, "ticker": sym, "headline": head, "filing_date": None}).execute()
+                {"fingerprint": fp, "ticker": key, "headline": head, "filing_date": None}).execute()
         except Exception as e:
-            print(f"⚠️ deal dedup write failed for {sym}: {e}")
-    print(f"[deals] {len(deals)} deals scanned; {total} in your stocks."
-          if deals else "[deals] no deals file today.")
+            print(f"⚠️ deal dedup write failed for {key}: {e}")
+    print(f"[deals] matched {len(matched)} deal(s) in your stocks; {total} new alert(s).")
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,10 @@ on:
         description: "Run the LIVE entry poller now (~16 min loop)?"
         type: boolean
         default: false
+      dry_run:
+        description: "DRY-RUN: print alerts to the Actions log instead of sending to Telegram (safe test)?"
+        type: boolean
+        default: false
 
 jobs:
   states:
@@ -62,6 +66,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   fast-poll:
     # LIVE mainboard entry/add-zone poller (~1-min latency, Lakshmi 21-Jul-2026).
@@ -83,6 +88,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   deals:
     # Bulk/block deals in stocks you hold or watch. 21:15 IST — after NSE
@@ -101,6 +107,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   eod-entries:
     # Evening entry/add pass after the 20:00 bhavcopy stores today's SME closes.
@@ -120,6 +127,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   filings:
     # Runs on the two trading-day crons, OR when manually requested with
@@ -140,6 +148,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # filing summaries (optional)
 
   filings-nse:
@@ -161,6 +170,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # filing summaries (optional)
 
   calendar:
@@ -178,6 +188,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   digest:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
@@ -197,6 +208,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           DIGEST_EMAILS: ${{ secrets.DIGEST_EMAILS }}
 
@@ -321,3 +333,4 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
