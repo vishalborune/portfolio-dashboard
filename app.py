@@ -533,6 +533,25 @@ def lookup_company(symbol: str, exchange: str) -> str:
 # COMPUTATION
 # ---------------------------------------------------------------------------
 
+ENTRY_ZONE_CACHE_TTL = 60 * 20   # daily 10/21-EMA barely moves intraday; a 20-min
+                                 # cache keeps the zones "instant" on load without
+                                 # a fresh per-ticker fetch every rerun (Render
+                                 # free-tier / Yahoo-storm protection, rule #4)
+
+
+@st.cache_data(ttl=ENTRY_ZONE_CACHE_TTL)
+def fetch_entry_zones(tickers: tuple) -> pd.DataFrame:
+    """Daily 10/21-DMA entry-tranche table for a set of tickers, computed on
+    load (no button). SME names resolve via bhavcopy inside signals, mainboard
+    via Yahoo. Empty df on failure — callers degrade gracefully."""
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        return signals.entry_states_for_watchlist(tickers)
+    except Exception:
+        return pd.DataFrame()
+
+
 def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
     """Add Ticker, Short Name, live price columns + computed P&L."""
     if holdings_df is None or holdings_df.empty:
@@ -541,7 +560,8 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
             "id", "stock_name", "Short Name", "Ticker", "quantity", "purchase_cost",
             "CMP", "Prev Close", "Day Change %", "Invested", "Current Value",
             "P&L", "P&L %", "Allocation %", "State", "State Display", "State Reason",
-            "State Priority", "% from 10wEMA", "Vol vs 10wk",
+            "State Priority", "% from 10wEMA", "Vol vs 10wk", "10DMA", "21DMA",
+            "% vs 21DMA",
         ])
     if holdings_df.empty:
         return pd.DataFrame()
@@ -573,6 +593,15 @@ def enrich_holdings(holdings_df: pd.DataFrame) -> pd.DataFrame:
     with st.spinner("Computing flowchart states (weekly TA)..."):
         states = signals.states_for_holdings(tickers)
     df = df.merge(states, on="Ticker", how="left")
+
+    # Daily entry/add tranches (10/21-DMA) — Lakshmi wants the 21-DMA add level
+    # visible on holdings too, instantly (21-Jul-2026). Cached; SME-aware.
+    with st.spinner("Computing entry tranches (10/21 DMA)..."):
+        entry = fetch_entry_zones(tickers)
+    if not entry.empty:
+        keep = [c for c in ["Ticker", "10DMA", "21DMA", "% vs 21DMA",
+                            "Entry Zone", "Entry Advice"] if c in entry.columns]
+        df = df.merge(entry[keep], on="Ticker", how="left")
 
     # Delivery % (Sprint 3 fast-follow) — context column only, never gates
     # any state or alert. Empty/failed fetch = column simply shows "—".
@@ -697,7 +726,7 @@ def tab_holdings(enriched: pd.DataFrame):
         # volume) + price basics. Default view.
         COLUMN_VIEWS = {
             "📊 Decision view": [
-                "Short Name", "State Display", "% from 10wEMA", "Vol vs 10wk",
+                "Short Name", "State Display", "% from 10wEMA", "21DMA", "Vol vs 10wk",
                 "Deliv % (4wk)", "CMP", "purchase_cost", "quantity",
             ],
             "💰 P&L view": [
@@ -709,7 +738,8 @@ def tab_holdings(enriched: pd.DataFrame):
                 "PE (live)", "P/B", "EV/EBITDA", "Allocation %",
             ],
             "🗂 Everything": [
-                "Short Name", "Ticker", "State Display", "% from 10wEMA", "Vol vs 10wk",
+                "Short Name", "Ticker", "State Display", "% from 10wEMA",
+                "10DMA", "21DMA", "% vs 21DMA", "Vol vs 10wk",
                 "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
@@ -786,6 +816,7 @@ def tab_holdings(enriched: pd.DataFrame):
             "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
             "CMP": "₹{:,.2f}",
             "% from 10wEMA": "{:+.1f}%", "Vol vs 10wk": "{:.1f}x",
+            "10DMA": "₹{:,.2f}", "21DMA": "₹{:,.2f}", "% vs 21DMA": "{:+.1f}%",
             "Deliv % (last)": "{:.0f}%", "Deliv % (4wk)": "{:.0f}%",
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
@@ -1105,16 +1136,11 @@ def tab_watchlist():
             prices = fetch_live_prices(tickers)
             wl_view = wl_view.merge(prices, on="Ticker", how="left")
             # Lakshmi's staged-entry system: 10DMA = 1st tranche, 21DMA = final.
-            # On-demand (button) rather than auto-run: keeps the tab light and
-            # avoids heavy daily-bar fetches on every app load.
-            if st.button("🎯 Check entry zones (10/21 DMA)", key="check_entry_zones"):
-                try:
-                    with st.spinner("Checking entry zones…"):
-                        st.session_state["entry_zone_cache"] = (
-                            signals.entry_states_for_watchlist(tickers))
-                except Exception as e:
-                    st.error(f"Entry-zone check failed: {e}")
-            entries = st.session_state.get("entry_zone_cache")
+            # Computed INSTANTLY on load now (21-Jul-2026, Lakshmi's request) —
+            # cached (fetch_entry_zones) so it stays light, and SME-aware so the
+            # bhavcopy names resolve too (the old Yahoo-only path skipped them).
+            with st.spinner("Computing entry zones (10/21 DMA)…"):
+                entries = fetch_entry_zones(tickers)
             if entries is not None and not entries.empty:
                 wl_view = wl_view.merge(
                     entries.drop(columns=["CMP (d)"], errors="ignore"),
@@ -1133,6 +1159,7 @@ def tab_watchlist():
             }).style.format({
                 "CMP": "₹{:,.2f}", "Day Change %": "{:+.2f}%",
                 "Target Buy": "₹{:,.2f}", "Distance to Target %": "{:+.2f}%",
+                "10DMA": "₹{:,.2f}", "21DMA": "₹{:,.2f}", "% vs 10DMA": "{:+.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)

@@ -187,6 +187,16 @@ break.
   zone touches and personal target-price hits (per-person, not a min() —
   an early bug suppressed one person's alert because of the other's
   deeper target; fixed to fire on ANY member's target).
+- **Portfolio add-zone alerts + instant entry zones (21-Jul-2026, Lakshmi)**:
+  (a) held stocks now also get 10-DMA (tranche-1 add) and 21-DMA (final add)
+  alerts — `alerts.check_holding_adds`, dedup kinds ADD10/ADD21, portfolio-
+  scoped like everything else; (b) the 10/21-DMA entry zones show INSTANTLY on
+  both tabs (watchlist + holdings' 21-DMA column) via cached
+  `app.fetch_entry_zones` — the old watchlist "Check entry zones" button is
+  gone; (c) CRUCIAL fix underneath: `signals.daily_entry_state` daily EMA math
+  is now **bhavcopy-first** (`signals._fetch_daily`), Yahoo only for mainboard —
+  the old Yahoo-only path silently skipped every SME name (same blind spot as
+  rule #1). SME daily EMAs ride the split-adjusted bhavcopy read (House Rule 10).
 - **AI filing summaries**: inspired by ScoutQuest's format (headline +
   bullet gist). Built using Claude reading the filing PDF NATIVELY (base64
   document block) rather than text-extraction — handles scanned/image PDFs

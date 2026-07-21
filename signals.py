@@ -328,19 +328,50 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
 TOUCH_BAND = 0.005   # close within ±0.5% of the EMA, or intraday low pierces it
 
 
-def daily_entry_state(ticker: str) -> dict | None:
-    """Entry-tranche status off daily bars. None if data unavailable."""
+def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
+    """Recent daily close+low for entry-tranche math. Source order mirrors
+    fetch_weekly (house rule #1 — own the data for SME): our bhavcopy table
+    FIRST (authoritative + now split/bonus-adjusted on read), Yahoo only for
+    mainboard names it doesn't track. Empty df on failure. Returns a plain
+    2-column frame {close, low}."""
+    # 1) bhavcopy (SME / Emerge / BSE-only). Was the silent gap: the old
+    #    Yahoo-only path returned nothing for these, so their watchlist/holding
+    #    entry zones never computed at all.
+    try:
+        import db
+        d = db.get_sme_daily_prices((ticker,))
+        if not d.empty and "close" in d.columns and "low" in d.columns:
+            d = d.sort_values("price_date").tail(lookback)
+            return pd.DataFrame({"close": d["close"].astype(float).to_numpy(),
+                                 "low": d["low"].astype(float).to_numpy()})
+    except Exception:
+        pass
+    # 2) Yahoo (mainboard NSE names)
     try:
         df = yf.download(ticker, period="6mo", interval="1d",
-                          progress=False, auto_adjust=False)
-        if df is None or len(df) < 30:
-            return None
+                         progress=False, auto_adjust=False)
+        if df is None or df.empty:
+            return pd.DataFrame()
         close = df["Close"].dropna()
         if hasattr(close, "columns"):        # multi-index from yf
             close = close.iloc[:, 0]
         low = df["Low"].dropna()
         if hasattr(low, "columns"):
             low = low.iloc[:, 0]
+        return pd.DataFrame({"close": close.astype(float).to_numpy(),
+                             "low": low.astype(float).to_numpy()})
+    except Exception:
+        return pd.DataFrame()
+
+
+def daily_entry_state(ticker: str) -> dict | None:
+    """Entry-tranche status off daily bars. None if data unavailable."""
+    try:
+        d = _fetch_daily(ticker)
+        if d.empty or len(d) < 30:
+            return None
+        close = d["close"]
+        low = d["low"]
         ema10 = close.ewm(span=10, adjust=False).mean().iloc[-1]
         ema21 = close.ewm(span=21, adjust=False).mean().iloc[-1]
         cmp_ = float(close.iloc[-1])

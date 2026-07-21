@@ -203,6 +203,85 @@ def check_watchlist_entries(client):
         print(f"No watchlist entry alerts. ({len(by_ticker)} watchlist tickers checked)")
 
 
+def check_holding_adds(client):
+    """Portfolio ADD-zone alerts (added 21-Jul-2026, Lakshmi's request). For
+    stocks we ALREADY HOLD, ping when the price pulls back to a staged-entry
+    add level: the 10-DMA (1st-tranche add) or the 21-DMA (final-tranche add).
+    The buy-side mirror of check_watchlist_entries, but keyed to holdings.
+
+    Dedup: once per stock/group/day/tranche via entry_alert_log, using kinds
+    ADD10 / ADD21 (distinct from the watchlist 'ZONE' kind, so a stock that is
+    both held and watchlisted doesn't cross-suppress). Daily EMA math is now
+    bhavcopy-first (signals._fetch_daily), so SME holdings are covered — the
+    old Yahoo-only path skipped them silently."""
+    holdings = get_holdings(client)
+    if holdings.empty:
+        return
+
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    # group holdings per ticker: which groups hold it (mirror watchlist scoping)
+    by_ticker = {}
+    for _, r in holdings.iterrows():
+        ticker = extract_yf_ticker(r["stock_name"])
+        if not ticker:
+            continue
+        pf = int(r.get("portfolio_id", 1))
+        grp = PF_GROUP.get(pf, "vishal")
+        e = by_ticker.setdefault(ticker, {"name": short_name(r["stock_name"]), "groups": {}})
+        e["groups"].setdefault(grp, {"pfs": []})["pfs"].append(pf)
+
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        d = signals.daily_entry_state(ticker)
+        if not d:
+            continue                       # data unavailable — never a fake ping
+        zone, cmp_ = d["Entry Zone"], d["CMP (d)"]
+        for grp, ge in e["groups"].items():
+            uniq = sorted(set(ge["pfs"]))
+            tag = ""
+            if grp == "lakshmi":
+                tag = "[Both] " if len(uniq) > 1 else f"[{PF_NAME.get(uniq[0], uniq[0])}] "
+            if zone == "TRANCHE 1" and (ticker, grp, "ADD10") not in already:
+                msgs_by_group.setdefault(grp, []).append(
+                    f"➕ {tag}<b>{e['name']}</b> — add zone (holding)\n"
+                    f"CMP ₹{cmp_:,.2f} at the 1st-tranche 10DMA ₹{d['10DMA']:,.2f}")
+                to_log.append((ticker, grp, "ADD10"))
+            if zone == "TRANCHE 2" and (ticker, grp, "ADD21") not in already:
+                msgs_by_group.setdefault(grp, []).append(
+                    f"➕ {tag}<b>{e['name']}</b> — add zone (holding)\n"
+                    f"CMP ₹{cmp_:,.2f} at the FINAL-tranche 21DMA ₹{d['21DMA']:,.2f}")
+                to_log.append((ticker, grp, "ADD21"))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} holding add-zone alert(s) for '{grp}' — Telegram off for this group)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("➕ <b>Portfolio add-zone alerts</b>\n\n" + "\n\n".join(msgs), chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp,
+                "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} holding add-zone alert(s).")
+    else:
+        print(f"No holding add-zone alerts. ({len(by_ticker)} holdings checked)")
+
+
 def run_states():
     client = sb()
     holdings = get_holdings(client)
@@ -369,6 +448,12 @@ def run_states():
         check_watchlist_entries(client)
     except Exception as e:
         print(f"⚠️ watchlist entry sweep failed (holdings alerts unaffected): {e}")
+
+    # Portfolio add-zone sweep — 10/21-DMA add levels for stocks we already hold
+    try:
+        check_holding_adds(client)
+    except Exception as e:
+        print(f"⚠️ holding add-zone sweep failed (other alerts unaffected): {e}")
 
 
 # ---------------------------------------------------------------------------
