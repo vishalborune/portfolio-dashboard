@@ -285,6 +285,101 @@ def check_holding_adds(client, price_fn=None):
 
 
 # ---------------------------------------------------------------------------
+# RISK / STOP alerts (Lakshmi 21-Jul-2026) — the fast exit-side backstop the
+# weekly flowchart can't give (it only re-evaluates weekly; a stock can crack
+# intraday). Personalised to HIS entry, so it's ours to own.
+# ---------------------------------------------------------------------------
+
+STOP_FROM_COST = 0.10   # alert if a holding is >=10% below average cost (loss stop)
+STOP_FROM_PEAK = 0.17   # ...or >=17% off its ~6-month peak (trailing stop)
+
+
+def _grp_tag(grp, pfs):
+    """'[Both] ' / '[Name] ' prefix for the lakshmi group; '' otherwise."""
+    if grp != "lakshmi":
+        return ""
+    u = sorted(set(pfs))
+    return "[Both] " if len(u) > 1 else f"[{PF_NAME.get(u[0], u[0])}] "
+
+
+def check_risk_stops(client, prices: dict):
+    """Alert when a HELD stock is >=10% below cost (loss stop, per each holder's
+    OWN cost) or >=17% off its ~6-month peak (trailing stop). `prices` =
+    {ticker: (cmp, peak)} — caller passes LIVE prices (fast poller, ~1 min) or
+    EOD closes (evening). Dedup once/stock/group/day/kind via entry_alert_log
+    (kinds STOP10 / PEAK17). Complements the flowchart EXIT, doesn't replace it."""
+    holdings = get_holdings(client)
+    if holdings.empty:
+        return
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    by_ticker = {}
+    for _, h in holdings.iterrows():
+        t = extract_yf_ticker(h["stock_name"])
+        if not t:
+            continue
+        pf = int(h.get("portfolio_id", 1))
+        grp = PF_GROUP.get(pf, "vishal")
+        try:
+            cost = float(h.get("purchase_cost") or 0) or None
+        except (TypeError, ValueError):
+            cost = None
+        e = by_ticker.setdefault(t, {"name": short_name(h["stock_name"]), "groups": {}})
+        e["groups"].setdefault(grp, []).append((pf, cost))
+
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        cmp_, peak = prices.get(ticker, (None, None))
+        if cmp_ is None:
+            continue
+        for grp, holders in e["groups"].items():
+            # Loss stop — per holder's OWN cost (they may have bought at different
+            # prices), fire if ANY member is >=10% underwater (mirrors targets).
+            cost_hits = [(pf, c) for pf, c in holders if c and cmp_ <= c * (1 - STOP_FROM_COST)]
+            if cost_hits and (ticker, grp, "STOP10") not in already:
+                whose = ", ".join(
+                    ((f"{PF_NAME.get(pf, pf)} " if grp == "lakshmi" else "")
+                     + f"cost ₹{c:,.2f} ({(cmp_/c - 1)*100:+.0f}%)") for pf, c in cost_hits)
+                msgs_by_group.setdefault(grp, []).append(
+                    f"🛑 {_grp_tag(grp, [pf for pf, _ in cost_hits])}<b>{e['name']}</b> — loss stop\n"
+                    f"CMP ₹{cmp_:,.2f}, ≥{int(STOP_FROM_COST*100)}% below {whose}")
+                to_log.append((ticker, grp, "STOP10"))
+            # Trailing stop — off the recent peak (price-based, same for all holders)
+            if peak and cmp_ <= peak * (1 - STOP_FROM_PEAK) and (ticker, grp, "PEAK17") not in already:
+                dd = (cmp_ / peak - 1) * 100
+                msgs_by_group.setdefault(grp, []).append(
+                    f"⛔ {_grp_tag(grp, [pf for pf, _ in holders])}<b>{e['name']}</b> — trailing stop\n"
+                    f"CMP ₹{cmp_:,.2f} is {dd:+.0f}% from its ~6-mo peak ₹{peak:,.2f}")
+                to_log.append((ticker, grp, "PEAK17"))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} risk alert(s) for '{grp}' — Telegram off)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("🛑 <b>Risk / stop alerts</b>\n\n" + "\n\n".join(msgs), chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        already.add((ticker, grp, kind))
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp, "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} risk/stop alert(s).")
+
+
+# ---------------------------------------------------------------------------
 # FAST INTRADAY ENTRY POLLING (mainboard) + EOD entry pass (all, incl SME)
 # Lakshmi 21-Jul-2026: alert latency is the app's core value. Mainboard names
 # get ~1-min live alerts; SME names (EOD-only data, and fine at day-end per
@@ -387,6 +482,22 @@ def run_eod_entries():
         check_holding_adds(client)
     except Exception as e:
         print(f"⚠️ eod holding adds failed: {e}")
+    # Risk stops on EOD closes — the ONLY risk pass for SME (no live feed) and a
+    # daily backstop for mainboard. Levels/peak come from the same daily fetch.
+    try:
+        holdings = get_holdings(client)
+        risk_prices, seen = {}, set()
+        for _, h in holdings.iterrows():
+            t = extract_yf_ticker(h["stock_name"])
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            lv = signals.daily_entry_levels(t)
+            if lv:
+                risk_prices[t] = (lv["ref_close"], lv.get("peak"))
+        check_risk_stops(client, risk_prices)
+    except Exception as e:
+        print(f"⚠️ eod risk check failed: {e}")
 
 
 def run_fast_poll(minutes: float = 16.0, interval: int = 60):
@@ -432,6 +543,10 @@ def run_fast_poll(minutes: float = 16.0, interval: int = 60):
         try:
             check_holding_adds(client, price_fn=fn)
             check_watchlist_entries(client, price_fn=fn)
+            # Risk stops on the same live prices + the pre-computed peaks.
+            risk_prices = {t: (quotes.get(t, (None,))[0], lv.get("peak"))
+                           for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
+            check_risk_stops(client, risk_prices)
         except Exception as e:
             print(f"⚠️ [fast-poll] cycle {cycle} check failed: {type(e).__name__}: {e}")
         print(f"  [fast-poll] cycle {cycle}: {priced}/{len(levels)} priced")
@@ -1077,7 +1192,12 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
     return out
 
 
-def run_filings():
+def run_filings(nse_only: bool = False):
+    """Exchange-announcement alerts. nse_only=True skips the BSE per-scrip fetch
+    — used by the 15-min fast filings job so we hammer only NSE's friendly
+    archives host, NOT BSE's bot-hostile API (which shares the runner IP with the
+    daily SME bhavcopy and must not get throttled). BSE filings ride the slower
+    2-hourly full run instead."""
     client = sb()
     holdings = get_holdings(client)
     if holdings.empty:
@@ -1095,6 +1215,8 @@ def run_filings():
         if not m:
             continue
         exch, sym = m.group(1), m.group(2).strip()
+        if nse_only and exch != "XNSE":
+            continue          # BSE handled by the slower full run (protect its API)
         holder_groups = {PF_GROUP.get(int(hh.get("portfolio_id", 1)), "vishal")
                           for _, hh in holdings.iterrows()
                           if str(hh["stock_name"]) == str(name)}
@@ -1969,6 +2091,7 @@ if __name__ == "__main__":
     else:
         {"states": run_states,
          "filings": run_filings,
+         "filings-nse": lambda: run_filings(nse_only=True),
          "filings-audit": run_filings_audit,
          "deals": run_deals,
          "calendar": run_calendar,

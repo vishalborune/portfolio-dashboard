@@ -4,7 +4,8 @@ on:
   schedule:
     # Times are UTC. IST = UTC+5:30. Market hours: 09:15-15:30 IST Mon-Fri.
     - cron: "45 3,4,5,6,7,8,9 * * 1-5"   # states: hourly-ish during market hours
-    - cron: "45 4,6,8,10,12,14,16 * * 1-5"  # filings: every 2h, 10:15-22:15 IST (catches evening results filings)
+    - cron: "45 4,6,8,10,12,14,16 * * 1-5"  # filings (full, incl BSE): every 2h, 10:15-22:15 IST
+    - cron: "*/15 3-17 * * 1-5"             # filings-nse: NSE announcements every 15 min, 08:30-23:15 IST (BSE stays on the 2h full run to protect its API)
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
     - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
                                           # 20:00/20:30 data jobs, so it computes on
@@ -134,6 +135,27 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python alerts.py filings
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # filing summaries (optional)
+
+  filings-nse:
+    # NSE announcements every 15 min (friendly archives host — safe to poll
+    # often). BSE is deliberately EXCLUDED here and left to the 2h full `filings`
+    # job, so we never hammer BSE's bot-hostile API (it shares the runner IP with
+    # the daily SME bhavcopy). Dedup (filings_seen) keeps repeat runs silent.
+    if: github.event.schedule == '*/15 3-17 * * 1-5'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python alerts.py filings-nse
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

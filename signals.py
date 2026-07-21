@@ -326,6 +326,7 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 TOUCH_BAND = 0.005   # close within ±0.5% of the EMA, or intraday low pierces it
+PEAK_LOOKBACK = 126  # ~6 trading months — the window for the trailing-stop "recent peak"
 
 
 def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
@@ -382,6 +383,10 @@ def daily_entry_levels(ticker: str) -> dict | None:
         "ema21": float(close.ewm(span=21, adjust=False).mean().iloc[-1]),
         "ref_close": float(close.iloc[-1]),
         "ref_low": float(low.iloc[-1]),
+        # recent peak for the trailing-stop alert — highest close over ~6 months,
+        # computed here so the fast poller reuses this one daily fetch (no extra
+        # per-minute history download).
+        "peak": float(close.tail(PEAK_LOOKBACK).max()),
     }
 
 

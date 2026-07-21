@@ -129,6 +129,13 @@ switch sources without disclosure.
   cheap live quote (`alerts._live_quotes`, Yahoo) is fetched each ~60s cycle and
   run through the SAME deduped `check_holding_adds`/`check_watchlist_entries` via
   an injected `price_fn`. SME names are SKIPPED here (no live feed).
+- **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires
+  when a HOLDING is ≥10% below cost (loss stop, per each holder's own cost) OR
+  ≥17% off its ~6-month peak (trailing stop; peak = `signals.daily_entry_levels`
+  "peak", max close over PEAK_LOOKBACK=126d). Rides the SAME cadence as entries:
+  mainboard live (~1 min) in the fast poller, SME + backstop in the evening eod
+  pass. Dedup kinds STOP10 / PEAK17 in entry_alert_log. The fast exit-side signal
+  the weekly flowchart EXIT can't give (it only re-evaluates weekly).
 - **21:15 IST (`deals`)**: NSE bulk/block deals in stocks you hold or watch
   (EOD data; evening-only by nature). Portfolio-scoped, deduped via filings_seen.
 - **20:20 IST after bhavcopy (`eod-entries`)**: entry/add pass off EOD closes for
@@ -192,10 +199,13 @@ break.
     for every NSE holding, which of today's filings the engine matches. Run it
     anytime to spot-check coverage across the WHOLE portfolio (built after the
     one-example-at-a-time problem — this is the scalable check).
-  - **Filings now run every 2h, 10:15–22:15 IST** (was twice, both daytime).
-    The NSE RSS is only a ~1-day rolling snapshot, and results/board outcomes
-    drop in the EVENING — after the old last run — so they aged off the feed
-    before the next morning check and were never seen. `MATERIAL_KEYWORDS` now
+  - **Filings cadence (split by exchange):** NSE announcements run **every 15
+    min** (`filings-nse`, `run_filings(nse_only=True)`, 08:30–23:15 IST) — the
+    archives host is friendly, safe to poll often. BSE stays on the **2-hourly
+    full run** (`filings`) — its API is bot-hostile and shares the runner IP with
+    the daily SME bhavcopy, so it must NOT be hammered. Was twice-daily; results/
+    board outcomes drop in the EVENING and the NSE feed is only a ~1-day snapshot,
+    so infrequent polling let them age off unseen. `MATERIAL_KEYWORDS` now
     includes "board meeting" (results are decided there).
 - Bulk/block deals: NSE BUILT (21-Jul-2026) — `alerts.run_deals` / `fetch_nse_deals`
   reads NSE's daily bulk.csv + block.csv (friendly archives host), matches by
