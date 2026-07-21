@@ -13,6 +13,7 @@ on:
     - cron: "0 15 * * 1-5"                # exit audit: 20:30 IST, after bhavcopy so SME prices exist
     - cron: "*/15 3-9 * * 1-5"            # fast-poll: LIVE mainboard entry/add alerts (~1 min), market hours
     - cron: "50 14 * * 1-5"               # eod-entries: SME + final mainboard entry pass, 20:20 IST (after bhavcopy)
+    - cron: "45 15 * * 1-5"               # deals: bulk/block deals in your stocks, 21:15 IST (after NSE publishes EOD deal files)
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -76,6 +77,24 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python alerts.py fast-poll 16 60
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+  deals:
+    # Bulk/block deals in stocks you hold or watch. 21:15 IST — after NSE
+    # publishes the daily deal CSVs (EOD data; no intraday feed exists).
+    if: github.event.schedule == '45 15 * * 1-5' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python alerts.py deals
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

@@ -129,6 +129,8 @@ switch sources without disclosure.
   cheap live quote (`alerts._live_quotes`, Yahoo) is fetched each ~60s cycle and
   run through the SAME deduped `check_holding_adds`/`check_watchlist_entries` via
   an injected `price_fn`. SME names are SKIPPED here (no live feed).
+- **21:15 IST (`deals`)**: NSE bulk/block deals in stocks you hold or watch
+  (EOD data; evening-only by nature). Portfolio-scoped, deduped via filings_seen.
 - **20:20 IST after bhavcopy (`eod-entries`)**: entry/add pass off EOD closes for
   ALL names — the ONLY entry check for SME (Lakshmi: SME at day-end is fine) plus
   a final mainboard pass. Dedup (entry_alert_log) means the evening pass never
@@ -195,8 +197,15 @@ break.
     drop in the EVENING — after the old last run — so they aged off the feed
     before the next morning check and were never seen. `MATERIAL_KEYWORDS` now
     includes "board meeting" (results are decided there).
-- Bulk/block deals and insider-trading alerts (separate NSE/BSE daily data
-  feeds, same bhavcopy-style pattern) — discussed, not yet built
+- Bulk/block deals: NSE BUILT (21-Jul-2026) — `alerts.run_deals` / `fetch_nse_deals`
+  reads NSE's daily bulk.csv + block.csv (friendly archives host), matches by
+  trading SYMBOL against holdings+watchlist, alerts portfolio-scoped in the
+  evening (`deals` job, 21:15 IST — EOD data, no intraday feed exists). Dedup
+  reuses filings_seen (fingerprint store; no new table). Insider/promoter trades
+  + pledge come via the filings feed (added keywords: insider/encumbr/acquisition
+  of shares/disposal of shares) — the dedicated NSE PIT API returns empty/blocked.
+  STILL TODO: BSE bulk/block (BSE API endpoint wrong in spike) for BSE-only names;
+  a richer typed insider format.
 - Resend domain verification still pending on Vishal's side (digest email
   deliverability)
 

@@ -853,6 +853,10 @@ MATERIAL_KEYWORDS = [
     # held" notice and the "Outcome of Board Meeting" (which carries the actual
     # results) are material — and were being dropped by the keyword filter.
     "board meeting",
+    # Insider/promoter activity via the announcement feed (21-Jul-2026): the
+    # dedicated NSE PIT API returns empty/bot-blocked, but these disclosures ALSO
+    # file as announcements. Precise terms only — NOT "pit" (matches 'caPITal').
+    "insider", "encumbr", "acquisition of shares", "disposal of shares",
 ]
 
 
@@ -1193,6 +1197,125 @@ def run_filings_audit():
             print(f"     [{'MATERIAL' if material else 'routine '}] {a['date']} · {a['headline'][:72]}")
     print(f"\n[filings-audit] {filed} NSE holdings have filings in today's feed. "
           f"BSE-scrip holdings use the separate per-code path (not this feed).")
+
+
+# ---------------------------------------------------------------------------
+# MODE: deals — NSE bulk & block deals in portfolio/watchlist stocks
+# (built 21-Jul-2026, Lakshmi). EOD data: NSE publishes these daily CSVs after
+# market close, so this is an evening alert — no intraday feed exists for free.
+# Friendly archives host (same one bhavcopy uses). Matched by trading SYMBOL
+# (the CSV's own key), so none of the company-name fuzziness of filings. BSE-
+# only names aren't in the NSE deal files; a BSE deals feed is a later add.
+# ---------------------------------------------------------------------------
+
+def fetch_nse_deals() -> list:
+    """Today's NSE bulk + block deals, one dict per deal. [] on failure (logged
+    with WHY, rule #3). Each: kind/symbol/date/client/side/qty/price."""
+    import csv, io
+    out = []
+    for kind, fname in (("BULK", "bulk.csv"), ("BLOCK", "block.csv")):
+        try:
+            r = requests.get(
+                f"https://nsearchives.nseindia.com/content/equities/{fname}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=20)
+            if r.status_code != 200 or "Symbol" not in r.text[:200]:
+                print(f"  (NSE {kind} deals: HTTP {r.status_code}, {len(r.content)} bytes)")
+                continue
+            rows = list(csv.DictReader(io.StringIO(r.text)))
+            for raw in rows:
+                row = {(k or "").strip(): (v or "").strip() for k, v in raw.items()}
+                sym = row.get("Symbol", "").upper()
+                if not sym:
+                    continue
+                out.append({
+                    "kind": kind, "symbol": sym, "date": row.get("Date", ""),
+                    "client": row.get("Client Name", ""),
+                    "side": row.get("Buy/Sell", ""),
+                    "qty": row.get("Quantity Traded", ""),
+                    "price": row.get("Trade Price / Wght. Avg. Price", ""),
+                })
+            print(f"  (NSE {kind} deals: {len(rows)} rows fetched)")
+        except Exception as e:
+            print(f"  (NSE {kind} deals fetch failed: {type(e).__name__}: {e})")
+    return out
+
+
+def run_deals():
+    """Alert on any bulk/block deal in a stock we hold OR watch. Portfolio-scoped
+    and [Both]-tagged like every other alert; deduped via filings_seen (reused as
+    a generic fingerprint store — no new table needed)."""
+    client = sb()
+    holdings = get_holdings(client)
+    try:
+        watch = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    except Exception:
+        watch = []
+
+    scope = {}   # NSE symbol -> {name, groups:set}
+    def add(nm, pf):
+        m = re.search(r"\(XNSE:([^)]+)\)", str(nm))
+        if not m:
+            return
+        sym = m.group(1).strip().upper()
+        e = scope.setdefault(sym, {"name": short_name(nm), "groups": set()})
+        e["groups"].add(PF_GROUP.get(int(pf or 1), "vishal"))
+    for _, h in holdings.iterrows():
+        add(h["stock_name"], h.get("portfolio_id", 1))
+    for r in watch:
+        add(r.get("stock_name"), r.get("portfolio_id", 1))
+    if not scope:
+        return
+
+    deals = fetch_nse_deals()
+    seen = {r["fingerprint"] for r in
+            (client.table("filings_seen").select("fingerprint").execute().data or [])}
+    by_group, to_store = {}, []
+    for d in deals:
+        if d["symbol"] not in scope:
+            continue
+        fp = _fingerprint("DEAL", d["kind"], d["symbol"], d["date"], d["client"], d["side"], d["qty"])
+        if fp in seen:
+            continue
+        seen.add(fp)
+        e = scope[d["symbol"]]
+        try:
+            qtxt = f"{int(float(d['qty'].replace(',', ''))):,}"
+        except (ValueError, AttributeError):
+            qtxt = d["qty"]
+        emoji = "🟢" if d["side"].upper().startswith("B") else "🔴"
+        msg = (f"🏦 <b>{e['name']}</b> — {d['kind'].title()} deal\n"
+               f"{emoji} {d['side'].upper()} {qtxt} @ ₹{d['price']} — {d['client']}")
+        for g in e["groups"]:
+            by_group.setdefault(g, []).append(msg)
+        to_store.append((fp, d["symbol"], f"{d['kind']} {d['side']} {d['client']}"[:300]))
+
+    total = 0
+    for g, msgs in by_group.items():
+        if g not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} deal alert(s) for '{g}' — Telegram off)")
+            continue
+        chat = chat_id_for_group(g)
+        if not chat:
+            continue
+        header, budget, chunk, clen = "🏦 <b>Bulk / block deals</b>\n\n", 3500, [], 0
+        clen = len(header)
+        for m in msgs:
+            if chunk and clen + len(m) + 2 > budget:
+                send_telegram(header + "\n\n".join(chunk), chat_id=chat)
+                chunk, clen = [], len(header)
+            chunk.append(m); clen += len(m) + 2
+        if chunk:
+            send_telegram(header + "\n\n".join(chunk), chat_id=chat)
+        total += len(msgs)
+    for fp, sym, head in to_store:
+        try:
+            client.table("filings_seen").insert(
+                {"fingerprint": fp, "ticker": sym, "headline": head, "filing_date": None}).execute()
+        except Exception as e:
+            print(f"⚠️ deal dedup write failed for {sym}: {e}")
+    print(f"[deals] {len(deals)} deals scanned; {total} in your stocks."
+          if deals else "[deals] no deals file today.")
 
 
 # ---------------------------------------------------------------------------
@@ -1847,6 +1970,7 @@ if __name__ == "__main__":
         {"states": run_states,
          "filings": run_filings,
          "filings-audit": run_filings_audit,
+         "deals": run_deals,
          "calendar": run_calendar,
          "digest": run_digest,
          "eod-entries": run_eod_entries}.get(mode, run_states)()
