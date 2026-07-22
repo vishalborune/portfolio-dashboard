@@ -137,6 +137,17 @@ switch sources without disclosure.
   cheap live quote (`alerts._live_quotes`, Yahoo) is fetched each ~60s cycle and
   run through the SAME deduped `check_holding_adds`/`check_watchlist_entries` via
   an injected `price_fn`. SME names are SKIPPED here (no live feed).
+- **10-week EMA touch (`alerts.check_wema_touch`, Lakshmi 22-Jul-2026)**: fires when
+  a HOLDING arrives at its 10-week EMA — the weekly-system trend line he acts on.
+  Level from `signals.weekly_ema10` (same weekly bars as the flowchart, so SME
+  rides bhavcopy), computed ONCE per poller launch. Rides the same cadence as
+  entries: mainboard live (~1 min), SME in the evening pass. Dedup kind W10EMA.
+  **It is an EVENT, not a state:** price must be at/through the line NOW *and*
+  have closed clearly above it previously. Plain proximity fired on 19 holdings
+  in one day (the 10wEMA is a slow mean-reversion line stocks loiter around);
+  requiring the approach cut it to 8 real arrivals. Don't "simplify" that away.
+- Dashboard shows **% distance** to the DMAs/10wEMA, never the ₹ level (Lakshmi
+  22-Jul-2026: "how far from the zone" is the decision; the rupee value isn't).
 - **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires
   when a HOLDING is ≥10% below cost (loss stop, per each holder's own cost) OR
   ≥17% off its ~6-month peak (trailing stop; peak = `signals.daily_entry_levels`

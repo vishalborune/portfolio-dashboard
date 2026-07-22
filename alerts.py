@@ -419,6 +419,80 @@ def check_risk_stops(client, prices: dict):
         print(f"Sent {sent} risk/stop alert(s).")
 
 
+def check_wema_touch(client, prices: dict):
+    """10-WEEK EMA touch alert (Lakshmi 22-Jul-2026). The weekly system's trend
+    line: when a HELD stock comes back to its 10-week EMA that's an act-on level,
+    and until now nothing told him — the weekly flowchart only re-evaluates on a
+    state CHANGE, hourly. `prices` = {ticker: (cmp, day_low, wema10, prev_close)};
+    caller passes LIVE prices (fast poller, ~1 min) or EOD closes (evening pass).
+
+    A touch is an EVENT, not a state: price must be at the line NOW *and* have
+    been clearly above it at the previous close. Measured live, plain proximity
+    fired on 19 holdings in one day — the 10-week EMA is a slow mean-reversion
+    line that stocks loiter around, and 19 alerts/day would just train him to
+    ignore it. Requiring the approach keeps it to real arrivals.
+    Dedup kind W10EMA, once/stock/group/day."""
+    holdings = get_holdings(client)
+    if holdings.empty:
+        return
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    by_ticker = {}
+    for _, h in holdings.iterrows():
+        t = extract_yf_ticker(h["stock_name"])
+        if not t:
+            continue
+        pf = int(h.get("portfolio_id", 1))
+        e = by_ticker.setdefault(t, {"name": short_name(h["stock_name"]), "groups": {}})
+        e["groups"].setdefault(PF_GROUP.get(pf, "vishal"), []).append(pf)
+
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        cmp_, day_low, wema, prev_close = prices.get(ticker, (None, None, None, None))
+        if cmp_ is None or not wema:
+            continue
+        at_line = (day_low is not None and day_low <= wema) \
+            or abs(cmp_ / wema - 1) <= signals.TOUCH_BAND
+        # ...and it ARRIVED here — previous close was clearly above the line.
+        came_down = prev_close is not None and prev_close > wema * (1 + signals.TOUCH_BAND)
+        if not (at_line and came_down):
+            continue
+        for grp, pfs in e["groups"].items():
+            if (ticker, grp, "W10EMA") in already:
+                continue
+            pct = (cmp_ / wema - 1) * 100
+            msgs_by_group.setdefault(grp, []).append(
+                f"📉 {_grp_tag(grp, pfs)}<b>{e['name']}</b> — at the 10-week EMA\n"
+                f"CMP ₹{cmp_:,.2f} vs 10wEMA ₹{wema:,.2f} ({pct:+.1f}%)")
+            to_log.append((ticker, grp, "W10EMA"))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} 10wEMA touch alert(s) for '{grp}' — Telegram off)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("📉 <b>10-week EMA touch</b>\n\n" + "\n\n".join(msgs), chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        already.add((ticker, grp, kind))
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp, "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} 10-week EMA touch alert(s).")
+
+
 # ---------------------------------------------------------------------------
 # FAST INTRADAY ENTRY POLLING (mainboard) + EOD entry pass (all, incl SME)
 # Lakshmi 21-Jul-2026: alert latency is the app's core value. Mainboard names
@@ -526,7 +600,7 @@ def run_eod_entries():
     # daily backstop for mainboard. Levels/peak come from the same daily fetch.
     try:
         holdings = get_holdings(client)
-        risk_prices, seen = {}, set()
+        risk_prices, wema_prices, seen = {}, {}, set()
         for _, h in holdings.iterrows():
             t = extract_yf_ticker(h["stock_name"])
             if not t or t in seen:
@@ -535,7 +609,11 @@ def run_eod_entries():
             lv = signals.daily_entry_levels(t)
             if lv:
                 risk_prices[t] = (lv["ref_close"], lv.get("peak"))
+                w = signals.weekly_ema10(t)
+                if w:
+                    wema_prices[t] = (lv["ref_close"], lv["ref_low"], w, lv.get("prev_close"))
         check_risk_stops(client, risk_prices)
+        check_wema_touch(client, wema_prices)   # covers SME too (EOD closes)
     except Exception as e:
         print(f"⚠️ eod risk check failed: {e}")
 
@@ -557,13 +635,17 @@ def run_fast_poll(minutes: float = 16.0, interval: int = 60):
 
     # Levels computed ONCE up front (not per-cycle) — this is what keeps the
     # per-minute loop from re-downloading history and starting a Yahoo storm.
-    levels, skipped = {}, []
+    levels, skipped, wema = {}, [], {}
     for t in mainboard:
         lv = signals.daily_entry_levels(t)
         if lv:
             levels[t] = lv
         else:
             skipped.append(t)
+        # 10-week EMA level too — also a once-per-launch compute, never per cycle
+        w = signals.weekly_ema10(t)
+        if w:
+            wema[t] = w
     if skipped:
         print(f"[fast-poll] no daily levels for {len(skipped)}: {skipped} (skipped)")
     if not levels:
@@ -587,6 +669,10 @@ def run_fast_poll(minutes: float = 16.0, interval: int = 60):
             risk_prices = {t: (quotes.get(t, (None,))[0], lv.get("peak"))
                            for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
             check_risk_stops(client, risk_prices)
+            # 10-week EMA touch, same live prices + the pre-computed weekly level
+            wema_prices = {t: (quotes[t][0], quotes[t][1], w, levels.get(t, {}).get("prev_close"))
+                           for t, w in wema.items() if quotes.get(t, (None,))[0] is not None}
+            check_wema_touch(client, wema_prices)
         except Exception as e:
             print(f"⚠️ [fast-poll] cycle {cycle} check failed: {type(e).__name__}: {e}")
         print(f"  [fast-poll] cycle {cycle}: {priced}/{len(levels)} priced")

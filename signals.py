@@ -383,11 +383,29 @@ def daily_entry_levels(ticker: str) -> dict | None:
         "ema21": float(close.ewm(span=21, adjust=False).mean().iloc[-1]),
         "ref_close": float(close.iloc[-1]),
         "ref_low": float(low.iloc[-1]),
+        # yesterday's close — lets a "touch" be detected as an EVENT (came down
+        # TO a level) rather than a standing condition (loitering near it).
+        "prev_close": float(close.iloc[-2]) if len(close) >= 2 else None,
         # recent peak for the trailing-stop alert — highest close over ~6 months,
         # computed here so the fast poller reuses this one daily fetch (no extra
         # per-minute history download).
         "peak": float(close.tail(PEAK_LOOKBACK).max()),
     }
+
+
+def weekly_ema10(ticker: str) -> float | None:
+    """Current 10-WEEK EMA — the trend line Lakshmi's weekly system hangs on
+    (a touch of it is an act-on level, distinct from the 10/21-DAY entry EMAs).
+    Built from the SAME weekly bars the flowchart uses, so it's bhavcopy-first
+    for SME. None if there isn't enough history. Computed ONCE per poller launch
+    and reused for many live-price comparisons (never per-minute)."""
+    df = fetch_weekly(ticker)
+    if df.empty or len(df) < 12 or "close" not in df.columns:
+        return None
+    try:
+        return float(df["close"].ewm(span=10, adjust=False).mean().iloc[-1])
+    except Exception:
+        return None
 
 
 def classify_entry_zone(ticker: str, cmp_: float, day_low: float,

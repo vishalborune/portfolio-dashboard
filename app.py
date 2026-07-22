@@ -726,7 +726,7 @@ def tab_holdings(enriched: pd.DataFrame):
         # volume) + price basics. Default view.
         COLUMN_VIEWS = {
             "📊 Decision view": [
-                "Short Name", "State Display", "% from 10wEMA", "21DMA", "Vol vs 10wk",
+                "Short Name", "State Display", "% from 10wEMA", "% vs 21DMA", "Vol vs 10wk",
                 "Deliv % (4wk)", "CMP", "purchase_cost", "quantity",
             ],
             "💰 P&L view": [
@@ -739,7 +739,7 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA",
-                "21DMA", "% vs 21DMA", "Vol vs 10wk",
+                "% vs 21DMA", "Vol vs 10wk",
                 "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
@@ -1149,8 +1149,10 @@ def tab_watchlist():
                 wl_view["Distance to Target %"] = (
                     (wl_view["CMP"] - wl_view["target_buy_price"]) / wl_view["target_buy_price"] * 100
                 )
-        cols = ["Short Name", "Ticker", "CMP", "Entry Advice", "10DMA", "21DMA",
-                "% vs 10DMA", "Day Change %",
+        # Lakshmi 22-Jul-2026: show the % DISTANCE to the DMAs, not the ₹ levels —
+        # "how far am I from the entry zone" is the decision, the rupee value isn't.
+        cols = ["Short Name", "Ticker", "CMP", "Entry Advice",
+                "% vs 10DMA", "% vs 21DMA", "Day Change %",
                 "target_buy_price", "Distance to Target %", "notes", "added_by"]
         cols = [c for c in cols if c in wl_view.columns]
         styled = (
@@ -1159,7 +1161,7 @@ def tab_watchlist():
             }).style.format({
                 "CMP": "₹{:,.2f}", "Day Change %": "{:+.2f}%",
                 "Target Buy": "₹{:,.2f}", "Distance to Target %": "{:+.2f}%",
-                "10DMA": "₹{:,.2f}", "21DMA": "₹{:,.2f}", "% vs 10DMA": "{:+.1f}%",
+                "% vs 10DMA": "{:+.1f}%", "% vs 21DMA": "{:+.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)
