@@ -3,16 +3,17 @@ name: Portfolio Alerts
 on:
   schedule:
     # Times are UTC. IST = UTC+5:30. Market hours: 09:15-15:30 IST Mon-Fri.
-    - cron: "45 3,4,5,6,7,8,9 * * 1-5"   # states: hourly-ish during market hours
-    - cron: "45 4,6,8,10,12,14,16 * * 1-5"  # filings (full, incl BSE): every 2h, 10:15-22:15 IST
-    - cron: "*/15 3-17 * * 1-5"             # filings-nse: NSE announcements every 15 min, 08:30-23:15 IST (BSE stays on the 2h full run to protect its API)
+    - cron: "42 3,4,5,6,7,8,9 * * 1-5"   # states: hourly, ~09:12 IST first (off-peak minute to dodge GitHub scheduler lag)
+    - cron: "12 4 * * 1-5"               # states: extra morning shot ~09:42 IST, so state alerts have TWO chances before 10am even if GitHub drops one
+    - cron: "40 4,6,8,10,12,14,16 * * 1-5"  # filings (full, incl BSE): every 2h, ~10:10-22:10 IST
+    - cron: "8,23,38,53 3-16 * * 1-5"       # filings-nse: NSE announcements ~every 15 min (off-peak minutes), 08:38-22:23 IST
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
     - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
                                           # 20:00/20:30 data jobs, so it computes on
                                           # tonight's closes; Lakshmi plans Saturdays
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
     - cron: "0 15 * * 1-5"                # exit audit: 20:30 IST, after bhavcopy so SME prices exist
-    - cron: "*/15 3-9 * * 1-5"            # fast-poll: LIVE mainboard entry/add alerts (~1 min), market hours
+    - cron: "3,18,33,48 3-9 * * 1-5"      # fast-poll: LIVE mainboard entry/add alerts (~1 min); off-peak minutes, first launch ~08:33 IST so it's live before the 09:15 open
     - cron: "50 14 * * 1-5"               # eod-entries: SME + final mainboard entry pass, 20:20 IST (after bhavcopy)
     - cron: "45 15 * * 1-5"               # deals: bulk/block deals in your stocks, 21:15 IST (after NSE publishes EOD deal files)
   workflow_dispatch:                       # manual run button
@@ -52,7 +53,7 @@ on:
 
 jobs:
   states:
-    if: github.event.schedule == '45 3,4,5,6,7,8,9 * * 1-5' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '42 3,4,5,6,7,8,9 * * 1-5' || github.event.schedule == '12 4 * * 1-5' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +74,7 @@ jobs:
     # Fires every 15 min in market hours; each run loops ~16 min so coverage is
     # continuous and a crash self-heals on the next tick. Manual runs only start
     # it if the tick-box is set (so a normal dispatch doesn't hang for 16 min).
-    if: github.event.schedule == '*/15 3-9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_fast_poll_now == 'true')
+    if: github.event.schedule == '3,18,33,48 3-9 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_fast_poll_now == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -134,7 +135,7 @@ jobs:
     # the tick-box (manual Run workflow otherwise SKIPS this job -- same
     # gap the digest button closed). Safe to re-run: the filings_seen
     # fingerprint table means already-alerted filings stay silent.
-    if: github.event.schedule == '45 4,6,8,10,12,14,16 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_filings_now == 'true')
+    if: github.event.schedule == '40 4,6,8,10,12,14,16 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_filings_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -156,7 +157,7 @@ jobs:
     # often). BSE is deliberately EXCLUDED here and left to the 2h full `filings`
     # job, so we never hammer BSE's bot-hostile API (it shares the runner IP with
     # the daily SME bhavcopy). Dedup (filings_seen) keeps repeat runs silent.
-    if: github.event.schedule == '*/15 3-17 * * 1-5'
+    if: github.event.schedule == '8,23,38,53 3-16 * * 1-5'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

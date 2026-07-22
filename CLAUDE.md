@@ -120,6 +120,13 @@ benchmark source won (exact index / HDFC ETF / MO ETF) — never silently
 switch sources without disclosure.
 
 ## Schedule (`.github/workflows/alerts.yml`)
+> **GitHub scheduler caveat (learned 22-Jul-2026):** Actions cron is best-effort —
+> runs get DELAYED or DROPPED at high-load minutes (`:00/:15/:30/:45` and the top
+> of the hour). Alerts once landed at 11:15 instead of 09:15 because of this. All
+> market-hours crons are therefore on ODD, spread-out minutes (fast-poll
+> :03/:18/:33/:48, states :42, filings-nse :08/:23/:38/:53). This REDUCES lag but
+> GitHub gives NO timing guarantee — the only way to guarantee market-open-sharp
+> alerts is an always-on worker (Render background worker, not GitHub cron).
 - Hourly, 9:45–15:45 IST, Mon-Fri: flowchart states + volume spikes (2x
   pace-adjusted). NOTE (21-Jul-2026): entry/add-zone alerts NO LONGER ride this
   hourly job — see the two dedicated modes below.
