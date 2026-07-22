@@ -77,6 +77,16 @@ SME_STOCKS = {
     # confirmed via BSE listing + screener.in. Matched by scrip_code, the
     # safe path; name_hint kept only as documentation fallback.
     "TRUECOLORS.BO": {"exchange": "BSE", "name_hint": "TRUECOLORS", "scrip_code": "544531"},
+    # BSE holdings stored by NUMERIC scrip code (added 22-Jul-2026). These were
+    # being priced by YAHOO -- the blind spot rule #1 warns about -- and it bit:
+    # Yahoo's live quote said Rs 498.65 for Kwality while BSE's own file said
+    # Rs 2,689.10, firing a false loss-stop AND trailing-stop on a holding that
+    # is actually up ~210%. Own the data instead. Every scrip code + SC_NAME
+    # below was VERIFIED against the real BSE bhavcopy for 21-Jul-2026 (rule #5).
+    "539997.BO": {"exchange": "BSE", "name_hint": "KPL",        "scrip_code": "539997"},
+    "532856.BO": {"exchange": "BSE", "name_hint": "TIMETECHNO", "scrip_code": "532856"},
+    "532829.BO": {"exchange": "BSE", "name_hint": "LEHAR",      "scrip_code": "532829"},
+    "542669.BO": {"exchange": "BSE", "name_hint": "BMW",        "scrip_code": "542669"},
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}

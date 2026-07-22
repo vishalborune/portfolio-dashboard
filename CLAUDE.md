@@ -103,6 +103,17 @@ tracks: OBSCP, TCL, UTSSAV, VIESL (NSE Emerge), SSEGL (NSE Emerge, series ST),
 CWD-MS, HSIL-MT, TRUECOLORS, LEHAR, SGRL (BSE, matched by scrip_code — NOT
 by symbol string), plus HDFCSML250.NS / MOSMALL250.NS (Nifty Smallcap 250
 ETFs, used as the portfolio benchmark proxy — see below).
+Added 22-Jul-2026 after the Kwality bogus-quote incident: the BSE holdings stored
+by NUMERIC scrip code — **539997.BO (Kwality/KPL), 532856.BO (Time Technoplast),
+532829.BO (Lehar), 542669.BO (BMW)** — were being priced by YAHOO. All four
+verified present in the real BSE bhavcopy before adding (rule #5).
+**Transition guard:** `signals.MIN_BHAV_DAILY_ROWS` (60) / `MIN_BHAV_WEEKS` (20)
+— a newly-tracked ticker has ~0 bhavcopy rows until the backfill runs, and a few
+bars would make junk EMAs/peaks, so bhavcopy only WINS once it has real history;
+until then Yahoo's daily bars are used (they're fine — it's the LIVE quote that
+lies). **After adding a ticker here, run the bhavcopy backfill** or it stays on
+Yahoo. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
+Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)
 NSE discontinued public access to exact Nifty Smallcap 100 daily data
@@ -303,6 +314,20 @@ break.
   started. This whole item is the natural "next session" build.
 
 ## Detailed debugging war stories (context for why the rules above exist)
+- **Bogus live quote fired false stops (22-Jul-2026)**: Yahoo's `fast_info`
+  returned ₹498.65 for Kwality (`539997.BO`) while the stock was really ~₹2,689.
+  That single wrong number fired BOTH a false loss-stop ("-42% below cost") and a
+  false trailing-stop ("-82% from peak") on a holding that is actually UP ~210%.
+  The peak and cost were fine — only the live CMP was garbage. Root cause: the
+  DASHBOARD had a plausibility guard (`MAX_PLAUSIBLE_MOVE`) but the ALERT engine
+  did not, so `_live_quotes` was trusted blindly. Fix: `alerts._sane_quotes`
+  rejects any live quote >25% from the last daily close (Indian circuits are
+  5/10/20%, so beyond that it's garbage, not a move) and logs WHY; the ticker is
+  simply skipped that cycle. **Lesson: every NEW consumer of a flaky source needs
+  its own sanity check — porting the logic isn't enough, you must port the guard.**
+  Follow-up worth doing: BSE-numeric holdings (539997 Kwality, 542669, 532856…)
+  are priced by YAHOO, not bhavcopy — adding them to `SME_STOCKS` would own that
+  data properly (rule #1) instead of trusting Yahoo for BSE names.
 - **SME pricing bug**: Yahoo served STALE/WRONG prices for 5 of 6 SME
   stocks (e.g. CWD showed a fake ₹1,180 vs real ₹311) while PORTFOLIO
   TOTALS coincidentally still matched Kite — only caught via PER-STOCK

@@ -40,6 +40,12 @@ except ImportError:
 CONVERGENCE_BAND_PCT = 2.0   # Lakshmi's locked number
 SWING_WINDOW = 5             # centered pivot window (weeks)
 MIN_WEEKS_REQUIRED = 45      # need enough history for a meaningful 40W EMA
+# "Non-empty isn't usable" thresholds (house rule #7): a newly-tracked ticker has
+# only a few bhavcopy rows until the backfill runs. Below these, fall back to
+# Yahoo rather than compute EMAs/peaks off a handful of bars. Set well under what
+# the long-tracked SME names carry (~500 days / ~100 weeks) so they're unaffected.
+MIN_BHAV_DAILY_ROWS = 60
+MIN_BHAV_WEEKS = 20
 
 # EXIT confirmation buffer (Lakshmi's option (a), July 2026):
 # a single weekly close below the 40W EMA is NOT an exit — it takes either
@@ -108,8 +114,15 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
     flowchart states for those stocks. Non-SME tickers aren't in the table,
     return empty here, and proceed to Yahoo exactly as before."""
     bhav = _fetch_weekly_from_bhavcopy(ticker)
-    if not bhav.empty:
+    # Same "non-empty != usable" guard as the daily path: a just-added ticker has
+    # a couple of weekly bars until the backfill runs, which would show as
+    # INSUFFICIENT DATA instead of its real state. Yahoo carries the history for
+    # these mainboard-BSE names in the meantime.
+    if not bhav.empty and len(bhav) >= MIN_BHAV_WEEKS:
         return bhav
+    if not bhav.empty:
+        print(f"  [signals] {ticker}: only {len(bhav)} bhavcopy week(s) "
+              f"(<{MIN_BHAV_WEEKS}) — using Yahoo until the backfill fills in")
     try:
         df = yf.download(ticker, period=period, interval="1wk",
                          progress=False, auto_adjust=False)
@@ -342,9 +355,17 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
         import db
         d = db.get_sme_daily_prices((ticker,))
         if not d.empty and "close" in d.columns and "low" in d.columns:
-            d = d.sort_values("price_date").tail(lookback)
-            return pd.DataFrame({"close": d["close"].astype(float).to_numpy(),
-                                 "low": d["low"].astype(float).to_numpy()})
+            # A NON-EMPTY table isn't automatically a USABLE one (house rule #7):
+            # a newly-tracked ticker has only a handful of rows until the backfill
+            # runs, and those few bars would produce junk EMAs/peaks. Require real
+            # history before letting bhavcopy win; otherwise fall through to Yahoo
+            # (whose DAILY bars are fine — it's the live quote that lies).
+            if len(d) >= MIN_BHAV_DAILY_ROWS:
+                d = d.sort_values("price_date").tail(lookback)
+                return pd.DataFrame({"close": d["close"].astype(float).to_numpy(),
+                                     "low": d["low"].astype(float).to_numpy()})
+            print(f"  [signals] {ticker}: only {len(d)} bhavcopy day(s) "
+                  f"(<{MIN_BHAV_DAILY_ROWS}) — using Yahoo until the backfill fills in")
     except Exception:
         pass
     # 2) Yahoo (mainboard NSE names)

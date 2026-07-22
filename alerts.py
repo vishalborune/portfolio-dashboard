@@ -567,6 +567,38 @@ def _live_quotes(tickers: list) -> dict:
     return out
 
 
+MAX_PLAUSIBLE_MOVE = 0.25   # Indian circuit limits are 5/10/20% — a live quote
+                            # further than this from the last daily close is
+                            # GARBAGE, not a move.
+
+
+def _sane_quotes(quotes: dict, levels: dict) -> dict:
+    """Reject live quotes that are implausibly far from the last daily close.
+
+    WHY (22-Jul-2026): Yahoo returned Rs 498.65 for Kwality (539997.BO) while the
+    stock was really ~Rs 2,689. That one bogus number fired a false loss stop AND
+    a false trailing stop on a holding that is actually UP ~210% — precisely the
+    'a wrong number is worse than a blank one' failure (house rule #2), on the
+    Yahoo-on-BSE blind spot (#1). The dashboard already had this guard; the alert
+    engine did not. Every rejection logs WHY (#3).
+
+    A genuine split/bonus also trips this — going quiet on that ticker until the
+    daily series catches up is the SAFE direction, and corporate_actions.py flags
+    the gap separately."""
+    out = {}
+    for t, (lp, dl) in quotes.items():
+        if lp is None:
+            continue
+        ref = (levels.get(t) or {}).get("ref_close")
+        if ref and abs(lp / ref - 1) > MAX_PLAUSIBLE_MOVE:
+            print(f"  [fast-poll] REJECTED implausible quote for {t}: live "
+                  f"{lp:,.2f} vs last close {ref:,.2f} "
+                  f"({(lp/ref - 1) * 100:+.0f}%) — skipping this ticker")
+            continue
+        out[t] = (lp, dl)
+    return out
+
+
 def _make_live_price_fn(levels: dict, quotes: dict):
     """Returns a price_fn(ticker) -> zone dict, classifying the LIVE price against
     the pre-computed daily EMA levels. None when we have no level or no live
@@ -658,7 +690,9 @@ def run_fast_poll(minutes: float = 16.0, interval: int = 60):
     cycle = 0
     while _time.time() < end:
         cycle += 1
-        quotes = _live_quotes(list(levels))
+        # Sanity-filter BEFORE anything acts on these prices — one bogus quote
+        # otherwise fires false stop/entry alerts (see _sane_quotes).
+        quotes = _sane_quotes(_live_quotes(list(levels)), levels)
         priced = sum(1 for t in levels if quotes.get(t, (None,))[0] is not None)
         fn = _make_live_price_fn(levels, quotes)
         # Reuse the proven, deduped alert logic — just with live prices.
