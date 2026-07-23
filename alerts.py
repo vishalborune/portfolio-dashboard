@@ -1139,6 +1139,23 @@ MATERIAL_KEYWORDS = [
     "insider", "encumbr", "acquisition of shares", "disposal of shares",
 ]
 
+# ROUTINE = the ONLY things we suppress (23-Jul-2026). We used to alert only on
+# MATERIAL_KEYWORDS, i.e. a whitelist — but a whitelist can only catch what we
+# thought of in advance, and it silently dropped Solara's PRESS RELEASE and its
+# "Change in Directors/KMP/Auditor" filing on 23-Jul (Lakshmi noticed the miss).
+# Inverted: alert on everything EXCEPT obvious housekeeping. Missing a filing is
+# the cardinal sin here; a little extra noise is not. MATERIAL_KEYWORDS still
+# lives on — it now marks the high-signal ones with a ⭐ instead of gating them.
+ROUTINE_KEYWORDS = [
+    "trading window", "newspaper publication", "monitoring agency",
+    "statement of deviation", "compliance certificate", "certificate under",
+    "sdd compliance", "corporate governance report", "shareholding pattern",
+    "reconciliation of share capital", "loss of share certificate",
+    "duplicate share", "schedule of analyst", "schedule of meet",
+    "non-applicability",
+    "pursuant to exercise",      # routine ESOP allotments
+]
+
 
 def _fingerprint(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:32]
@@ -1396,8 +1413,10 @@ def run_filings(nse_only: bool = False):
         for a in anns:
             if not a["headline"] or (a["date"] and a["date"] < cutoff):
                 continue
-            if not any(k in a["headline"].lower() for k in MATERIAL_KEYWORDS):
-                continue
+            headline_l = a["headline"].lower()
+            if any(k in headline_l for k in ROUTINE_KEYWORDS):
+                continue                      # housekeeping — the ONLY thing we drop
+            starred = any(k in headline_l for k in MATERIAL_KEYWORDS)
             fp = _fingerprint(sym, a["headline"], a["date"])
             if fp in seen:
                 continue
@@ -1408,7 +1427,7 @@ def run_filings(nse_only: bool = False):
                 gist = summarize_filing(short_name(name), a["headline"], a["url"])
                 if gist:
                     summaries_done += 1
-            body = (f"📢 <b>{short_name(name)}</b>: {a['headline'][:200]}"
+            body = (f"{'⭐📢' if starred else '📢'} <b>{short_name(name)}</b>: {a['headline'][:200]}"
                     + (f"\n\n{gist}" if gist else "")
                     + f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>")
             for g in holder_groups:

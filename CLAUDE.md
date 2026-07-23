@@ -226,6 +226,15 @@ break.
     companies' filings mis-attributed). NSE's filing-link token is often NOT the
     trading symbol (NEWGEN→NEWGEN2, CENTENKA→CENTURYENKA, NORTHARC→NACL2020,
     VIYASH→SEQUENT1), so the exact company NAME is the reliable anchor.
+  - **Filter is a BLACKLIST, not a whitelist (23-Jul-2026).** We used to alert
+    only on `MATERIAL_KEYWORDS`; a whitelist can only catch what we thought of in
+    advance, and it silently dropped Solara's **press release** and its **"Change
+    in Directors/KMP/Auditor"** filing (Lakshmi spotted the miss). Now we alert on
+    EVERYTHING except `ROUTINE_KEYWORDS` housekeeping (trading window, newspaper
+    publication, monitoring agency, statement of deviation, ESOP "pursuant to
+    exercise", …). `MATERIAL_KEYWORDS` survives only to ⭐-flag the high-signal
+    ones. Measured effect on a normal day: 5 → 11 alerts across ~50 holdings.
+    **Do not revert to a whitelist** — missing a filing is the cardinal sin here.
   - **`python alerts.py filings-audit`** (new): read-only, no Telegram — lists,
     for every NSE holding, which of today's filings the engine matches. Run it
     anytime to spot-check coverage across the WHOLE portfolio (built after the
