@@ -650,66 +650,71 @@ def run_eod_entries():
         print(f"⚠️ eod risk check failed: {e}")
 
 
-def run_fast_poll(minutes: float = 16.0, interval: int = 60):
-    """Mainboard-only LIVE entry poller (~1-min latency). Computes the 10/21-DMA
-    LEVELS once (cheap history read; they only move EOD), then every `interval`s
-    fetches live prices and runs the same check_* logic against those fixed
-    levels. Runs ~`minutes` then exits; the workflow relaunches it every cron
-    tick so a crash self-heals within one interval. SME names are skipped here
-    (no live feed) and covered by run_eod_entries instead."""
-    import time as _time
-    client = sb()
+def compute_fast_levels(client):
+    """The once-per-day heavy part: 10/21-DMA + peak + 10-week EMA for every
+    MAINBOARD ticker we hold or watch. Returns (levels, wema). Computing this
+    ONCE (not per cycle) is what keeps the per-minute loop from re-downloading
+    history and starting a Yahoo storm. SME names are excluded — they have no
+    live feed and are covered by the evening pass."""
     sme = _sme_ticker_set()
     mainboard = sorted(t for t in _all_entry_tickers(client) if t not in sme)
-    if not mainboard:
-        print("[fast-poll] no mainboard tickers to watch — exiting.")
-        return
-
-    # Levels computed ONCE up front (not per-cycle) — this is what keeps the
-    # per-minute loop from re-downloading history and starting a Yahoo storm.
-    levels, skipped, wema = {}, [], {}
+    levels, wema, skipped = {}, {}, []
     for t in mainboard:
         lv = signals.daily_entry_levels(t)
         if lv:
             levels[t] = lv
         else:
             skipped.append(t)
-        # 10-week EMA level too — also a once-per-launch compute, never per cycle
         w = signals.weekly_ema10(t)
         if w:
             wema[t] = w
     if skipped:
-        print(f"[fast-poll] no daily levels for {len(skipped)}: {skipped} (skipped)")
+        print(f"[levels] no daily levels for {len(skipped)}: {skipped} (skipped)")
+    print(f"[levels] {len(levels)} mainboard tickers ready ({len(wema)} with a 10wEMA)")
+    return levels, wema
+
+
+def fast_cycle(client, levels: dict, wema: dict) -> int:
+    """ONE live pass: fetch quotes, sanity-filter them, and run every live check
+    (entry/add zones, risk stops, 10-week EMA touch). Shared by the GitHub
+    fast-poll job AND the always-on Render worker so the two can never diverge.
+    Returns how many tickers were priced this pass."""
+    # Sanity-filter BEFORE anything acts on these prices — one bogus quote
+    # otherwise fires false stop/entry alerts (see _sane_quotes).
+    quotes = _sane_quotes(_live_quotes(list(levels)), levels)
+    priced = sum(1 for t in levels if quotes.get(t, (None,))[0] is not None)
+    fn = _make_live_price_fn(levels, quotes)
+    check_holding_adds(client, price_fn=fn)
+    check_watchlist_entries(client, price_fn=fn)
+    risk_prices = {t: (quotes.get(t, (None,))[0], lv.get("peak"))
+                   for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
+    check_risk_stops(client, risk_prices)
+    wema_prices = {t: (quotes[t][0], quotes[t][1], w, levels.get(t, {}).get("prev_close"))
+                   for t, w in wema.items() if quotes.get(t, (None,))[0] is not None}
+    check_wema_touch(client, wema_prices)
+    return priced
+
+
+def run_fast_poll(minutes: float = 16.0, interval: int = 60):
+    """GitHub-job form of the live poller: compute levels, then cycle for
+    ~`minutes` and exit (the cron relaunches it, so a crash self-heals).
+    The Render worker runs the same fast_cycle() continuously instead."""
+    import time as _time
+    client = sb()
+    levels, wema = compute_fast_levels(client)
     if not levels:
         print("[fast-poll] no levels computed — exiting.")
         return
-    print(f"[fast-poll] watching {len(levels)} mainboard tickers every "
-          f"{interval}s for ~{minutes:.0f}m: {list(levels)}")
-
+    print(f"[fast-poll] watching {len(levels)} tickers every {interval}s for ~{minutes:.0f}m")
     end = _time.time() + minutes * 60
     cycle = 0
     while _time.time() < end:
         cycle += 1
-        # Sanity-filter BEFORE anything acts on these prices — one bogus quote
-        # otherwise fires false stop/entry alerts (see _sane_quotes).
-        quotes = _sane_quotes(_live_quotes(list(levels)), levels)
-        priced = sum(1 for t in levels if quotes.get(t, (None,))[0] is not None)
-        fn = _make_live_price_fn(levels, quotes)
-        # Reuse the proven, deduped alert logic — just with live prices.
         try:
-            check_holding_adds(client, price_fn=fn)
-            check_watchlist_entries(client, price_fn=fn)
-            # Risk stops on the same live prices + the pre-computed peaks.
-            risk_prices = {t: (quotes.get(t, (None,))[0], lv.get("peak"))
-                           for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
-            check_risk_stops(client, risk_prices)
-            # 10-week EMA touch, same live prices + the pre-computed weekly level
-            wema_prices = {t: (quotes[t][0], quotes[t][1], w, levels.get(t, {}).get("prev_close"))
-                           for t, w in wema.items() if quotes.get(t, (None,))[0] is not None}
-            check_wema_touch(client, wema_prices)
+            priced = fast_cycle(client, levels, wema)
+            print(f"  [fast-poll] cycle {cycle}: {priced}/{len(levels)} priced")
         except Exception as e:
-            print(f"⚠️ [fast-poll] cycle {cycle} check failed: {type(e).__name__}: {e}")
-        print(f"  [fast-poll] cycle {cycle}: {priced}/{len(levels)} priced")
+            print(f"⚠️ [fast-poll] cycle {cycle} failed: {type(e).__name__}: {e}")
         if _time.time() < end:
             _time.sleep(interval)
     print(f"[fast-poll] done after {cycle} cycle(s).")

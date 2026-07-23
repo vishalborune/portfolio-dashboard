@@ -37,6 +37,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `exit_audit.py` | 30/60/90-day post-exit price checks |
 | `corporate_actions.py` | Split/bonus adjustment for bhavcopy prices + unadjusted-gap detector (see House Rule 10) |
 | `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
+| `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours + NSE filings every 3 min + BSE filings every 2h. Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | `*_schema.sql` | One-time Supabase schema additions, already applied |
 
