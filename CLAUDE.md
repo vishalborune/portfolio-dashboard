@@ -260,6 +260,17 @@ break.
   States include EXIT, BE CAUTIOUS, MOMENTUM FADING, MAINTAIN/ADD, BULLISH
   SIGNAL, WAIT/WATCH, INSUFFICIENT DATA (<45wk history). Entries staged:
   10-DMA = tranche 1 (partial), 21-DMA = tranche 2 (final/full position).
+- **Weekly vs index scorecard (23-Jul-2026, Lakshmi's preferred measure)**: the
+  digest now shows, per portfolio, **our week's return (Δunrealised + profit
+  booked that week) ÷ last week's value** vs the index over the SAME dates, and
+  the weekly alpha. **Bar = `WEEKLY_ALPHA_BAR` 0.14 pts** ("what the best fund
+  managers do"): ≥0.14 = must continue ✅, 0–0.14 = under the bar, <0 = behind.
+  WHY it exists: he does not fully trust XIRR because it depends on buy dates he
+  part-guessed — and we measured that (a ±30-day date error swings his XIRR
+  50%→117%; Abinaya's alpha can even flip GREEN→RED). The weekly comparison is
+  **independent of entry dates**, so it's the honest read. Keep BOTH; XIRR stays
+  for the long view. Caveat: it compares snapshot-to-snapshot, so if a holding
+  was unpriced in one week and priced the next, that shows up in the delta.
 - **Profit booking framework**: tiers at +50% / +100% / +150% — digest
   flags when a stock CROSSES a tier this week (not just "is above").
 - **Weekly review habit**: reviews the portfolio Saturday mornings — this

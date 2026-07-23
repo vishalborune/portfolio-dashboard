@@ -1892,6 +1892,88 @@ def _benchmark_xirr(cashflows):
     return _xirr(cashflows + [(date.today(), final_val)])
 
 
+WEEKLY_ALPHA_BAR = 0.14   # Lakshmi 23-Jul-2026: beating the index by 0.14% in a
+                          # WEEK is what the best fund managers manage. At/above
+                          # this = must continue; below = not great.
+
+
+def _realised_between(client, pf: int, start_d, end_d) -> float:
+    """Profit BOOKED by sales in (start_d, end_d]. Part of the week's return:
+    a sale converts unrealised into realised, so the weekly gain must count both
+    or selling a winner would look like the week went backwards."""
+    try:
+        res = (client.table("realised").select("gain_loss, sale_date")
+               .eq("portfolio_id", pf).execute())
+        tot = 0.0
+        for r in (res.data or []):
+            try:
+                d = date.fromisoformat(str(r["sale_date"])[:10])
+            except (ValueError, TypeError):
+                continue
+            if start_d < d <= end_d:
+                tot += float(r.get("gain_loss") or 0)
+        return tot
+    except Exception as e:
+        print(f"(digest: realised-in-week lookup failed for pf {pf}: {e})")
+        return 0.0
+
+
+def _weekly_vs_index(client, pf, prev, val, unreal, today):
+    """Lakshmi's weekly scorecard (23-Jul-2026): how the WEEK went for us vs the
+    Nifty Smallcap index — deliberately independent of XIRR, which depends on the
+    buy dates he part-guessed. Portfolio week return = (change in unrealised +
+    profit booked this week) / last week's value. Index measured over the SAME
+    dates. Returns HTML, or a note when there's no prior snapshot yet."""
+    if not prev or not prev.get("snap_date"):
+        return ("<p style='color:#888'>Weekly vs index: baseline set this week — "
+                "the comparison starts from next week's digest.</p>", None)
+    try:
+        prev_d = date.fromisoformat(str(prev["snap_date"])[:10])
+        prev_val = float(prev.get("current_value") or 0)
+        prev_unreal = float(prev.get("unrealised") or 0)
+        if prev_val <= 0:
+            return ("<p style='color:#888'>Weekly vs index: no prior value to compare.</p>", None)
+
+        booked = _realised_between(client, pf, prev_d, today)
+        gain = (unreal - prev_unreal) + booked
+        pf_ret = gain / prev_val * 100
+
+        series = _benchmark_series()
+        i0 = _level_on(series, prev_d) if series is not None else None
+        i1 = _level_on(series, today) if series is not None else None
+        if not i0 or not i1:
+            return (f"<p>Our week: <b>{pf_ret:+.2f}%</b> "
+                    f"({_fmt_l(gain)}) — index unavailable for comparison</p>", None)
+        idx_ret = (i1 / i0 - 1) * 100
+        alpha = pf_ret - idx_ret
+
+        if alpha >= WEEKLY_ALPHA_BAR:
+            col, verdict = "#16a34a", "beating the index — must continue ✅"
+        elif alpha >= 0:
+            col, verdict = "#d97706", f"ahead, but under the {WEEKLY_ALPHA_BAR}% bar"
+        else:
+            col, verdict = "#dc2626", "behind the index this week"
+        return (
+            f"<table style='width:100%;border-collapse:collapse;font-size:14px'>"
+            f"<tr><td style='padding:3px 0;color:#64748b;width:52%'>Our week "
+            f"(realised + unrealised)</td>"
+            f"<td style='padding:3px 0;font-weight:700'>{pf_ret:+.2f}% "
+            f"<span style='font-weight:400;color:#64748b'>({_fmt_l(gain)})</span></td></tr>"
+            f"<tr><td style='padding:3px 0;color:#64748b'>{_BENCH_LABEL}</td>"
+            f"<td style='padding:3px 0;font-weight:700'>{idx_ret:+.2f}%</td></tr>"
+            f"<tr><td style='padding:3px 0;color:#64748b'>Weekly alpha "
+            f"(bar: {WEEKLY_ALPHA_BAR}%)</td>"
+            f"<td style='padding:3px 0;font-weight:800;color:{col}'>{alpha:+.2f} pts</td></tr>"
+            f"</table>"
+            f"<p style='margin:6px 0 0;color:{col};font-weight:600'>{verdict}</p>"
+            f"<p style='margin:2px 0 0;color:#94a3b8;font-size:11px'>"
+            f"week measured {prev_d.strftime('%d %b')} → {today.strftime('%d %b')}; "
+            f"independent of XIRR / entry dates</p>",
+            {"pf_ret": pf_ret, "idx_ret": idx_ret, "alpha": alpha})
+    except Exception as e:
+        return (f"<p style='color:#888'>Weekly vs index unavailable: {e}</p>", None)
+
+
 def _benchmark_week_move():
     """Index % move over the last ~5 trading days, or None."""
     s = _benchmark_series()
@@ -2022,6 +2104,7 @@ def _digest_for(client, holdings):
     # ---- per-portfolio money numbers + snapshot diffs ----
     pf_sections = []
     detail_by_pf = {}
+    weekly_by_pf = {}          # pf -> {pf_ret, idx_ret, alpha} for the Telegram recap
     for pf in pf_ids:
         try:
             inv = val = 0.0
@@ -2103,6 +2186,11 @@ def _digest_for(client, holdings):
             except Exception:
                 pass
 
+            # Lakshmi's weekly scorecard — the headline he actually judges on,
+            # because unlike XIRR it doesn't depend on the entry dates.
+            weekly_html, weekly_stats = _weekly_vs_index(client, pf, prev, val, unreal, today)
+            weekly_by_pf[pf] = weekly_stats
+
             up = unreal >= 0
             pnl_col = "#16a34a" if up else "#dc2626"
             pf_sections.append(f"""
@@ -2130,6 +2218,13 @@ def _digest_for(client, holdings):
                     &nbsp;<span style="font-weight:400;font-size:13px">{trend_xirr}</span></td>
                 </tr>
               </table>
+              <div style="background:#eef2ff;border:1px solid #c7d2fe;
+                          border-left:4px solid #4338ca;border-radius:8px;
+                          padding:12px 14px;margin:12px 0">
+                <div style="font-size:14px;font-weight:800;color:#3730a3;
+                            margin-bottom:6px">📅 THIS WEEK vs the index</div>
+                {weekly_html}
+              </div>
               <div style="margin-top:8px">{_bench_html(xirr, bench)}</div>
               {tiers_html}{conc_html}
             </div>""")
@@ -2275,6 +2370,13 @@ def _digest_for(client, holdings):
                 x = f" · XIRR {float(s['xirr']):.1f}%" if s.get("xirr") is not None else ""
                 tg.append(f"<b>{PF_NAME.get(pf, pf)}</b>: {_fmt_l(s['current_value'])} "
                           f"({float(s['unrealised'])/float(s['invested'])*100:+.1f}%){x}")
+            # Lakshmi's weekly scorecard — the line he judges on
+            wk = weekly_by_pf.get(pf)
+            if wk:
+                icon = "✅" if wk["alpha"] >= WEEKLY_ALPHA_BAR else (
+                    "🟠" if wk["alpha"] >= 0 else "🔴")
+                tg.append(f"   {icon} week: <b>{wk['pf_ret']:+.2f}%</b> vs index "
+                          f"{wk['idx_ret']:+.2f}% → alpha <b>{wk['alpha']:+.2f} pts</b>")
         if exits:
             tg.append("🔴 EXIT: " + ", ".join(exits))
         if dead_money:
