@@ -332,7 +332,8 @@ def check_holding_adds(client, price_fn=None):
 # ---------------------------------------------------------------------------
 
 STOP_FROM_COST = 0.10   # alert if a holding is >=10% below average cost (loss stop)
-STOP_FROM_PEAK = 0.17   # ...or >=17% off its ~6-month peak (trailing stop)
+STOP_FROM_PEAK = 0.15   # ...or >=15% off its ~6-month peak (trailing stop; Lakshmi
+                        # tightened 17%->15% on 23-Jul-2026 to exit pullbacks sooner)
 
 
 def _grp_tag(grp, pfs):
@@ -345,7 +346,7 @@ def _grp_tag(grp, pfs):
 
 def check_risk_stops(client, prices: dict):
     """Alert when a HELD stock is >=10% below cost (loss stop, per each holder's
-    OWN cost) or >=17% off its ~6-month peak (trailing stop). `prices` =
+    OWN cost) or >=15% off its ~6-month peak (trailing stop). `prices` =
     {ticker: (cmp, peak)} — caller passes LIVE prices (fast poller, ~1 min) or
     EOD closes (evening). Dedup once/stock/group/day/kind via entry_alert_log
     (kinds STOP10 / PEAK17). Complements the flowchart EXIT, doesn't replace it."""
@@ -392,6 +393,8 @@ def check_risk_stops(client, prices: dict):
                     f"CMP ₹{cmp_:,.2f}, ≥{int(STOP_FROM_COST*100)}% below {whose}")
                 to_log.append((ticker, grp, "STOP10"))
             # Trailing stop — off the recent peak (price-based, same for all holders)
+            # dedup key "PEAK17" is a STABLE historical string, independent of the
+            # threshold value — don't rename it when the % changes (avoids re-alerts).
             if peak and cmp_ <= peak * (1 - STOP_FROM_PEAK) and (ticker, grp, "PEAK17") not in already:
                 dd = (cmp_ / peak - 1) * 100
                 msgs_by_group.setdefault(grp, []).append(

@@ -189,7 +189,7 @@ switch sources without disclosure.
   22-Jul-2026: "how far from the zone" is the decision; the rupee value isn't).
 - **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires
   when a HOLDING is ≥10% below cost (loss stop, per each holder's own cost) OR
-  ≥17% off its ~6-month peak (trailing stop; peak = `signals.daily_entry_levels`
+  ≥15% off its ~6-month peak (trailing stop, tightened from 17% 23-Jul-2026; peak = `signals.daily_entry_levels`
   "peak", max close over PEAK_LOOKBACK=126d). Rides the SAME cadence as entries:
   mainboard live (~1 min) in the fast poller, SME + backstop in the evening eod
   pass. Dedup kinds STOP10 / PEAK17 in entry_alert_log. The fast exit-side signal
