@@ -263,9 +263,22 @@ break.
     ones. Measured effect on a normal day: 5 → 11 alerts across ~50 holdings.
     **Do not revert to a whitelist** — missing a filing is the cardinal sin here.
   - **`python alerts.py filings-audit`** (new): read-only, no Telegram — lists,
-    for every NSE holding, which of today's filings the engine matches. Run it
-    anytime to spot-check coverage across the WHOLE portfolio (built after the
-    one-example-at-a-time problem — this is the scalable check).
+    for every NSE holding+watchlist name, which of today's filings the engine
+    matches and how it treats each (⛔ SUPPRESSED / ⭐ starred / • alerts). Kept
+    in lock-step with run_filings (both scope holdings+watchlist, both label via
+    ROUTINE_KEYWORDS). Run it anytime to spot-check coverage — the scalable check.
+  - **Hardening (23-Jul-2026, second review pass):** (a) all HTML-interpolated
+    fields are `html.escape`d incl. the results-template `company`/`period` and
+    the generic gist — an unescaped `&` (e.g. Sathlokhar "E&C") would 400 the
+    whole Telegram chunk, and with write-after-send that filing would retry
+    forever + burn summary calls. (b) `no_audience` fingerprints (Vishal-only
+    stocks) are NOT marked seen, so if Lakshmi buys one while the filing is still
+    live it still alerts. (c) `_fetch_all_rows` paginates the FULL-read tables
+    (transactions→XIRR, realised→FY P&L) past the 1000-row cap — truncating
+    those would be a House-#1→#2 wrong-number bug (not biting yet: ~90–135
+    rows/pf). `filings_seen` dedup still uses newest-1000 via `_load_seen`.
+    KNOWN LEFT: `trade_journal` read uses `.in_()` (31 rows, low stakes) — not
+    paginated yet.
   - **Filings cadence (split by exchange):** NSE announcements run **every 15
     min** (`filings-nse`, `run_filings(nse_only=True)`, 08:30–23:15 IST) — the
     archives host is friendly, safe to poll often. BSE stays on the **2-hourly

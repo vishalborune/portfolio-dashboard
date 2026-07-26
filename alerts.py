@@ -996,7 +996,9 @@ def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) 
             f"output exactly: UNREADABLE"))
         if not out or out.upper().startswith("UNREADABLE"):
             return ""
-        return out[:600]
+        # Generic gist is raw model prose (no intended HTML) — escape it so a
+        # stray '&'/'<' can't 400 the Telegram chunk (parse_mode=HTML).
+        return html.escape(out[:600])
     except Exception as e:
         print(f"  [filings] generic summary failed for {company}: {e}")
         return ""
@@ -1122,8 +1124,12 @@ def _format_results(company: str, data: dict) -> str:
     rows = [r for r in rows if r]
     if not rows:
         return ""
-    period = data.get("period_current") or "latest quarter"
-    header = f"📊 <b>{company}</b> — {basis} results, {period}"
+    # Escape the model-derived / free-text bits (company can contain '&' e.g.
+    # 'Sathlokhar E&C'; period is straight from the model's JSON) — an unescaped
+    # & or < 400s the whole Telegram chunk, and with write-after-send that filing
+    # would then retry forever and burn summary calls. The static labels/tags stay.
+    period = html.escape(str(data.get("period_current") or "latest quarter"))
+    header = f"📊 <b>{html.escape(str(company))}</b> — {basis} results, {period}"
     footer = "<i>EBITDA = PBT + finance costs + depreciation</i>"
     return "\n".join([header] + rows + [footer])
 
@@ -1163,6 +1169,26 @@ ROUTINE_KEYWORDS = [
 
 def _fingerprint(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:32]
+
+
+def _fetch_all_rows(client, table, columns, order=None, **eq):
+    """Fetch ALL rows, paginating past Supabase's silent 1000-row cap. Use for
+    tables we must read in FULL for a correct aggregate — transactions (XIRR),
+    realised (FY P&L), trade_journal. Truncating these would produce a WRONG
+    number, i.e. House Rule #1 causing a House Rule #2 outcome. (Contrast
+    _load_seen, which only needs the newest 1000 fingerprints for dedup.)"""
+    out, start, page = [], 0, 1000
+    while True:
+        q = client.table(table).select(columns)
+        for k, v in eq.items():
+            q = q.eq(k, v)
+        if order:
+            q = q.order(order)
+        rows = q.range(start, start + page - 1).execute().data or []
+        out += rows
+        if len(rows) < page:
+            return out
+        start += page
 
 
 def _load_seen(client) -> set:
@@ -1479,9 +1505,12 @@ def run_filings(nse_only: bool = False):
                 no_audience.add(fp)           # e.g. a Vishal-only stock
 
     # ---- dispatch; a fingerprint is SEEN only once it actually delivered ----
-    delivered = set(no_audience)              # nothing to send == handled
+    # NOTE: no_audience fingerprints are deliberately NOT marked seen. A stock
+    # only Vishal holds (opted out) has no send today, but if Lakshmi buys it
+    # while the filing is still in the feed we want it to alert then — so we
+    # leave it un-recorded (re-considered each cycle, cheap: no summary, no send).
+    delivered = set()
     header, budget = "🗞 <b>Exchange filings</b>\n\n", 3500
-    dispatched = 0
     for g, items in alerts_by_group.items():
         chat = chat_id_for_group(g)
         if not chat:
@@ -1495,7 +1524,6 @@ def run_filings(nse_only: bool = False):
             chunk.append(body); chunk_fps.append(fp); clen += len(body) + 2
         if chunk and send_telegram(header + "\n\n".join(chunk), chat_id=chat):
             delivered.update(chunk_fps)
-        dispatched += len(items)
 
     written = 0
     for fp in delivered:
@@ -1509,43 +1537,55 @@ def run_filings(nse_only: bool = False):
             written += 1
         except Exception as ex:
             print(f"⚠️ filings_seen write failed for {sym}: {ex}")
-    print(f"[filings] {len(scope)} names scoped · {dispatched} alert(s) dispatched · "
-          f"{written} fingerprint(s) recorded"
-          + ("  (nothing new)" if not fp_meta else ""))
+    # honest counts: matched (new), actually delivered, recorded (House Rule #3)
+    print(f"[filings] {len(scope)} names scoped · {len(fp_meta)} new matched · "
+          f"{len(delivered)} delivered · {written} recorded")
 
 
 def run_filings_audit():
-    """Read-only diagnostic (NO Telegram): for every NSE holding, show which of
-    today's filings the engine matches. Built 21-Jul-2026 after the one-example-
-    at-a-time problem — run this anytime to spot-check filing coverage across the
-    WHOLE portfolio. Flags any matched item whose company name AND link-symbol
-    both differ from the holding (would signal a false-positive match)."""
+    """Read-only diagnostic (NO Telegram): show which of today's NSE filings the
+    engine matches for each NSE stock we HOLD or WATCH. Kept in lock-step with
+    run_filings (23-Jul-2026): same holdings+watchlist scope, and labels each
+    filing exactly as the engine would treat it — ⛔ SUPPRESSED (in
+    ROUTINE_KEYWORDS, the ONLY thing dropped now) / ⭐ MATERIAL (starred) / •
+    ALERTS. Run it anytime to answer 'why didn't X alert?' across the portfolio."""
     client = sb()
-    holdings = get_holdings(client)
     feed = fetch_nse_rss()
-    print(f"[filings-audit] {len(feed)} NSE announcements in today's feed\n")
-    seen, filed, suspicious = set(), 0, 0
-    for _, h in holdings.iterrows():
-        name = str(h["stock_name"])
-        m = re.search(r"\(XNSE:([^)]+)\)", name)
-        if not m:
-            continue
-        sym = m.group(1).strip()
-        if sym in seen:
-            continue
-        seen.add(sym)
-        company = re.sub(r"\s*\(XNSE:[^)]+\)\s*$", "", name).strip()
+    # holdings + watchlist, NSE only, one entry per symbol (mirror run_filings)
+    scope = {}
+    for _, h in get_holdings(client).iterrows():
+        m = re.search(r"\(XNSE:([^)]+)\)", str(h["stock_name"]))
+        if m:
+            scope.setdefault(m.group(1).strip(),
+                             re.sub(r"\s*\(XNSE:[^)]+\)\s*$", "", str(h["stock_name"])).strip())
+    try:
+        for r in (client.table("watchlist").select("stock_name").execute().data or []):
+            m = re.search(r"\(XNSE:([^)]+)\)", str(r.get("stock_name")))
+            if m:
+                scope.setdefault(m.group(1).strip(),
+                                 re.sub(r"\s*\(XNSE:[^)]+\)\s*$", "", str(r.get("stock_name"))).strip())
+    except Exception:
+        pass
+    print(f"[filings-audit] {len(feed)} NSE announcements in today's feed; "
+          f"{len(scope)} NSE names held/watched\n")
+    filed = 0
+    for sym, company in sorted(scope.items()):
         anns = fetch_nse_announcements(sym, company)
         if not anns:
             continue
         filed += 1
-        print(f"  {sym} — {short_name(name)}: {len(anns)} filing(s)")
-        cn = _norm_name(company)
-        for a in anns[:5]:
-            material = any(k in a["headline"].lower() for k in MATERIAL_KEYWORDS)
-            print(f"     [{'MATERIAL' if material else 'routine '}] {a['date']} · {a['headline'][:72]}")
-    print(f"\n[filings-audit] {filed} NSE holdings have filings in today's feed. "
-          f"BSE-scrip holdings use the separate per-code path (not this feed).")
+        print(f"  {sym} — {short_name(company)}: {len(anns)} filing(s)")
+        for a in anns[:6]:
+            hl = a["headline"].lower()
+            if any(k in hl for k in ROUTINE_KEYWORDS):
+                tag = "⛔ SUPPRESSED"          # the ONLY thing dropped now
+            elif any(k in hl for k in MATERIAL_KEYWORDS):
+                tag = "⭐ ALERTS (starred)"
+            else:
+                tag = "•  ALERTS"
+            print(f"     [{tag}] {a['date']} · {a['headline'][:70]}")
+    print(f"\n[filings-audit] {filed} NSE names have filings in today's feed. "
+          f"BSE-scrip names use the separate per-code path (not this feed).")
 
 
 # ---------------------------------------------------------------------------
@@ -1796,10 +1836,11 @@ def _xirr(cashflows):
 def _pf_cashflows(client, pf: int):
     """(date, amount) list from the transactions table for one portfolio.
     Buys negative, sells positive."""
-    res = client.table("transactions").select(
-        "transaction_type, amount, transaction_date").eq("portfolio_id", pf).execute()
+    rows = _fetch_all_rows(client, "transactions",
+                           "transaction_type, amount, transaction_date",
+                           order="transaction_date", portfolio_id=pf)
     out = []
-    for r in (res.data or []):
+    for r in rows:
         try:
             d = date.fromisoformat(str(r["transaction_date"])[:10])
             amt = float(r["amount"] or 0)
@@ -1968,10 +2009,10 @@ def _realised_between(client, pf: int, start_d, end_d) -> float:
     a sale converts unrealised into realised, so the weekly gain must count both
     or selling a winner would look like the week went backwards."""
     try:
-        res = (client.table("realised").select("gain_loss, sale_date")
-               .eq("portfolio_id", pf).execute())
+        res_rows = _fetch_all_rows(client, "realised", "gain_loss, sale_date",
+                                   portfolio_id=pf)
         tot = 0.0
-        for r in (res.data or []):
+        for r in res_rows:
             try:
                 d = date.fromisoformat(str(r["sale_date"])[:10])
             except (ValueError, TypeError):
@@ -2262,8 +2303,8 @@ def _digest_for(client, holdings):
             fy_start, _fy_end, fy_label = signals.fy_bounds(today)
             fy_realised = 0.0
             try:
-                for rr in (client.table("realised").select("gain_loss, sale_date")
-                           .eq("portfolio_id", pf).execute().data or []):
+                for rr in _fetch_all_rows(client, "realised", "gain_loss, sale_date",
+                                          portfolio_id=pf):
                     try:
                         sdd = date.fromisoformat(str(rr["sale_date"])[:10])
                     except (ValueError, TypeError):
