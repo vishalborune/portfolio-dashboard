@@ -1152,7 +1152,7 @@ def tab_watchlist():
         # Lakshmi 22-Jul-2026: show the % DISTANCE to the DMAs, not the ₹ levels —
         # "how far am I from the entry zone" is the decision, the rupee value isn't.
         cols = ["Short Name", "Ticker", "CMP", "Entry Advice",
-                "% vs 10DMA", "% vs 21DMA", "Day Change %",
+                "% vs 10DMA", "% vs 21DMA", "52W High", "% vs 52WH", "Day Change %",
                 "target_buy_price", "Distance to Target %", "notes", "added_by"]
         cols = [c for c in cols if c in wl_view.columns]
         styled = (
@@ -1162,6 +1162,7 @@ def tab_watchlist():
                 "CMP": "₹{:,.2f}", "Day Change %": "{:+.2f}%",
                 "Target Buy": "₹{:,.2f}", "Distance to Target %": "{:+.2f}%",
                 "% vs 10DMA": "{:+.1f}%", "% vs 21DMA": "{:+.1f}%",
+                "52W High": "₹{:,.2f}", "% vs 52WH": "{:+.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)

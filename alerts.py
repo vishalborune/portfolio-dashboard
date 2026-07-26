@@ -24,6 +24,7 @@ TELEGRAM_CHAT_ID, and for digest: RESEND_API_KEY, DIGEST_EMAILS.
 import os
 import re
 import sys
+import html
 import hashlib
 from datetime import date, datetime, timedelta
 
@@ -156,9 +157,9 @@ def check_watchlist_entries(client, price_fn=None):
       (2nd & final tranche) per Lakshmi's staged-entry system
     - TARGET alert when CMP reaches the stored target buy price
     Dedup: once per stock per group per day per kind (entry_alert_log).
-    Known limit: entry math runs off Yahoo daily bars, so SME-tracked
-    watchlist names get skipped silently (same Yahoo blind spot as
-    everywhere; bhavcopy-based entry math is a future add if needed)."""
+    Entry math is bhavcopy-first (signals._fetch_daily), so SME watchlist names
+    ARE covered now — off EOD closes in the evening pass, since they have no live
+    feed (the old Yahoo-only 'SME skipped' limitation is gone, 21-Jul-2026)."""
     rows = client.table("watchlist").select("*").execute().data or []
     if not rows:
         return
@@ -1161,6 +1162,20 @@ def _fingerprint(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:32]
 
 
+def _load_seen(client) -> set:
+    """Already-alerted fingerprints. filings_seen is the ONE table that grows
+    without bound, so this MUST respect the 1000-row cap (House Rule #1): order
+    by id DESC so the newest fingerprints are always returned and only ancient
+    ones (which can't collide with a filing from the last 3 days) fall off."""
+    try:
+        rows = (client.table("filings_seen").select("fingerprint")
+                .order("id", desc=True).limit(1000).execute().data or [])
+        return {r["fingerprint"] for r in rows}
+    except Exception as e:
+        print(f"  (filings_seen load failed: {e})")
+        return set()
+
+
 # BSE's announcements API needs the NUMERIC scrip code -- these XBOM
 # symbols aren't codes, so queries with them can never match ("No Record
 # Found!", caught live 19-Jul-2026). Codes verified during the bhavcopy
@@ -1375,100 +1390,125 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
 
 
 def run_filings(nse_only: bool = False):
-    """Exchange-announcement alerts. nse_only=True skips the BSE per-scrip fetch
-    — used by the 15-min fast filings job so we hammer only NSE's friendly
-    archives host, NOT BSE's bot-hostile API (which shares the runner IP with the
-    daily SME bhavcopy and must not get throttled). BSE filings ride the slower
-    2-hourly full run instead."""
+    """Exchange-announcement alerts for stocks we HOLD or WATCH. nse_only=True
+    skips the BSE per-scrip fetch (used by the 3-min fast path so only NSE's
+    friendly host is polled; BSE rides the 2-hourly full run to protect its
+    bot-hostile API, which shares the runner IP with the daily SME bhavcopy).
+
+    Scoping (rewritten 23-Jul-2026): ONE entry per symbol, unioning EVERY holder
+    AND watcher group. The old code built the audience from the first matching
+    holdings row only and skipped the rest, so a stock held by two people under
+    even a slightly different name string ("Ltd" vs "Limited") alerted only
+    whoever's row came first — silently dropping the other's filing and writing
+    the seen-fingerprint so it never fired again (the real Solara/Kwality miss).
+    Watchlist is now covered the same way (Lakshmi, 23-Jul-2026).
+
+    Delivery: a fingerprint is written to filings_seen ONLY after its Telegram
+    send actually succeeds — previously it was written mid-loop before dispatch,
+    so any failed/opted-out send meant permanent loss. Headlines/URLs are
+    HTML-escaped (parse_mode=HTML) so an '&' in a name like 'E&C' can't 400 the
+    whole batch."""
     client = sb()
     holdings = get_holdings(client)
-    if holdings.empty:
+    try:
+        watch = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    except Exception:
+        watch = []
+
+    scope = {}   # sym -> {exch, company, name, groups:set}
+    def _add(nm, pf):
+        m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(nm))
+        if not m:
+            return
+        exch, sym = m.group(1), m.group(2).strip()
+        e = scope.setdefault(sym, {
+            "exch": exch,
+            "company": re.sub(r"\s*\(X(?:NSE|BOM):[^)]+\)\s*$", "", str(nm)).strip(),
+            "name": short_name(nm), "groups": set()})
+        e["groups"].add(PF_GROUP.get(int(pf or 1), "vishal"))
+    for _, h in holdings.iterrows():
+        _add(h["stock_name"], h.get("portfolio_id", 1))
+    for r in watch:
+        _add(r.get("stock_name"), r.get("portfolio_id", 1))
+    if not scope:
         return
 
-    seen = {r["fingerprint"]
-            for r in (client.table("filings_seen").select("fingerprint").execute().data or [])}
-
-    alerts_by_group = {}
-    seen_syms = set()
+    seen = _load_seen(client)
+    esc = html.escape
+    cutoff = (date.today() - timedelta(days=3)).isoformat()
+    alerts_by_group = {}      # group -> [(fp, body)]
+    fp_meta = {}              # fp -> (sym, headline, date)
+    no_audience = set()       # matched, but no Telegram-enabled group wants it
     summaries_done = 0
-    for _, h in holdings.iterrows():
-        name = h["stock_name"]
-        m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(name))
-        if not m:
-            continue
-        exch, sym = m.group(1), m.group(2).strip()
-        if nse_only and exch != "XNSE":
-            continue          # BSE handled by the slower full run (protect its API)
-        holder_groups = {PF_GROUP.get(int(hh.get("portfolio_id", 1)), "vishal")
-                          for _, hh in holdings.iterrows()
-                          if str(hh["stock_name"]) == str(name)}
-        if sym in seen_syms:
-            continue
-        seen_syms.add(sym)
-        company_full = re.sub(r"\s*\(X(?:NSE|BOM):[^)]+\)\s*$", "", str(name)).strip()
-        anns = (fetch_nse_announcements(sym, company_full) if exch == "XNSE"
-                else fetch_bse_announcements(sym))
 
-        cutoff = (date.today() - timedelta(days=3)).isoformat()
+    for sym, e in scope.items():
+        if nse_only and e["exch"] != "XNSE":
+            continue
+        anns = (fetch_nse_announcements(sym, e["company"]) if e["exch"] == "XNSE"
+                else fetch_bse_announcements(sym))
+        enabled = [g for g in e["groups"] if g in TELEGRAM_ALERT_GROUPS]
         for a in anns:
             if not a["headline"] or (a["date"] and a["date"] < cutoff):
                 continue
-            headline_l = a["headline"].lower()
-            if any(k in headline_l for k in ROUTINE_KEYWORDS):
-                continue                      # housekeeping — the ONLY thing we drop
-            starred = any(k in headline_l for k in MATERIAL_KEYWORDS)
+            hl = a["headline"].lower()
+            if any(k in hl for k in ROUTINE_KEYWORDS):
+                continue                      # housekeeping — the ONLY thing dropped
             fp = _fingerprint(sym, a["headline"], a["date"])
-            if fp in seen:
+            if fp in seen or fp in fp_meta:
                 continue
-            # ScoutQuest-style gist (17-Jul-2026): summarize the PDF when
-            # possible; silently fall back to headline-only otherwise.
+            starred = any(k in hl for k in MATERIAL_KEYWORDS)
+            # Only spend summary tokens on filings that will actually be sent.
             gist = ""
-            if summaries_done < MAX_SUMMARIES_PER_RUN:
-                gist = summarize_filing(short_name(name), a["headline"], a["url"])
+            if enabled and summaries_done < MAX_SUMMARIES_PER_RUN:
+                gist = summarize_filing(e["name"], a["headline"], a["url"])
                 if gist:
                     summaries_done += 1
-            body = (f"{'⭐📢' if starred else '📢'} <b>{short_name(name)}</b>: {a['headline'][:200]}"
-                    + (f"\n\n{gist}" if gist else "")
-                    + f"\n{a['date']} · <a href=\"{a['url']}\">filing</a>")
-            for g in holder_groups:
-                alerts_by_group.setdefault(g, []).append(body)
-            client.table("filings_seen").insert({
-                "fingerprint": fp, "ticker": sym,
-                "headline": a["headline"][:300], "filing_date": a["date"] or None,
-            }).execute()
-            seen.add(fp)
+            body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b>: "
+                    f"{esc(a['headline'][:200])}"
+                    + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
+                    + f"\n{esc(a['date'] or '')} · "
+                    f"<a href=\"{esc(a['url'] or '', quote=True)}\">filing</a>")
+            fp_meta[fp] = (sym, a["headline"], a["date"])
+            if enabled:
+                for g in enabled:
+                    alerts_by_group.setdefault(g, []).append((fp, body))
+            else:
+                no_audience.add(fp)           # e.g. a Vishal-only stock
 
-    total = 0
-    for g, alerts in alerts_by_group.items():
-        if g not in TELEGRAM_ALERT_GROUPS:
-            continue
+    # ---- dispatch; a fingerprint is SEEN only once it actually delivered ----
+    delivered = set(no_audience)              # nothing to send == handled
+    header, budget = "🗞 <b>Exchange filings</b>\n\n", 3500
+    dispatched = 0
+    for g, items in alerts_by_group.items():
         chat = chat_id_for_group(g)
         if not chat:
+            continue                          # can't deliver -> retry next run
+        chunk, clen, chunk_fps = [], len(header), []
+        for fp, body in items:
+            if chunk and clen + len(body) + 2 > budget:
+                if send_telegram(header + "\n\n".join(chunk), chat_id=chat):
+                    delivered.update(chunk_fps)
+                chunk, clen, chunk_fps = [], len(header), []
+            chunk.append(body); chunk_fps.append(fp); clen += len(body) + 2
+        if chunk and send_telegram(header + "\n\n".join(chunk), chat_id=chat):
+            delivered.update(chunk_fps)
+        dispatched += len(items)
+
+    written = 0
+    for fp in delivered:
+        if fp not in fp_meta:
             continue
-        # Chunked dispatch (19-Jul-2026): pack alerts into as many messages
-        # as needed, budgeted by CHARACTERS not count. Replaces a [:15] cap
-        # that silently dropped overflow on cluster days (results season),
-        # and fixes a worse latent bug: Telegram rejects messages over
-        # 4096 chars outright -- with AI gists at up to ~800 chars each,
-        # a single capped message could have exceeded that and lost ALL
-        # of the day's filing alerts at once.
-        header = "🗞 <b>Exchange filings</b>\n\n"
-        budget = 3500
-        chunk = []
-        chunk_len = len(header)
-        for a in alerts:
-            if chunk and chunk_len + len(a) + 2 > budget:
-                send_telegram(header + "\n\n".join(chunk), chat_id=chat)
-                chunk, chunk_len = [], len(header)
-            chunk.append(a)
-            chunk_len += len(a) + 2
-        if chunk:
-            send_telegram(header + "\n\n".join(chunk), chat_id=chat)
-        total += len(alerts)
-    if total:
-        print(f"Sent {total} filing alert(s).")
-    else:
-        print("No new material filings.")
+        sym, headline, d = fp_meta[fp]
+        try:
+            client.table("filings_seen").insert({
+                "fingerprint": fp, "ticker": sym,
+                "headline": headline[:300], "filing_date": d or None}).execute()
+            written += 1
+        except Exception as ex:
+            print(f"⚠️ filings_seen write failed for {sym}: {ex}")
+    print(f"[filings] {len(scope)} names scoped · {dispatched} alert(s) dispatched · "
+          f"{written} fingerprint(s) recorded"
+          + ("  (nothing new)" if not fp_meta else ""))
 
 
 def run_filings_audit():
@@ -1626,8 +1666,7 @@ def run_deals():
         if d["scrip"] in bse_scope:
             matched.append((bse_scope[d["scrip"]], d["scrip"], d))
 
-    seen = {r["fingerprint"] for r in
-            (client.table("filings_seen").select("fingerprint").execute().data or [])}
+    seen = _load_seen(client)     # capped query (House Rule #1)
     by_group, to_store = {}, []
     for e, key, d in matched:
         fp = _fingerprint("DEAL", d["kind"], key, d["date"], d["client"], d["side"], str(d["qty"]))

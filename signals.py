@@ -411,6 +411,8 @@ def daily_entry_levels(ticker: str) -> dict | None:
         # computed here so the fast poller reuses this one daily fetch (no extra
         # per-minute history download).
         "peak": float(close.tail(PEAK_LOOKBACK).max()),
+        # 52-week high (close-based; ~252 trading days). Reuses the same fetch.
+        "high_52w": float(close.tail(252).max()),
     }
 
 
@@ -462,13 +464,17 @@ def daily_entry_state(ticker: str) -> dict | None:
     lv = daily_entry_levels(ticker)
     if not lv:
         return None
-    return classify_entry_zone(ticker, lv["ref_close"], lv["ref_low"],
-                               lv["ema10"], lv["ema21"])
+    d = classify_entry_zone(ticker, lv["ref_close"], lv["ref_low"],
+                            lv["ema10"], lv["ema21"])
+    hi = lv.get("high_52w")
+    d["52W High"] = round(hi, 2) if hi else None
+    d["% vs 52WH"] = round((lv["ref_close"] / hi - 1) * 100, 1) if hi else None
+    return d
 
 
 def entry_states_for_watchlist(tickers: tuple) -> "pd.DataFrame":
     _cols = ["Ticker", "CMP (d)", "10DMA", "21DMA", "% vs 10DMA", "% vs 21DMA",
-             "Entry Zone", "Entry Advice"]
+             "Entry Zone", "Entry Advice", "52W High", "% vs 52WH"]
     if not tickers:
         return pd.DataFrame(columns=_cols)
     rows = [r for t in tickers if (r := daily_entry_state(t))]

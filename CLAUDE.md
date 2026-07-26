@@ -15,9 +15,11 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 - **DB**: Supabase (Postgres). **KNOWN GOTCHA: silent 1,000-row query cap.**
   Always query `ORDER BY ... DESC` for time-series data so the cap trims
   history, never recent data. Never assume an ascending query is complete.
-- **Hosting**: Render, two Web Services from the same repo, distinguished by
-  `APP_TENANT` env var ("vishal" / "lakshmi"). Free tier — watch for
-  memory/perf limits (see Known Issues).
+- **Hosting**: Render — TWO Streamlit Web Services from the same repo (distinguished
+  by `APP_TENANT` env var "vishal" / "lakshmi") PLUS one **Background Worker**
+  (`worker.py`, added 23-Jul-2026) that is now the PRIMARY runtime for live alerts
+  + filings. Web services on free tier (watch memory/perf); the worker is Starter
+  (~$7/mo) because free workers sleep.
 - **CI/CD**: GitHub Actions, single workflow `.github/workflows/alerts.yml`
 - **App**: Streamlit (`app.py`), Python throughout
 - **Alerting**: Telegram (bot + group chat), email via Resend
@@ -29,6 +31,10 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 |---|---|
 | `app.py` | Streamlit dashboard — holdings, watchlist, journal, fundamentals |
 | `db.py` | All Supabase reads/writes |
+| `notify.py` | Telegram + email (Resend) delivery. `send_telegram` RETURNS False on failure (doesn't raise) — callers must check it. Honors `ALERTS_DRY_RUN`. |
+| `xirr.py` | XIRR (money-weighted return) for the dashboard/digest |
+| `backtest.py` | Offline flowchart backtest helper (not in any scheduled job) |
+| `app_lakshmi.py` | Tiny entry shim for the lakshmi tenant |
 | `signals.py` | Weekly EMA flowchart states, entry-zone (DMA) math |
 | `alerts.py` | The alert engine — states, volume spikes, watchlist entries, filings, digest |
 | `bhavcopy.py` | Official NSE/BSE daily price files — the Yahoo-blind-spot fix |
@@ -39,7 +45,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
 | `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours + NSE filings every 3 min + BSE filings every 2h. Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
-| `*_schema.sql` | One-time Supabase schema additions, already applied |
+| ~~`*_schema.sql`~~ | (Historical — schema was applied to Supabase directly; no `.sql` files are committed in the repo.) |
 
 ## THE CORE HOUSE RULES (learned the hard way — do not violate)
 1. **Yahoo Finance is unreliable for: SME/Emerge stocks, most indices, and
@@ -97,6 +103,15 @@ stock BOTH Lakshmi and Abinaya hold gets ONE Telegram message tagged
 `[Both]`, not two. Dedup (state changes, volume spikes, entry zones, filings)
 is always keyed to include portfolio/group scope — never just ticker alone,
 or one person's alert can suppress another's.
+**Telegram routing: only `TELEGRAM_ALERT_GROUPS = {"lakshmi"}` receives pushes**
+(alerts.py) — Vishal (portfolio 1, "vishal" group) opted OUT; his data still shows
+on his dashboard and he can get the email digest, but no Telegram. So an alert
+scoped only to the "vishal" group is computed then dropped at the send gate.
+**This is exactly why filings must union ALL holders' groups per symbol** — a
+stock held by both Vishal and Lakshmi must not be scoped to {vishal} alone (that
+was the 23-Jul filings bug: Vishal's holdings row processed first → Lakshmi
+silently got nothing). Every alert path aggregates per (group, ticker); run_filings
+was the one that regressed and is now fixed.
 
 ## Known SME/BSE-only tickers requiring bhavcopy (not Yahoo)
 `bhavcopy.py`'s `SME_STOCKS` dict is the single source of truth. Currently
@@ -131,7 +146,19 @@ which is the conservative/safe direction. The email always labels which
 benchmark source won (exact index / HDFC ETF / MO ETF) — never silently
 switch sources without disclosure.
 
-## Schedule (`.github/workflows/alerts.yml`)
+## Schedule
+> **PRIMARY RUNTIME IS `worker.py` ON RENDER (23-Jul-2026).** Live checks every 60s
+> (market hours) + NSE filings every 3 min + BSE filings every 2h (08:30–23:00 IST)
+> run on the always-on worker, because GitHub's scheduler dropped whole mornings.
+> The GitHub Actions crons below still exist as a BACKSTOP + the nightly data jobs;
+> dedup (entry_alert_log / filings_seen) means worker + Actions can't double-alert.
+> Actual GitHub cron times (converted from `.github/workflows/alerts.yml`, off-peak
+> minutes to dodge lag): states ~09:12 & 09:42 then hourly to 15:12 IST; filings-nse
+> every 15 min 08:38–22:23; filings-full (incl BSE) every 2h 10:10–22:10; deals 21:15;
+> eod-entries 20:20; bhavcopy 20:00; exit-audit 20:30; calendar Mon 09:00; digest Fri 21:00.
+> Dispatch tick-boxes: bhavcopy-backfill, delivery-backfill, index-backfill,
+> send_digest_now, run_filings_now, run_symbol_check, run_fast_poll_now, dry_run.
+
 > **GitHub scheduler caveat (learned 22-Jul-2026):** Actions cron is best-effort —
 > runs get DELAYED or DROPPED at high-load minutes (`:00/:15/:30/:45` and the top
 > of the hour). Alerts once landed at 11:15 instead of 09:15 because of this. All
