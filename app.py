@@ -649,6 +649,13 @@ def compute_kpis(enriched: pd.DataFrame, realised: pd.DataFrame) -> dict:
     unrealised_pct = (unrealised / invested * 100) if invested else 0
     day_pnl = enriched["Day P&L"].sum() if not enriched.empty else 0
     realised_total = realised["gain_loss"].sum() if (not realised.empty and "gain_loss" in realised.columns) else 0
+    # YTD realised on the Indian FY (1 Apr–31 Mar), auto-resets each April.
+    realised_fy = 0.0
+    fy_start, _fy_end, fy_label = signals.fy_bounds()
+    fy_to = now_ist().date()          # "to date" — never count future-dated sales
+    if not realised.empty and {"gain_loss", "sale_date"} <= set(realised.columns):
+        sd = pd.to_datetime(realised["sale_date"], errors="coerce").dt.date
+        realised_fy = float(realised.loc[(sd >= fy_start) & (sd <= fy_to), "gain_loss"].sum())
     return {
         "invested": float(invested),
         "current": float(current),
@@ -656,6 +663,8 @@ def compute_kpis(enriched: pd.DataFrame, realised: pd.DataFrame) -> dict:
         "unrealised_pct": float(unrealised_pct),
         "day_pnl": float(day_pnl),
         "realised": float(realised_total),
+        "realised_fy": realised_fy,
+        "fy_label": fy_label,
         "total_pnl": float(unrealised + realised_total),
         "n_holdings": int(len(enriched)),
     }
@@ -1299,8 +1308,18 @@ def tab_realised(realised: pd.DataFrame):
     losses = (realised["gain_loss"] < 0).sum()
     win_rate = wins / max(wins + losses, 1) * 100
 
+    # FY-to-date realised (1 Apr–31 Mar), resets each April.
+    fy_start, _fy_end, fy_label = signals.fy_bounds()
+    fy_to = now_ist().date()
+    fy_real = 0.0
+    if "sale_date" in realised.columns:
+        _sd = pd.to_datetime(realised["sale_date"], errors="coerce").dt.date
+        fy_real = float(realised.loc[(_sd >= fy_start) & (_sd <= fy_to), "gain_loss"].sum())
+    st.metric(f"Realised P&L · {fy_label} (1 Apr–31 Mar)", fmt_inr(fy_real),
+              help="Resets to zero every 1 April. The all-time figure is below.")
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total realised P&L", fmt_inr(total))
+    c1.metric("Total realised P&L (all-time)", fmt_inr(total))
     c2.metric("Trades closed", len(realised))
     c3.metric("Win rate", f"{win_rate:.0f}%")
     c4.metric("Avg trade P&L", fmt_inr(realised["gain_loss"].mean()))
@@ -1718,7 +1737,9 @@ def main():
     day_pct = (k["day_pnl"] / k["current"] * 100) if k["current"] else 0
     c4.metric("Today's P&L", fmt_inr_compact(k["day_pnl"]), fmt_pct(day_pct),
                help=fmt_inr(k["day_pnl"]))
-    c5.metric("Realised P&L", fmt_inr_compact(k["realised"]), help=fmt_inr(k["realised"]))
+    c5.metric(f"Realised · {k['fy_label']}", fmt_inr_compact(k["realised_fy"]),
+              help=f"Profit booked this financial year (1 Apr–31 Mar), resets each April. "
+                   f"All-time realised: {fmt_inr(k['realised'])}")
 
     # Live XIRR from transactions log
     try:

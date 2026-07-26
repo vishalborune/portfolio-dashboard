@@ -310,6 +310,16 @@ break.
   was unpriced in one week and priced the next, that shows up in the delta.
 - **Profit booking framework**: tiers at +50% / +100% / +150% — digest
   flags when a stock CROSSES a tier this week (not just "is above").
+- **YTD realised P&L on the Indian FY (Lakshmi 23-Jul-2026)**: the dashboard's
+  "Realised" KPI and the Realised tab show profit booked **1 Apr–31 Mar TO DATE**
+  (`signals.fy_bounds`), auto-resetting each 1 April; all-time realised moves to
+  the tooltip / a secondary line. Window is [FY-start, today] — capped at today so
+  a future-dated sale (there's one bad row, 2026-12-01) can't inflate "to date".
+  NOTE: FY-to-date can exceed all-time when earlier FYs were net-negative (true
+  for Vishal). Also shown per-portfolio in the weekly digest ("Realised · FYxx-yy
+  (to date)"). Data hygiene: Vishal's portfolio has 4 FUTURE-dated realised rows
+  (ids 9–12, sale_date Sep/Dec 2026) — entry typos; the "to date" cap excludes
+  them, but they should be corrected in the realised table.
 - **Weekly review habit**: reviews the portfolio Saturday mornings — this
   is WHY the digest moved from Sunday 10am to Friday 9pm (after Friday's
   close, so Saturday's review uses fresh data, not day-old).

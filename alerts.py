@@ -2257,6 +2257,22 @@ def _digest_for(client, holdings):
             weekly_html, weekly_stats = _weekly_vs_index(client, pf, prev, val, unreal, today)
             weekly_by_pf[pf] = weekly_stats
 
+            # FY-to-date realised P&L (1 Apr–31 Mar, capped at today so a future-
+            # dated row can't inflate it) — mirrors the dashboard KPI.
+            fy_start, _fy_end, fy_label = signals.fy_bounds(today)
+            fy_realised = 0.0
+            try:
+                for rr in (client.table("realised").select("gain_loss, sale_date")
+                           .eq("portfolio_id", pf).execute().data or []):
+                    try:
+                        sdd = date.fromisoformat(str(rr["sale_date"])[:10])
+                    except (ValueError, TypeError):
+                        continue
+                    if fy_start <= sdd <= today:
+                        fy_realised += float(rr.get("gain_loss") or 0)
+            except Exception as ex:
+                print(f"(digest: FY realised lookup failed for pf {pf}: {ex})")
+
             up = unreal >= 0
             pnl_col = "#16a34a" if up else "#dc2626"
             pf_sections.append(f"""
@@ -2282,6 +2298,10 @@ def _digest_for(client, holdings):
                   <td style="padding:4px 0;font-weight:700">
                     {f"{xirr:.1f}%" if xirr is not None else "—"}
                     &nbsp;<span style="font-weight:400;font-size:13px">{trend_xirr}</span></td>
+                </tr><tr>
+                  <td style="padding:4px 0;color:#64748b">Realised · {fy_label} (to date)</td>
+                  <td style="padding:4px 0;font-weight:700;color:{'#16a34a' if fy_realised >= 0 else '#dc2626'}">
+                    {_fmt_l(fy_realised)}</td>
                 </tr>
               </table>
               <div style="background:#eef2ff;border:1px solid #c7d2fe;

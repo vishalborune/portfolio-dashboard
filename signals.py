@@ -37,6 +37,16 @@ except ImportError:
             return fn
         return deco
 
+def fy_bounds(today=None):
+    """Indian financial year (1 Apr – 31 Mar) containing `today`. Returns
+    (start_date, end_date, label) e.g. (2026-04-01, 2027-03-31, 'FY26-27').
+    Used for YTD realised P&L, which resets every 1 April (Lakshmi 23-Jul-2026)."""
+    from datetime import date
+    d = today or date.today()
+    sy = d.year if d.month >= 4 else d.year - 1
+    return date(sy, 4, 1), date(sy + 1, 3, 31), f"FY{str(sy)[2:]}-{str(sy + 1)[2:]}"
+
+
 CONVERGENCE_BAND_PCT = 2.0   # Lakshmi's locked number
 SWING_WINDOW = 5             # centered pivot window (weeks)
 MIN_WEEKS_REQUIRED = 45      # need enough history for a meaningful 40W EMA
