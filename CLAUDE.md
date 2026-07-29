@@ -299,6 +299,20 @@ break.
   STILL TODO: a richer typed insider format (who/how many shares).
 - Resend domain verification still pending on Vishal's side (digest email
   deliverability)
+- **52-week-high bug FIXED (27-Jul-2026, Lakshmi caught it):** the watchlist/holdings
+  "52W High" (and "% vs 52WH") read badly low — up to ~20% — because
+  `signals._fetch_daily`'s Yahoo branch fetched only `period="6mo"`, so
+  `high_52w = close.tail(252).max()` silently took a **6-MONTH CLOSE** high (`.tail(252)`
+  on ~126 bars returns everything). Fixed: fetch **2y**, carry the intraday **`high`**
+  column, and compute `high_52w` as the max intraday high over a **rolling 365-CALENDAR-day**
+  window (matches Kite/screener). **Split safety VERIFIED** on Websol's 10:1 split — Yahoo's
+  `auto_adjust=False` OHLC are already split-adjusted (only dividends aren't), so no raw
+  pre-split price leaks in; House-Rule-#10 is a bhavcopy-only concern and that path is
+  adjusted-on-read. **GUARD (rule #7):** returns `None` → cell shows "—" when <~1yr of
+  history (young listing / partial bhavcopy backfill, since `MIN_BHAV_DAILY_ROWS=60` can win
+  the source), so the 52W window can't silently differ per row. `high_52w` is **display-only**
+  — no alert path consumes it. The sibling `peak` (risk-stop, 126d) is deliberately 6-month
+  and was NOT touched.
 
 ## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
 - **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,

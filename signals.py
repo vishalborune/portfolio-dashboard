@@ -357,7 +357,7 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
     fetch_weekly (house rule #1 — own the data for SME): our bhavcopy table
     FIRST (authoritative + now split/bonus-adjusted on read), Yahoo only for
     mainboard names it doesn't track. Empty df on failure. Returns a plain
-    2-column frame {close, low}."""
+    3-column frame {close, high, low}."""
     # 1) bhavcopy (SME / Emerge / BSE-only). Was the silent gap: the old
     #    Yahoo-only path returned nothing for these, so their watchlist/holding
     #    entry zones never computed at all.
@@ -372,26 +372,33 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
             # (whose DAILY bars are fine — it's the live quote that lies).
             if len(d) >= MIN_BHAV_DAILY_ROWS:
                 d = d.sort_values("price_date").tail(lookback)
+                hi = d["high"] if "high" in d.columns else d["close"]
                 return pd.DataFrame({"close": d["close"].astype(float).to_numpy(),
-                                     "low": d["low"].astype(float).to_numpy()})
+                                     "high": hi.astype(float).to_numpy(),
+                                     "low": d["low"].astype(float).to_numpy()},
+                                    index=pd.to_datetime(d["price_date"]))
             print(f"  [signals] {ticker}: only {len(d)} bhavcopy day(s) "
                   f"(<{MIN_BHAV_DAILY_ROWS}) — using Yahoo until the backfill fills in")
     except Exception:
         pass
     # 2) Yahoo (mainboard NSE names)
     try:
-        df = yf.download(ticker, period="6mo", interval="1d",
+        # 1y+ of history so the 52-week high really spans 52 weeks. Was "6mo",
+        # which silently made "52W High" only a 6-MONTH high (Lakshmi caught it).
+        df = yf.download(ticker, period="2y", interval="1d",
                          progress=False, auto_adjust=False)
         if df is None or df.empty:
             return pd.DataFrame()
-        close = df["Close"].dropna()
-        if hasattr(close, "columns"):        # multi-index from yf
-            close = close.iloc[:, 0]
-        low = df["Low"].dropna()
-        if hasattr(low, "columns"):
-            low = low.iloc[:, 0]
-        return pd.DataFrame({"close": close.astype(float).to_numpy(),
-                             "low": low.astype(float).to_numpy()})
+
+        def _col(name):
+            s = df[name]
+            if hasattr(s, "columns"):        # multi-index from yf
+                s = s.iloc[:, 0]
+            return s.astype(float)
+        # dropna across OHLC TOGETHER so the columns stay row-aligned; KEEP the
+        # DatetimeIndex so the 52-week high can span a true calendar year.
+        return pd.DataFrame({"close": _col("Close"), "high": _col("High"),
+                             "low": _col("Low")}).dropna()
     except Exception:
         return pd.DataFrame()
 
@@ -409,6 +416,24 @@ def daily_entry_levels(ticker: str) -> dict | None:
         return None
     close = d["close"]
     low = d["low"]
+    high = d["high"] if "high" in d.columns else close
+    # 52-week high = highest INTRADAY high over a true rolling CALENDAR year.
+    # GUARD (house rule #7): a "52-week" high needs ~a year of history. With
+    # less — young listing, or a partially-backfilled bhavcopy ticker (only
+    # MIN_BHAV_DAILY_ROWS=60 rows are enough to WIN the source) — return None so
+    # the cell renders "—" instead of a short-window max mislabelled 52-week
+    # (house rule #2). Without this the window silently differs per row.
+    high_52w = None
+    try:
+        idx = high.index
+        if pd.api.types.is_datetime64_any_dtype(idx):
+            if (idx.max() - idx.min()).days >= 340:      # ~a full year present
+                _recent = high[idx >= idx.max() - pd.Timedelta(days=365)]
+                high_52w = float(_recent.max()) if len(_recent) else None
+        elif len(high) >= 240:                            # dateless fallback
+            high_52w = float(high.tail(252).max())
+    except Exception:
+        high_52w = None
     return {
         "ema10": float(close.ewm(span=10, adjust=False).mean().iloc[-1]),
         "ema21": float(close.ewm(span=21, adjust=False).mean().iloc[-1]),
@@ -421,8 +446,10 @@ def daily_entry_levels(ticker: str) -> dict | None:
         # computed here so the fast poller reuses this one daily fetch (no extra
         # per-minute history download).
         "peak": float(close.tail(PEAK_LOOKBACK).max()),
-        # 52-week high (close-based; ~252 trading days). Reuses the same fetch.
-        "high_52w": float(close.tail(252).max()),
+        # 52-week high — true INTRADAY high over a rolling calendar year (see
+        # above). Was close-based over only ~6mo of data; both bugs understated
+        # it (up to ~20%) until Lakshmi flagged it 27-Jul-2026.
+        "high_52w": high_52w,
     }
 
 
