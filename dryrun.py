@@ -26,6 +26,13 @@ try:
     s = tomllib.load(open(repo / ".streamlit" / "secrets.toml", "rb"))
     os.environ.setdefault("SUPABASE_URL", s["SUPABASE_URL"])
     os.environ.setdefault("SUPABASE_SERVICE_KEY", s["SUPABASE_SERVICE_KEY"])
+    # Optional creds: pass through so a dry-run actually exercises the AI summary
+    # path (needs ANTHROPIC_API_KEY). Without this you'd only ever preview
+    # headline-only filings and never see the real summarized output.
+    for _k in ("ANTHROPIC_API_KEY", "RESEND_API_KEY",
+               "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        if s.get(_k):
+            os.environ.setdefault(_k, s[_k])
 except Exception as e:
     print(f"Could not read .streamlit/secrets.toml: {e}")
     sys.exit(1)

@@ -909,6 +909,12 @@ MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, headline-only
 
 MAX_PDF_BYTES = 8 * 1024 * 1024   # 8 MB guard: annual reports etc. get headline-only
 
+# Browser UA for pulling NSE-archive filing PDFs. Its ABSENCE (undefined name)
+# was NameError-ing inside _download_pdf_b64's bare except → every PDF returned
+# None → EVERY filing went out headline-only, no summary ever (27-Jul-2026 bug).
+# Same UA the RSS/announcement fetches use (nsearchives is friendly; UA suffices).
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
 
 def _download_pdf_b64(url: str):
     """Filing PDF as base64, or None. Size-capped: giant documents (annual
@@ -972,9 +978,11 @@ def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
     '' on any failure -> the alert falls back to the headline."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
+        print("  [filings] ANTHROPIC_API_KEY not set — filing goes out headline-only")
         return ""
     pdf_b64 = _download_pdf_b64(pdf_url)
     if not pdf_b64:
+        print(f"  [filings] PDF fetch failed (headline-only): {pdf_url[:90]}")
         return ""
     if _is_results_filing(headline):
         typed = _summarize_results(company, pdf_b64, api_key)
@@ -985,20 +993,25 @@ def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
 
 def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) -> str:
     try:
-        out = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=250, prompt=(
-            f"This is an Indian stock exchange filing by {company} "
-            f"(subject: {headline}). Summarize it for a retail investor's "
-            f"Telegram alert.\nOutput EXACTLY this format, nothing else:\n"
-            f"Line 1: one emoji + a 5-10 word gist title\n"
-            f"Then 2-4 bullets starting with '- ', each under 15 words, only "
-            f"concrete facts (amounts, dates, names, percentages). No advice, "
-            f"no speculation, no preamble. If the document is unreadable, "
-            f"output exactly: UNREADABLE"))
+        out = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=350, prompt=(
+            f"This is an Indian stock-exchange filing by {company} "
+            f"(subject: {headline}). Read the ACTUAL document and summarize it so "
+            f"an investor can decide whether it matters WITHOUT opening the PDF.\n"
+            f"Output EXACTLY this, nothing else:\n"
+            f"Line 1: one emoji + a 5-9 word plain headline of WHAT this filing is\n"
+            f"Then 2-4 bullets starting with '- ', each under 18 words, ONLY "
+            f"concrete facts from the document (amounts, dates, names, quantities, "
+            f"percentages, board decisions).\n"
+            f"Final line: 'Why it matters: ' + one under-20-word plain note on the "
+            f"significance to a shareholder (e.g. equity dilution, one-off vs "
+            f"recurring, governance red flag, growth trigger). Describe the "
+            f"significance only; do NOT give buy/sell advice or price targets.\n"
+            f"If the document is unreadable, output exactly: UNREADABLE"))
         if not out or out.upper().startswith("UNREADABLE"):
             return ""
-        # Generic gist is raw model prose (no intended HTML) — escape it so a
-        # stray '&'/'<' can't 400 the Telegram chunk (parse_mode=HTML).
-        return html.escape(out[:600])
+        # Model prose (no intended HTML) — escape so a stray '&'/'<' can't 400 the
+        # Telegram chunk (parse_mode=HTML).
+        return html.escape(out[:900])
     except Exception as e:
         print(f"  [filings] generic summary failed for {company}: {e}")
         return ""
@@ -1130,8 +1143,26 @@ def _format_results(company: str, data: dict) -> str:
     # would then retry forever and burn summary calls. The static labels/tags stay.
     period = html.escape(str(data.get("period_current") or "latest quarter"))
     header = f"📊 <b>{html.escape(str(company))}</b> — {basis} results, {period}"
+    # Plain-English takeaway, computed FROM THE NUMBERS (not the model — rule #2):
+    # revenue vs PAT YoY tells the margin story at a glance, which is the "what
+    # should I know" Lakshmi wants without re-reading the table.
+    rev_yoy, pat_yoy = _pct(rev[0], rev[2]), _pct(pat[0], pat[2])
+    take = None
+    if rev_yoy is not None and pat_yoy is not None:
+        if pat_yoy >= 0 and pat_yoy >= rev_yoy:
+            take = f"PAT +{pat_yoy:.0f}% YoY outpacing revenue {rev_yoy:+.0f}% — margins expanding"
+        elif rev_yoy >= 0 and pat_yoy < 0:
+            take = f"revenue +{rev_yoy:.0f}% YoY but PAT {pat_yoy:.0f}% — margin squeeze"
+        elif rev_yoy < 0 and pat_yoy < 0:
+            take = f"revenue {rev_yoy:.0f}% & PAT {pat_yoy:.0f}% YoY — both contracting"
+        else:
+            take = f"revenue {rev_yoy:+.0f}% · PAT {pat_yoy:+.0f}% YoY"
     footer = "<i>EBITDA = PBT + finance costs + depreciation</i>"
-    return "\n".join([header] + rows + [footer])
+    parts = [header] + rows
+    if take:
+        parts.append(f"<b>Take:</b> {html.escape(take)}")
+    parts.append(footer)
+    return "\n".join(parts)
 
 
 MATERIAL_KEYWORDS = [
