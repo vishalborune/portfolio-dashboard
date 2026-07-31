@@ -382,8 +382,14 @@ break.
   the filings feed keywords (insider/encumbr/acquisition of shares/disposal of
   shares) — the dedicated NSE PIT API returns empty/blocked.
   STILL TODO: a richer typed insider format (who/how many shares).
-- Resend domain verification still pending on Vishal's side (digest email
-  deliverability)
+- Resend email digest DELIVERS to Vishal's address (confirmed 01-Aug-2026 — he
+  gets it); domain verification may still be pending for a branded from-address,
+  but it is NOT blocking delivery. **The Friday digest now covers ALL THREE
+  portfolios in the EMAIL** (Vishal added 01-Aug-2026 on request via
+  `run_digest` → `_digest_for(..., tg_pf_ids=lakshmi)`); the Telegram TEASER stays
+  Lakshmi/Abinaya only (Vishal opted out of Telegram, so his data isn't pushed to
+  the group). Including pf1 also starts storing his `digest_history` snapshots, so
+  his week-over-week / vs-index scorecard builds from the next Friday on.
 - **52-week-high bug FIXED (27-Jul-2026, Lakshmi caught it):** the watchlist/holdings
   "52W High" (and "% vs 52WH") read badly low — up to ~20% — because
   `signals._fetch_daily`'s Yahoo branch fetched only `period="6mo"`, so

@@ -2578,22 +2578,21 @@ def _bench_html(xirr, bench):
 
 
 def run_digest():
-    """One weekly digest, sent to the existing DIGEST_EMAILS recipients,
-    reporting Lakshmi + Abinaya's holdings (matches the Telegram alert scope:
-    Vishal's own portfolio is tracked on the dashboard but not pushed here)."""
+    """Weekly digest emailed to DIGEST_EMAILS. Covers ALL THREE portfolios so
+    Vishal sees his OWN book in the email he already receives (added 01-Aug-2026,
+    on his request). The Telegram TEASER stays scoped to Lakshmi/Abinaya — Vishal
+    opted out of Telegram, so his data is not pushed to the group. Including pf1
+    here also starts storing his weekly digest_history snapshots, so his
+    week-over-week / vs-index scorecard builds from next Friday on."""
     client = sb()
     all_holdings = get_holdings(client)
     if all_holdings.empty:
         return
-    pf_ids = [p for p, g in PF_GROUP.items() if g == "lakshmi"]
-    holdings = all_holdings[all_holdings["portfolio_id"].isin(pf_ids)]
-    if holdings.empty:
-        print("(digest: no Lakshmi/Abinaya holdings yet)")
-        return
-    _digest_for(client, holdings)
+    lak = [p for p, g in PF_GROUP.items() if g == "lakshmi"]
+    _digest_for(client, all_holdings, tg_pf_ids=lak)
 
 
-def _digest_for(client, holdings):
+def _digest_for(client, holdings, tg_pf_ids=None):
     """Digest v2 (19-Jul-2026): the weekly review meeting. Per-portfolio
     money numbers with week-over-week trend, states, dead-money flags,
     profit tiers, journal+audit corner, delivery conviction, concentration.
@@ -2922,6 +2921,8 @@ def _digest_for(client, holdings):
             if det is None:
                 continue
         for pf in pf_ids:
+            if tg_pf_ids is not None and pf not in tg_pf_ids:
+                continue                      # Telegram teaser: Lakshmi/Abinaya only
             det = detail_by_pf.get(pf)
             if det is None:
                 continue
@@ -2940,8 +2941,12 @@ def _digest_for(client, holdings):
                     "🟠" if wk["alpha"] >= 0 else "🔴")
                 tg.append(f"   {icon} week: <b>{wk['pf_ret']:+.2f}%</b> vs index "
                           f"{wk['idx_ret']:+.2f}% → alpha <b>{wk['alpha']:+.2f} pts</b>")
-        if exits:
-            tg.append("🔴 EXIT: " + ", ".join(exits))
+        tg_exits = exits
+        if tg_pf_ids is not None:               # keep only in-scope portfolios' exits
+            allowed = tuple(f"[{PF_NAME.get(p)}]" for p in tg_pf_ids) + ("[Both]",)
+            tg_exits = [e for e in exits if e.startswith(allowed)]
+        if tg_exits:
+            tg.append("🔴 EXIT: " + ", ".join(tg_exits))
         if dead_money:
             tg.append(f"💤 {len(dead_money)} stock(s) on dead-money watch")
         tg.append("Full review in the email 📧")
