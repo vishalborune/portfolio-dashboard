@@ -241,6 +241,23 @@ break.
   unit→Cr — so no model-arithmetic error reaches a number (rule #2); unusable
   extraction falls back to the generic bullet gist. STILL generic for other
   types (order wins value/client/timeline, pledge/auditor 🚨 flags) — next.
+  - **RESULTS column-mapping bug FIXED (31-Jul-2026, Lakshmi caught it on Clean
+    Max):** the model mis-mapped columns on wide statements — pulling PBT/PAT/EPS
+    from the PRECEDING-quarter column while revenue/finance/depn came from the
+    current one (Clean Max Q1 showed PBT ₹75.3cr/PAT ₹45.4cr = LAST quarter's; real
+    ₹94.0/₹55.2). Also flaky run-to-run. Rewrote `_summarize_results`: (a) model now
+    transcribes the statement **COLUMN-BY-COLUMN** (`columns[]` each with period_end
+    + is_quarter + ebitda_reported) so figures can't cross columns; (b) Python picks
+    current/prev-Q/year-ago **by DATE + magnitude** — a period >3× the current
+    quarter's revenue is a full-year/YTD column, NOT a quarter (Banswara lists 'year
+    ended' as a middle column ~40× a quarter; is_quarter alone is unreliable because
+    Q4 and FY both end 31-Mar); (c) **RE-ANCHOR** PBT/PAT/EPS to the column whose
+    `reported-EBITDA − finance − depreciation` identity they satisfy — deterministically
+    undoing any swap (idempotent if already right; skipped when no EBITDA line is
+    printed, then the model's per-column values are trusted). `_parse_stmt_date`
+    handles 31-Mar-26 / 30.06.2026 / 'June 30, 2026' / ISO. Verified stable+correct
+    on Clean Max (swap case) and Banswara (Q4-vs-FY case). Requires the AI key to
+    test locally — `python dryrun.py filings-nse` with ANTHROPIC_API_KEY in secrets.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock

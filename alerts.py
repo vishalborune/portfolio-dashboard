@@ -1029,42 +1029,164 @@ def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) 
 # arithmetic slip can't put a wrong number in front of a trading decision
 # (house rule #2). EBITDA is Lakshmi's definition: PBT + Finance costs + Depn.
 
+# Extract COLUMN-BY-COLUMN, not row-by-row (31-Jul-2026 fix): the old prompt
+# asked the model to map each metric to the current/prev/year-ago column, and on
+# wide statements (Clean Max has 4 columns incl. a 'Year ended') it silently
+# drifted — pulling PBT/PAT from the PRECEDING quarter while revenue came from the
+# current one (House Rule #2 wrong-number bug, Lakshmi caught it). Now the model
+# transcribes each PERIOD COLUMN as one object (figures can't cross columns) and
+# PYTHON assigns current/prev/year-ago by parsing the period-end dates.
 _RESULTS_JSON_PROMPT = (
     "This is an Indian listed company's quarterly financial results filing.\n"
-    "Extract the CONSOLIDATED figures. 'Consolidated' = the statement/columns that "
-    "include 'share of profit of associates/joint ventures' or are headed "
-    "'Consolidated'. If the filing has ONLY standalone figures, use those and set "
-    "basis to 'standalone'.\n"
-    "From the columns, identify THREE periods: the current (latest) quarter, the "
-    "immediately preceding quarter (QoQ), and the SAME quarter of the previous year "
-    "(YoY). Do NOT use year-to-date/full-year columns.\n"
-    "Return ONLY a JSON object — no prose, no markdown fences. Numbers exactly as "
-    "printed: strip commas; a value in parentheses is negative; use null if absent. "
-    "Keep the statement's own unit.\n"
-    "Schema:\n"
+    "Use the CONSOLIDATED statement — the one including 'share of profit of "
+    "associates/joint ventures' or headed 'Consolidated'. If ONLY standalone "
+    "figures exist, use those and set basis='standalone'.\n"
+    "Read the statement COLUMN BY COLUMN and return one object PER PERIOD COLUMN, "
+    "so EVERY figure inside an object comes from the SAME column — this is "
+    "critical, do NOT mix columns. Include EVERY column shown: current quarter, "
+    "preceding quarter, year-ago quarter, AND any full-year / 'Year ended' column.\n"
+    "For each column give period_end (the date exactly as printed) and is_quarter "
+    "(true for a single ~3-month quarter, false for a full-year/'year ended' column).\n"
+    "Numbers exactly as printed: strip commas; parentheses mean NEGATIVE; null if "
+    "absent. Keep the statement's own unit. ebitda_reported = the column's own "
+    "'EBITDA' line if the statement prints one, else null. pbt='profit before "
+    "tax'; pat='profit for the period' after tax.\n"
+    "Return ONLY a JSON object — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
-    '"period_current":"str","period_prev_q":"str","period_year_ago":"str",'
-    '"revenue_from_operations":{"current":n,"prev_q":n,"year_ago":n},'
-    '"finance_costs":{"current":n,"prev_q":n,"year_ago":n},'
-    '"depreciation":{"current":n,"prev_q":n,"year_ago":n},'
-    '"pbt":{"current":n,"prev_q":n,"year_ago":n},'
-    '"pat":{"current":n,"prev_q":n,"year_ago":n},'
-    '"basic_eps":{"current":n,"prev_q":n,"year_ago":n}}\n'
-    "If this is NOT a quarterly results statement, return {\"basis\": null}."
+    '"columns":[{"period_end":"as printed","is_quarter":true,'
+    '"revenue_from_operations":n,"finance_costs":n,"depreciation":n,'
+    '"ebitda_reported":n,"pbt":n,"pat":n,"basic_eps":n}]}\n'
+    "If this is NOT a quarterly results statement, return {\"basis\":null}."
 )
 
 
-def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
-    """Typed results summary, or '' to fall back to the generic gist."""
+def _parse_stmt_date(s):
+    """Period-end date string -> (year, month, day) for sorting; None if unclear.
+    Handles the many forms NSE statements use: '31-Mar-26', '30-Jun-2026',
+    '30.06.2026', '30/06/2026' (day-first), 'June 30, 2026', '30 June 2026',
+    ISO '2026-06-30'. 2-digit years -> 2000s."""
+    s = str(s or "").strip()
+    months = {m: i for i, m in enumerate(
+        ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+    def y4(y):
+        y = int(y)
+        return y + 2000 if y < 100 else y
     try:
-        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=700)
+        # DD <sep> MonName <sep> YY(YY)   e.g. 31-Mar-26, 30 June 2026
+        m = re.search(r"(\d{1,2})[-\s/.]+([A-Za-z]{3,})[-\s/.,]+(\d{2,4})", s)
+        if m and m.group(2)[:3].lower() in months:
+            return (y4(m.group(3)), months[m.group(2)[:3].lower()], int(m.group(1)))
+        # MonName [DD,] YYYY   e.g. June 30, 2026 / Jun-2026
+        m = re.search(r"([A-Za-z]{3,})[-\s/.]*(\d{1,2})?[-\s/.,]+(\d{2,4})", s)
+        if m and m.group(1)[:3].lower() in months:
+            return (y4(m.group(3)), months[m.group(1)[:3].lower()], int(m.group(2) or 1))
+        # ISO  YYYY-MM-DD
+        m = re.match(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
+        if m:
+            return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        # numeric day-first  DD-MM-YYYY / DD.MM.YYYY
+        m = re.match(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", s)
+        if m:
+            return (y4(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except Exception:
+        return None
+    return None
+
+
+def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
+    """Typed results summary, or '' to fall back to the generic gist. Assembles
+    the current/prev-quarter/year-ago trios from the model's per-column transcript
+    by DATE (so the period mapping is deterministic Python, not the model)."""
+    try:
+        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=900)
         if not raw:
             return ""
         import json
         m = re.search(r"\{.*\}", raw, re.DOTALL)   # tolerate stray prose/fences
         if not m:
             return ""
-        data = json.loads(m.group(0))
+        obj = json.loads(m.group(0))
+        if not obj.get("basis"):
+            return ""
+        cols = obj.get("columns") or []
+        for c in cols:
+            c["_d"] = _parse_stmt_date(c.get("period_end"))
+        cols = [c for c in cols if c["_d"]]
+        if not cols:
+            return ""
+
+        def _n(c, k):
+            v = c.get(k)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        def _rev(c):
+            # revenue as a tie-break key; missing -> huge so it's NOT mistaken for
+            # the (smaller-revenue) single quarter when sharing a date.
+            r = _n(c, "revenue_from_operations")
+            return r if r is not None else 1e18
+
+        # Pick periods by DATE + magnitude, NOT the model's is_quarter flag (it
+        # gets Q4 vs full-year wrong — both end 31-Mar, Banswara 31-Jul-2026).
+        # CURRENT = latest date; on a tie the SMALLER-revenue column (a single
+        # quarter, not the YTD/full-year column sharing that date).
+        maxd = max(c["_d"] for c in cols)
+        cur = min([c for c in cols if c["_d"] == maxd], key=_rev)
+        # Only compare against SINGLE-QUARTER columns: a period whose revenue is
+        # >3x the current quarter is a full-year / YTD column, never a quarter
+        # (Banswara's statement lists 'year ended' as the middle column, ~40x a
+        # quarter — must not be read as the preceding quarter, 31-Jul-2026).
+        cur_rev = _n(cur, "revenue_from_operations")
+
+        def _is_qtr(c):
+            r = _n(c, "revenue_from_operations")
+            return cur_rev is None or r is None or r <= 3.0 * cur_rev
+
+        before = [c for c in cols if c["_d"] < cur["_d"] and _is_qtr(c)]
+        # YEAR-AGO quarter: same month, one year earlier.
+        ya = [c for c in before if c["_d"][1] == cur["_d"][1] and c["_d"][0] == cur["_d"][0] - 1]
+        year_ago = min(ya, key=_rev) if ya else {}
+        # PRECEDING quarter: latest date before current that isn't the year-ago
+        # date; smaller-revenue on a tie (picks Q4 over the same-dated full year).
+        prev_q = {}
+        other = sorted({c["_d"] for c in before if c["_d"] != year_ago.get("_d")}, reverse=True)
+        if other:
+            prev_q = min([c for c in before if c["_d"] == other[0]], key=_rev)
+
+        # RE-ANCHOR PBT/PAT/EPS to the right column (31-Jul-2026). The model
+        # reliably transcribes the TOP rows (revenue/finance/depreciation/EBITDA)
+        # per column, but on wide statements it SWAPS the bottom rows (PBT/PAT/EPS)
+        # between columns (Clean Max: current revenue paired with the PRECEDING
+        # quarter's PBT/PAT). Those rows satisfy PBT ≈ reported-EBITDA − finance −
+        # depreciation, so reassign each selected column the (pbt,pat,eps) whose
+        # pbt matches its own identity — deterministically undoing any swap.
+        # Idempotent if already correct; skipped when EBITDA isn't reported.
+        selected = [c for c in (cur, prev_q, year_ago) if c]
+        anchorable = all(_n(c, "ebitda_reported") is not None and _n(c, "finance_costs") is not None
+                         and _n(c, "depreciation") is not None for c in selected)
+        pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps")) for c in selected]
+        if anchorable and all(p[0] is not None for p in pool):
+            used = [False] * len(pool)
+            for c in selected:
+                target = _n(c, "ebitda_reported") - _n(c, "finance_costs") - _n(c, "depreciation")
+                best = min((i for i in range(len(pool)) if not used[i]),
+                           key=lambda i: abs(pool[i][0] - target))
+                used[best] = True
+                c["pbt"], c["pat"], c["basic_eps"] = pool[best]
+
+        def trio(metric):
+            g = lambda c: (float(c[metric]) if isinstance(c.get(metric), (int, float)) else None)
+            return {"current": g(cur), "prev_q": g(prev_q), "year_ago": g(year_ago)}
+
+        data = {
+            "basis": obj.get("basis"), "unit": obj.get("unit"),
+            "period_current": cur.get("period_end"),
+            "revenue_from_operations": trio("revenue_from_operations"),
+            "finance_costs": trio("finance_costs"),
+            "depreciation": trio("depreciation"),
+            "pbt": trio("pbt"), "pat": trio("pat"), "basic_eps": trio("basic_eps"),
+            "ebitda_reported": trio("ebitda_reported"),
+        }
         return _format_results(company, data)
     except Exception as e:
         print(f"  [filings] results extract failed for {company}: {e}")
