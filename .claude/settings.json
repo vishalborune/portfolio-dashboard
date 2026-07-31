@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONPATH='c:\\\\Users\\\\PC\\\\Desktop\\\\portfolio-dashboard' python -c ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(python -c \"import tomllib; [print\\(' -',k\\) for k in tomllib.load\\(open\\('.streamlit/secrets.toml','rb'\\)\\)]\")"
     ]
   }
 }
