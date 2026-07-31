@@ -329,7 +329,9 @@ break.
     - **SOLVED via alert-now-then-follow-up (Lakshmi chose this 31-Jul-2026):** the
       headline goes out immediately (never delayed/missed); each later poll re-tries
       `_summarize_xbrl(url)` and, once NSE publishes the file, sends a ONE-TIME
-      "— details:" follow-up with the parsed summary. Dedup uses a SECOND fingerprint
+      follow-up: **🔁 "<company> — filing update"** + an **"↳ earlier: <headline>"**
+      echo so it's unmistakably linked to the original headline alert, then the
+      parsed summary. Dedup uses a SECOND fingerprint
       `_fingerprint(sym, headline, date, "xbrlsummary")` so there's **no schema
       change** and no duplicate: first-sighting-with-summary records BOTH fps (no
       follow-up); headline-only records just `fp`, leaving `fp_sum` open for the

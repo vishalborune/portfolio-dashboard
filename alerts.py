@@ -1731,8 +1731,11 @@ def run_filings(nse_only: bool = False):
                 if is_xml and enabled and fp_sum not in seen and fp_sum not in fp_meta:
                     gist = _summarize_xbrl(url)
                     if gist:
-                        body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b> — details: "
-                                f"{esc(a['headline'][:200])}\n\n{gist}"
+                        # 🔁 = clearly a FOLLOW-UP to a headline already sent; echo
+                        # the original headline so the two are unmistakably linked.
+                        body = (f"🔁 <b>{esc(e['name'])}</b> — filing update "
+                                f"(summary now available)\n"
+                                f"<i>↳ earlier: {esc(a['headline'][:160])}</i>\n\n{gist}"
                                 f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
                         fp_meta[fp_sum] = (sym, a["headline"] + " [xbrl summary]", a["date"])
                         for g in enabled:
