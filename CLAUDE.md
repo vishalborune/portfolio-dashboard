@@ -337,6 +337,14 @@ break.
       follow-up); headline-only records just `fp`, leaving `fp_sum` open for the
       follow-up. `alerts_by_group` items are now `(fps_list, body)`. Verified live in
       dry-run on a Jitf "Change in Directors" filing (4 director appointments).
+      - **BACKLOG (deferred 31-Jul-2026, only if Lakshmi wants the visual):** native
+        Telegram threaded reply (`reply_to_message_id`) instead of the 🔁+echo text
+        link. Decided AGAINST for now — it's MORE work not less (needs `send_telegram`
+        to return the message_id + a schema column to persist it across polls), and it
+        clashes with our BATCHED sends (a msg id points at a chunk of many filings, so
+        the reply wouldn't target the specific headline unless we un-batch → more
+        messages). No cost/bandwidth upside (Telegram is free; same # messages; summary
+        cost identical). The 🔁 + "↳ earlier:" echo gives the linkage with none of that.
 - Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
   NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
   matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
