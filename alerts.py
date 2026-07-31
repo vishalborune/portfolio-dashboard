@@ -1556,9 +1556,10 @@ def _summarize_xbrl_cim(root) -> str:
         tail = (f" — {des}" if des else "") + (f" (eff {eff})" if eff else "")
         lines.append(f"- {seg}: {who}{tail}")
     head = f"👤 {len(names)} management change{'s' if len(names) != 1 else ''}"
+    _benign = {"appointment", "re-appointment", "reappointment"}
     if redflag:
         why = "🚨 auditor/director exit — governance red flag, review"
-    elif types and all(t.lower() == "appointment" for t in types):
+    elif types and all(t.lower() in _benign for t in types):
         why = "routine appointment(s), no exits"
     else:
         why = "board/management change — check who & why"
@@ -1697,7 +1698,7 @@ def run_filings(nse_only: bool = False):
     seen = _load_seen(client)
     esc = html.escape
     cutoff = (date.today() - timedelta(days=3)).isoformat()
-    alerts_by_group = {}      # group -> [(fp, body)]
+    alerts_by_group = {}      # group -> [(fps, body)]  (fps = 1+ fingerprints)
     fp_meta = {}              # fp -> (sym, headline, date)
     no_audience = set()       # matched, but no Telegram-enabled group wants it
     summaries_done = 0
@@ -1715,22 +1716,38 @@ def run_filings(nse_only: bool = False):
             if any(k in hl for k in ROUTINE_KEYWORDS):
                 continue                      # housekeeping — the ONLY thing dropped
             fp = _fingerprint(sym, a["headline"], a["date"])
-            if fp in seen or fp in fp_meta:
-                continue
             starred = any(k in hl for k in MATERIAL_KEYWORDS)
             url = a["url"] or ""
             is_pdf = url.lower().endswith(".pdf")
-            # Only spend summary tokens on filings that will actually be sent AND
-            # are a readable PDF. XBRL/xml intimations can't be summarized (and
-            # their attachment 404s), so don't waste a fetch/token/log on them.
+            is_xml = url.lower().endswith(".xml")
+            fp_sum = _fingerprint(sym, a["headline"], a["date"], "xbrlsummary")
+
+            # Headline ALREADY sent. For XBRL, NSE often publishes the machine
+            # file minutes-to-hours LATER, so retry the parse each poll and send a
+            # ONE-TIME "details" follow-up once it's live (Lakshmi 31-Jul-2026:
+            # alert now, summary follows). fp_sum (a 2nd fingerprint) dedups the
+            # follow-up — no schema change. Non-XBRL just skips, as before.
+            if fp in seen or fp in fp_meta:
+                if is_xml and enabled and fp_sum not in seen and fp_sum not in fp_meta:
+                    gist = _summarize_xbrl(url)
+                    if gist:
+                        body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b> — details: "
+                                f"{esc(a['headline'][:200])}\n\n{gist}"
+                                f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
+                        fp_meta[fp_sum] = (sym, a["headline"] + " [xbrl summary]", a["date"])
+                        for g in enabled:
+                            alerts_by_group.setdefault(g, []).append(([fp_sum], body))
+                continue
+
+            # FIRST sighting: send the headline now. PDF -> summarize via Claude
+            # (capped); XBRL -> parse now if already published (else '' and the
+            # follow-up above catches it once NSE posts the file).
             gist = ""
             if enabled and is_pdf and summaries_done < MAX_SUMMARIES_PER_RUN:
                 gist = summarize_filing(e["name"], a["headline"], url)
                 if gist:
                     summaries_done += 1
-            elif enabled and url.lower().endswith(".xml"):
-                # Structured XBRL (Change in Directors/KMP/Auditor etc.) — parse
-                # the fields directly. Free (no LLM), so no summary-cap spend.
+            elif enabled and is_xml:
                 gist = _summarize_xbrl(url)
             # Full headline (was double-truncated to 200 → cut mid-word); for a
             # filing we can't summarize, the headline IS the payload. Link never
@@ -1739,10 +1756,15 @@ def run_filings(nse_only: bool = False):
                     f"{esc(a['headline'][:500])}"
                     + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
                     + f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
+            fps = [fp]
+            if is_xml and enabled and gist:      # summary already in THIS msg —
+                fps.append(fp_sum)               # record fp_sum too, no follow-up
             fp_meta[fp] = (sym, a["headline"], a["date"])
+            if len(fps) > 1:
+                fp_meta[fp_sum] = (sym, a["headline"] + " [xbrl summary]", a["date"])
             if enabled:
                 for g in enabled:
-                    alerts_by_group.setdefault(g, []).append((fp, body))
+                    alerts_by_group.setdefault(g, []).append((fps, body))
             else:
                 no_audience.add(fp)           # e.g. a Vishal-only stock
 
@@ -1758,12 +1780,12 @@ def run_filings(nse_only: bool = False):
         if not chat:
             continue                          # can't deliver -> retry next run
         chunk, clen, chunk_fps = [], len(header), []
-        for fp, body in items:
+        for fps, body in items:
             if chunk and clen + len(body) + 2 > budget:
                 if send_telegram(header + "\n\n".join(chunk), chat_id=chat):
                     delivered.update(chunk_fps)
                 chunk, clen, chunk_fps = [], len(header), []
-            chunk.append(body); chunk_fps.append(fp); clen += len(body) + 2
+            chunk.append(body); chunk_fps.extend(fps); clen += len(body) + 2
         if chunk and send_telegram(header + "\n\n".join(chunk), chat_id=chat):
             delivered.update(chunk_fps)
 

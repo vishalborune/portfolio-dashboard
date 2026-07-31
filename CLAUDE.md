@@ -323,11 +323,18 @@ break.
       RELATED-PARTY flag. **KEY finding — the XBRL 404 is a PUBLISH DELAY, not a dead
       link:** NSE posts the WebXMLFile minutes-to-hours AFTER the RSS headline, so a
       3-min poll often 404s but the file appears later (verified: Banswara's Reg30 was
-      404 fresh, 200 next day). CIMG tends to publish fast, Reg30 slow. **Not yet
-      solved:** catching the delayed ones needs a retry (hold-and-retry within a
-      bounded window, or alert-now-then-upgrade) — a UX call (delay vs double-alert)
-      pending Lakshmi. The NSE announcements API DOES expose companion PDFs but is
-      datacenter-IP-blocked (House Rule #1), so unusable from the worker.
+      404 fresh, 200 next day). CIMG tends to publish fast, Reg30 slow. The NSE
+      announcements API DOES expose companion PDFs but is datacenter-IP-blocked
+      (House Rule #1), so unusable from the worker.
+    - **SOLVED via alert-now-then-follow-up (Lakshmi chose this 31-Jul-2026):** the
+      headline goes out immediately (never delayed/missed); each later poll re-tries
+      `_summarize_xbrl(url)` and, once NSE publishes the file, sends a ONE-TIME
+      "— details:" follow-up with the parsed summary. Dedup uses a SECOND fingerprint
+      `_fingerprint(sym, headline, date, "xbrlsummary")` so there's **no schema
+      change** and no duplicate: first-sighting-with-summary records BOTH fps (no
+      follow-up); headline-only records just `fp`, leaving `fp_sum` open for the
+      follow-up. `alerts_by_group` items are now `(fps_list, body)`. Verified live in
+      dry-run on a Jitf "Change in Directors" filing (4 director appointments).
 - Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
   NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
   matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
