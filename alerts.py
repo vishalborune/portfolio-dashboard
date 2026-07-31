@@ -1133,9 +1133,25 @@ def _format_results(company: str, data: dict) -> str:
         ys = f"{yoy:+.1f}%" if yoy is not None else "—"
         return f"• {label}: {val} (QoQ {qs} · YoY {ys})"
 
+    # EBITDA margin = EBITDA / Revenue per period (Lakshmi 31-Jul-2026: margin
+    # expansion is where operating leverage shows — a rising margin drops
+    # straight to profit, and rising margin WITH rising sales is the combo he
+    # hunts). Units cancel, so this is unit-independent. Shows the actual % for
+    # all three periods (not a delta) so the trend reads at a glance.
+    emar = tuple((ebitda[i] / rev[i] * 100)
+                 if (ebitda[i] is not None and rev[i] not in (None, 0))
+                 else None for i in range(3))
+
+    def margin_line():
+        if emar[0] is None:
+            return None
+        f = lambda x: f"{x:.1f}%" if x is not None else "—"
+        return f"• EBITDA margin: {f(emar[0])} (prev Q {f(emar[1])} · YoY {f(emar[2])})"
+
     rows = [
         line("Revenue", rev),
         line("EBITDA", ebitda),
+        margin_line(),
         line("PBT", pbt),
         line("PAT", pat),
         line("EPS", eps, as_eps=True),
@@ -1152,17 +1168,33 @@ def _format_results(company: str, data: dict) -> str:
     # Plain-English takeaway, computed FROM THE NUMBERS (not the model — rule #2):
     # revenue vs PAT YoY tells the margin story at a glance, which is the "what
     # should I know" Lakshmi wants without re-reading the table.
-    rev_yoy, pat_yoy = _pct(rev[0], rev[2]), _pct(pat[0], pat[2])
+    # Take leads with the EBITDA-MARGIN trend (Lakshmi's core signal): revenue
+    # direction + margin change in bps YoY = his "sales up + margin up" check.
+    # Falls back to the PAT-vs-revenue read when margin isn't computable.
+    rev_yoy = _pct(rev[0], rev[2])
     take = None
-    if rev_yoy is not None and pat_yoy is not None:
-        if pat_yoy >= 0 and pat_yoy >= rev_yoy:
-            take = f"PAT +{pat_yoy:.0f}% YoY outpacing revenue {rev_yoy:+.0f}% — margins expanding"
-        elif rev_yoy >= 0 and pat_yoy < 0:
-            take = f"revenue +{rev_yoy:.0f}% YoY but PAT {pat_yoy:.0f}% — margin squeeze"
-        elif rev_yoy < 0 and pat_yoy < 0:
-            take = f"revenue {rev_yoy:.0f}% & PAT {pat_yoy:.0f}% YoY — both contracting"
+    if rev_yoy is not None and emar[0] is not None and emar[2] is not None:
+        bps = (emar[0] - emar[2]) * 100          # EBITDA-margin change YoY, in bps
+        mv = f"EBITDA margin {emar[2]:.1f}→{emar[0]:.1f}% ({bps:+.0f} bps YoY)"
+        if rev_yoy >= 0 and bps >= 0:
+            take = f"revenue +{rev_yoy:.0f}% YoY AND {mv} — sales up + margin up 🔥"
+        elif bps >= 0:
+            take = f"{mv} on revenue {rev_yoy:+.0f}% — margin expanding"
+        elif rev_yoy >= 0:
+            take = f"revenue +{rev_yoy:.0f}% YoY but {mv} — margin pressure"
         else:
-            take = f"revenue {rev_yoy:+.0f}% · PAT {pat_yoy:+.0f}% YoY"
+            take = f"revenue {rev_yoy:.0f}% YoY & {mv} — both weak"
+    if take is None:
+        pat_yoy = _pct(pat[0], pat[2])
+        if rev_yoy is not None and pat_yoy is not None:
+            if pat_yoy >= 0 and pat_yoy >= rev_yoy:
+                take = f"PAT +{pat_yoy:.0f}% YoY outpacing revenue {rev_yoy:+.0f}% — margins expanding"
+            elif rev_yoy >= 0 and pat_yoy < 0:
+                take = f"revenue +{rev_yoy:.0f}% YoY but PAT {pat_yoy:.0f}% — margin squeeze"
+            elif rev_yoy < 0 and pat_yoy < 0:
+                take = f"revenue {rev_yoy:.0f}% & PAT {pat_yoy:.0f}% YoY — both contracting"
+            else:
+                take = f"revenue {rev_yoy:+.0f}% · PAT {pat_yoy:+.0f}% YoY"
     footer = "<i>EBITDA = PBT + finance costs + depreciation</i>"
     parts = [header] + rows
     if take:

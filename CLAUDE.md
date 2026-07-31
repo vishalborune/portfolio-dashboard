@@ -233,6 +233,9 @@ break.
   tickers from Yahoo calls and reducing quote-fetch threads 8→4)
 - Filing-summary classification: RESULTS filings now use a TYPED template
   (21-Jul-2026) — consolidated Revenue/EBITDA/PBT/PAT/EPS, each with QoQ + YoY %
+  (plus an **EBITDA-margin line** — EBITDA/Revenue for all 3 periods — and a
+  margin-bps-led "Take", Lakshmi 31-Jul-2026: rising margin + rising sales is his
+  key combo; units cancel so it's unit-independent)
   (`alerts._summarize_results`/`_format_results`). Claude EXTRACTS raw line items
   from the PDF; Python computes EBITDA (=PBT+finance+depreciation), the %s, and
   unit→Cr — so no model-arithmetic error reaches a number (rule #2); unusable
