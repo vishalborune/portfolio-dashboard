@@ -205,7 +205,7 @@ switch sources without disclosure.
   the insurance is a paid feed (Dhan ₹499/mo, 24h auto-refresh token, or TrueData
   stable key) swapped into `_live_quotes` only — nothing else changes.
 - 10:45 & 14:45 IST: exchange filings + AI summaries (Claude reads the PDF
-  natively — handles scanned docs; capped at 10 summaries/run, 8MB/PDF)
+  natively — handles scanned docs; capped at 10 summaries/run, 20MB/PDF)
 - Daily 20:00 IST: bhavcopy + delivery + fundamentals
 - Daily 20:30 IST: exit audit (30/60/90-day post-sale price checks)
 - **Friday 21:00 IST**: weekly digest (moved from Sunday per Lakshmi's
@@ -412,7 +412,7 @@ break.
   bullet gist). Built using Claude reading the filing PDF NATIVELY (base64
   document block) rather than text-extraction — handles scanned/image PDFs
   that a text-extraction pipeline (pypdf) could not. Cost-capped at
-  10 summaries/run, 8MB/PDF max.
+  10 summaries/run, 20MB/PDF max.
 - **NOT YET BUILT — discussed 20-Jul-2026**: Vishal found a competitor
   (myalerts.in) whose results-filing summaries use a TYPED template
   (Revenue/EBITDA/EBITDA-margin/PAT/EPS, each with YoY AND QoQ deltas,

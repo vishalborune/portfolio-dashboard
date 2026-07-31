@@ -907,7 +907,13 @@ SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, headline-only
 
 
-MAX_PDF_BYTES = 8 * 1024 * 1024   # 8 MB guard: annual reports etc. get headline-only
+MAX_PDF_BYTES = 20 * 1024 * 1024  # was 8 MB, which SKIPPED real filings: a SCANNED
+                                  # quarterly-results PDF (image pages) runs 9-12 MB
+                                  # (Banswara's 9.5 MB Q1 outcome went headline-only,
+                                  # 31-Jul-2026). Claude's PDF API accepts ≤32 MB /
+                                  # ≤100 pages; 20 MB covers scanned results, still
+                                  # blocks 300-page annual reports. base64 of 20 MB
+                                  # ≈ 27 MB, safely under the 32 MB request limit.
 
 # Browser UA for pulling NSE-archive filing PDFs. Its ABSENCE (undefined name)
 # was NameError-ing inside _download_pdf_b64's bare except → every PDF returned
