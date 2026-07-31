@@ -1048,14 +1048,16 @@ _RESULTS_JSON_PROMPT = (
     "For each column give period_end (the date exactly as printed) and is_quarter "
     "(true for a single ~3-month quarter, false for a full-year/'year ended' column).\n"
     "Numbers exactly as printed: strip commas; parentheses mean NEGATIVE; null if "
-    "absent. Keep the statement's own unit. ebitda_reported = the column's own "
-    "'EBITDA' line if the statement prints one, else null. pbt='profit before "
-    "tax'; pat='profit for the period' after tax.\n"
+    "absent. Keep the statement's own unit. total_income = the 'Total income' "
+    "line; total_expenses = the 'Total expenses' line; ebitda_reported = the "
+    "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
+    "(after exceptional items if any); pat='profit for the period' after tax.\n"
     "Return ONLY a JSON object — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
     '"columns":[{"period_end":"as printed","is_quarter":true,'
-    '"revenue_from_operations":n,"finance_costs":n,"depreciation":n,'
-    '"ebitda_reported":n,"pbt":n,"pat":n,"basic_eps":n}]}\n'
+    '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'
+    '"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
+    '"pbt":n,"pat":n,"basic_eps":n}]}\n'
     "If this is NOT a quarterly results statement, return {\"basis\":null}."
 )
 
@@ -1099,7 +1101,10 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
     the current/prev-quarter/year-ago trios from the model's per-column transcript
     by DATE (so the period mapping is deterministic Python, not the model)."""
     try:
-        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=900)
+        # 2000 (was 900): the per-column JSON is bigger than the old flat schema
+        # and 900 could TRUNCATE it mid-object -> unparseable -> silent fall-back
+        # to the generic gist (seen in the 31-Jul audit). Headroom for ~4 columns.
+        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=2000)
         if not raw:
             return ""
         import json
@@ -1161,18 +1166,60 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
         # depreciation, so reassign each selected column the (pbt,pat,eps) whose
         # pbt matches its own identity — deterministically undoing any swap.
         # Idempotent if already correct; skipped when EBITDA isn't reported.
+        # VERIFY + RE-ANCHOR the profit rows against each column's OWN arithmetic
+        # (31-Jul-2026). The model reliably transcribes the top lines (revenue,
+        # total income/expenses, finance, depreciation) but can misassign the
+        # bottom rows (PBT/PAT/EPS) between columns on wide statements (Clean Max).
+        # Every Ind-AS P&L satisfies PBT = TotalIncome − TotalExpenses (Schedule
+        # III, expenses all-inclusive) OR − finance − depreciation (when those are
+        # shown as separate lines, e.g. Clean Max). So per column compute the
+        # target both ways, match each column its best-fitting (pbt,pat,eps), and
+        # keep the identity with the smallest residual — deterministically undoing
+        # any swap. If even the best fit leaves the CURRENT column badly off (no
+        # reconciliation), fall back to the gist rather than emit a wrong number
+        # (rule #2). If Total income/expenses weren't extracted, trust the model.
         selected = [c for c in (cur, prev_q, year_ago) if c]
-        anchorable = all(_n(c, "ebitda_reported") is not None and _n(c, "finance_costs") is not None
-                         and _n(c, "depreciation") is not None for c in selected)
+
+        def _target(c, sub_findep):
+            ti, te = _n(c, "total_income"), _n(c, "total_expenses")
+            if ti is None or te is None:
+                return None
+            t = ti - te
+            if sub_findep:
+                f, d = _n(c, "finance_costs"), _n(c, "depreciation")
+                if f is None or d is None:
+                    return None
+                t -= (f + d)
+            return t
+
         pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps")) for c in selected]
-        if anchorable and all(p[0] is not None for p in pool):
-            used = [False] * len(pool)
-            for c in selected:
-                target = _n(c, "ebitda_reported") - _n(c, "finance_costs") - _n(c, "depreciation")
-                best = min((i for i in range(len(pool)) if not used[i]),
-                           key=lambda i: abs(pool[i][0] - target))
-                used[best] = True
-                c["pbt"], c["pat"], c["basic_eps"] = pool[best]
+        best_assign, best_resid = None, None
+        if all(p[0] is not None for p in pool):
+            for sub in (False, True):
+                tgts = [_target(c, sub) for c in selected]
+                if any(t is None for t in tgts):
+                    continue
+                used, assign, resid = [False] * len(pool), [None] * len(selected), 0.0
+                for i, t in enumerate(tgts):
+                    j = min((k for k in range(len(pool)) if not used[k]),
+                            key=lambda k: abs(pool[k][0] - t))
+                    used[j] = True
+                    assign[i] = pool[j]
+                    resid = max(resid, abs(pool[j][0] - t) / max(abs(t), 1.0))
+                if best_resid is None or resid < best_resid:
+                    best_resid, best_assign = resid, assign
+        if best_assign is not None:
+            # current column is index 0 in `selected`; require IT to reconcile.
+            cur_t = min((abs(best_assign[0][0] - _target(selected[0], s))
+                         for s in (False, True) if _target(selected[0], s) is not None),
+                        default=None)
+            cur_denom = max(abs(_n(selected[0], "total_income") or 0), abs(best_assign[0][0]), 1.0)
+            if cur_t is not None and cur_t / cur_denom > 0.15:
+                print(f"  [filings] results won't reconcile for {company} "
+                      f"(resid {cur_t/cur_denom:.0%}) — falling back to gist")
+                return ""
+            for c, tup in zip(selected, best_assign):
+                c["pbt"], c["pat"], c["basic_eps"] = tup
 
         def trio(metric):
             g = lambda c: (float(c[metric]) if isinstance(c.get(metric), (int, float)) else None)

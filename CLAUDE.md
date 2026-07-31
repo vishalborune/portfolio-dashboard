@@ -251,13 +251,23 @@ break.
     current/prev-Q/year-ago **by DATE + magnitude** — a period >3× the current
     quarter's revenue is a full-year/YTD column, NOT a quarter (Banswara lists 'year
     ended' as a middle column ~40× a quarter; is_quarter alone is unreliable because
-    Q4 and FY both end 31-Mar); (c) **RE-ANCHOR** PBT/PAT/EPS to the column whose
-    `reported-EBITDA − finance − depreciation` identity they satisfy — deterministically
-    undoing any swap (idempotent if already right; skipped when no EBITDA line is
-    printed, then the model's per-column values are trusted). `_parse_stmt_date`
-    handles 31-Mar-26 / 30.06.2026 / 'June 30, 2026' / ISO. Verified stable+correct
-    on Clean Max (swap case) and Banswara (Q4-vs-FY case). Requires the AI key to
-    test locally — `python dryrun.py filings-nse` with ANTHROPIC_API_KEY in secrets.
+    Q4 and FY both end 31-Mar); (c) **RE-ANCHOR + RECONCILE** PBT/PAT/EPS against a
+    UNIVERSAL identity — every Ind-AS P&L has PBT = TotalIncome − TotalExpenses (or
+    − finance − depreciation when shown separately, e.g. Clean Max). Per column, try
+    both forms, match each column its best-fitting (pbt,pat,eps), keep the lower-
+    residual identity → deterministically undoes any swap. If the CURRENT column
+    still won't reconcile (>15% off), FALL BACK to the gist rather than emit a wrong
+    number (rule #2). (The earlier EBITDA-line anchor was too rare — a 7-filing audit
+    showed almost no statement prints an 'EBITDA' line; Total income/expenses are
+    universal.) `_parse_stmt_date` handles 31-Mar-26 / 30.06.2026 / 'June 30, 2026'
+    / ISO; results extraction max_tokens 900→2000 (the column JSON was truncating).
+    Verified with the live API on Clean Max (swap), Banswara (Q4-vs-FY), and a
+    7-filing audit (all reconciled or safely fell back). Test locally via
+    `python dryrun.py filings-nse` with ANTHROPIC_API_KEY in secrets. KNOWN LIMIT:
+    the reconciliation catches inter-column SWAPS, not a self-consistent wrong-SCALE
+    mis-read (rare). Only the RESULTS table carries precise numbers — XBRL (acq/board
+    changes) is structured tagged data and the generic gist is qualitative, so
+    neither is subject to this table-column failure mode.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock
