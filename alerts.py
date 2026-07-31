@@ -1455,6 +1455,81 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
     return out
 
 
+_XBRL_REDFLAG_TYPES = {"resignation", "cessation", "removal", "disqualification",
+                       "death", "vacation of office"}
+
+
+def _fmt_date(s):
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").strftime("%d-%b-%Y")
+    except Exception:
+        return str(s)
+
+
+def _summarize_xbrl(url: str) -> str:
+    """Summarize a STRUCTURED NSE XBRL filing by parsing its fields — no PDF,
+    no LLM, no token cost. Many material NSE filings (Change in Directors/KMP/
+    Auditor etc.) are XBRL-only with a vague generic headline; the machine-
+    readable XML carries the actual who/what. Only SOME XBRL types are publicly
+    fetchable (Change-in-Management is; others 404) — returns '' on 404 or an
+    unrecognised type, so the caller falls back to headline + NSE-page link."""
+    if not url.lower().endswith(".xml"):
+        return ""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200 or b"<" not in r.content[:50]:
+            return ""
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+    except Exception as e:
+        print(f"  [filings] XBRL parse failed for {url[:70]}: {type(e).__name__}")
+        return ""
+    tags = {re.sub(r"\{.*\}", "", el.tag) for el in root.iter()}
+    if "TypeOfChange" in tags or "ChangeInManagementDomain" in tags:
+        return _summarize_xbrl_cim(root)
+    return ""                       # unknown XBRL type -> headline-only
+
+
+def _summarize_xbrl_cim(root) -> str:
+    """Format a 'Change in Management' (directors/KMP/auditor/RTA) XBRL into a
+    Telegram gist: WHO, appointment vs exit, effective date — and a 🚨 flag when
+    an AUDITOR or DIRECTOR is resigning/removed (a classic smallcap red flag)."""
+    from collections import defaultdict
+    vals = defaultdict(list)
+    for el in root.iter():
+        tag = re.sub(r"\{.*\}", "", el.tag)
+        txt = (el.text or "").strip()
+        if txt:
+            vals[tag].append(txt)
+    names = vals.get("NameOfDesignatedPerson", [])
+    if not names:
+        return ""
+    types, cats = vals.get("TypeOfChange", []), vals.get("CategoryForChange", [])
+    desigs, sals = vals.get("DesignationOfDesignatedPerson", []), vals.get("SalutationOfDesignatedPerson", [])
+    effs = vals.get("EffectiveDateOfReasonOfChange", [])
+    lines, redflag = [], False
+    for i, nm in enumerate(names):
+        typ = types[i] if i < len(types) else ""
+        cat = cats[i] if i < len(cats) else ""
+        des = desigs[i] if i < len(desigs) else ""
+        sal = sals[i] if i < len(sals) else ""
+        eff = _fmt_date(effs[i]) if i < len(effs) else ""
+        if typ.lower() in _XBRL_REDFLAG_TYPES and ("auditor" in cat.lower() or "director" in cat.lower()):
+            redflag = True
+        who = (f"{sal} " if sal else "") + nm
+        seg = typ + (f" · {cat}" if cat else "")
+        tail = (f" — {des}" if des else "") + (f" (eff {eff})" if eff else "")
+        lines.append(f"- {seg}: {who}{tail}")
+    head = f"👤 {len(names)} management change{'s' if len(names) != 1 else ''}"
+    if redflag:
+        why = "🚨 auditor/director exit — governance red flag, review"
+    elif types and all(t.lower() == "appointment" for t in types):
+        why = "routine appointment(s), no exits"
+    else:
+        why = "board/management change — check who & why"
+    return html.escape("\n".join([head] + lines)) + f"\n<b>Why it matters:</b> {html.escape(why)}"
+
+
 def _filing_link(url: str, exch: str, sym: str) -> str:
     """Clickable link for a filing. A real PDF → the document itself. But NSE's
     XBRL 'WebXMLFile' attachments (board-meeting prior intimations etc.) are NOT
@@ -1552,6 +1627,10 @@ def run_filings(nse_only: bool = False):
                 gist = summarize_filing(e["name"], a["headline"], url)
                 if gist:
                     summaries_done += 1
+            elif enabled and url.lower().endswith(".xml"):
+                # Structured XBRL (Change in Directors/KMP/Auditor etc.) — parse
+                # the fields directly. Free (no LLM), so no summary-cap spend.
+                gist = _summarize_xbrl(url)
             # Full headline (was double-truncated to 200 → cut mid-word); for a
             # filing we can't summarize, the headline IS the payload. Link never
             # dead: non-PDF NSE filings route to the stock's NSE page.

@@ -304,6 +304,17 @@ break.
     filings stay headline-only (the full headline IS the payload) and their link
     is swapped for the stock's **NSE page** so it's never dead. Headline cap raised
     200→500 (was double-truncated, cutting "June"→"Ju").
+  - **Structured XBRL now summarized (31-Jul-2026, `_summarize_xbrl`):** many
+    material NSE filings are XBRL-only with a vague generic headline (e.g. "Change
+    in Directors/KMP/SMP/Auditor/RTA"). Some XBRL WebXMLFiles ARE publicly fetchable
+    (Change-in-Management `CIMG_*` returns 200; others like `Reg30` restructuring
+    404). For fetchable ones we now PARSE the fields — **free, no LLM/token** — into
+    who / appointment-vs-exit / effective date, e.g. "Appointment · KMP: Ms. Monika
+    Bohara — Company Secretary (eff 03-Aug-2026), routine appointment(s)". A 🚨 flag
+    fires when an **auditor or director is resigning/removed** (classic smallcap red
+    flag). Wired into run_filings as the non-PDF branch (`.xml` → `_summarize_xbrl`);
+    404/unknown types still fall back to headline + NSE-page link. Extend by adding
+    a parser for another XBRL schema keyed off its tag set.
 - Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
   NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
   matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
