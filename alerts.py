@@ -1519,6 +1519,9 @@ def _summarize_xbrl(url: str) -> str:
     tags = {re.sub(r"\{.*\}", "", el.tag) for el in root.iter()}
     if "TypeOfChange" in tags or "ChangeInManagementDomain" in tags:
         return _summarize_xbrl_cim(root)
+    if "NameOfTheTargetEntity" in tags or \
+            "TypeOfEventOfAnnouncementPertainingToRegulation30Restructuring" in tags:
+        return _summarize_xbrl_reg30(root)
     return ""                       # unknown XBRL type -> headline-only
 
 
@@ -1559,6 +1562,72 @@ def _summarize_xbrl_cim(root) -> str:
         why = "routine appointment(s), no exits"
     else:
         why = "board/management change — check who & why"
+    return html.escape("\n".join([head] + lines)) + f"\n<b>Why it matters:</b> {html.escape(why)}"
+
+
+def _summarize_xbrl_reg30(root) -> str:
+    """Format a Reg-30 restructuring XBRL — the common case is an ACQUISITION.
+    Pulls target / consideration / rationale / target financials / timeline, and
+    🚨-flags a RELATED-PARTY deal. Rupee amounts are raw INR → shown in ₹ crore.
+    Returns '' if it isn't an acquisition-shaped filing (→ headline fallback)."""
+    v = {}
+    for el in root.iter():
+        tag = re.sub(r"\{.*\}", "", el.tag)
+        txt = (el.text or "").strip()
+        if txt and tag not in v:                 # keep first occurrence
+            v[tag] = txt
+
+    def like(prefix):                            # the objects tag is enormous
+        for k, val in v.items():
+            if k.startswith(prefix):
+                return val
+        return None
+
+    def cr(x):
+        try:
+            return float(str(x).replace(",", "")) / 1e7
+        except (TypeError, ValueError):
+            return None
+
+    target = v.get("NameOfTheTargetEntity")
+    if not target:
+        return ""                                # not an acquisition-shaped Reg-30
+    ev = (v.get("TypeOfEventOfAnnouncementPertainingToRegulation30Restructuring")
+          or "Restructuring").split("(")[0].strip()
+    industry = v.get("IndustryToWhichTheEntityBeingAcquiredBelongs")
+    nature = v.get("NatureOfConsiderationForAcquisitionEvent")
+    cost = cr(v.get("CostOfAcquisitionOrThePriceAtWhichTheSharesAreAcquired")
+              or v.get("AmountOfCashConsiderationForAcquisitionEvent"))
+    objects = like("ObjectsAndImpact")
+    timeline = v.get("IndicativeTimePeriodForCompletionOfTheAcquisition")
+    related = v.get("WhetherTheAcquisitionWouldFallWithinRelatedPartyTransactions", "").lower() == "true"
+    arms = v.get("WhetherAcquisitionEventIsDoneAtArmsLength", "").lower() == "true"
+    to, pat, nw = (cr(v.get("TurnoverOfTargetEntity")),
+                   cr(v.get("ProfitAfterTaxOfTargetEntity")),
+                   cr(v.get("NetWorthOfTargetEntity")))
+
+    head = f"🤝 {ev} — {target}" + (f" ({industry})" if industry else "")
+    lines = []
+    c = []
+    if nature:
+        c.append(f"{nature.lower()} consideration")
+    if cost is not None:
+        c.append(f"₹{cost:,.1f} cr")
+    c.append("related-party" if related else "not related party")
+    if arms:
+        c.append("arm’s length")
+    lines.append("- " + " · ".join(c))
+    if objects:
+        lines.append("- Purpose: " + objects[:140].rstrip())
+    tf = [s for s, x in (("turnover", to), ("PAT", pat), ("net worth", nw)) if x is not None]
+    if tf:
+        lines.append("- Target: " + " · ".join(
+            f"{lbl} ₹{val:,.1f} cr" for lbl, val in
+            (("turnover", to), ("PAT", pat), ("net worth", nw)) if val is not None))
+    if timeline:
+        lines.append("- " + timeline[:120].rstrip())
+    why = ("🚨 RELATED-PARTY deal — scrutinise" if related
+           else "M&A / expansion — weigh size & rationale vs the company")
     return html.escape("\n".join([head] + lines)) + f"\n<b>Why it matters:</b> {html.escape(why)}"
 
 

@@ -318,6 +318,16 @@ break.
     flag). Wired into run_filings as the non-PDF branch (`.xml` → `_summarize_xbrl`);
     404/unknown types still fall back to headline + NSE-page link. Extend by adding
     a parser for another XBRL schema keyed off its tag set.
+    - **Reg-30 acquisitions now parsed too (`_summarize_xbrl_reg30`):** target /
+      consideration (₹ cr) / rationale / target financials / timeline, with a 🚨
+      RELATED-PARTY flag. **KEY finding — the XBRL 404 is a PUBLISH DELAY, not a dead
+      link:** NSE posts the WebXMLFile minutes-to-hours AFTER the RSS headline, so a
+      3-min poll often 404s but the file appears later (verified: Banswara's Reg30 was
+      404 fresh, 200 next day). CIMG tends to publish fast, Reg30 slow. **Not yet
+      solved:** catching the delayed ones needs a retry (hold-and-retry within a
+      bounded window, or alert-now-then-upgrade) — a UX call (delay vs double-alert)
+      pending Lakshmi. The NSE announcements API DOES expose companion PDFs but is
+      datacenter-IP-blocked (House Rule #1), so unusable from the worker.
 - Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
   NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
   matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
