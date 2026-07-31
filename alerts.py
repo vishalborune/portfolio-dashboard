@@ -1440,13 +1440,32 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
         if not matched:
             continue
         out.append({
-            "headline": (it["desc"] or it["title"])[:300],
+            "headline": (it["desc"] or it["title"])[:500],
             "date": it["date"],
             "url": it["url"] or "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
         })
         if len(out) >= 10:
             break
     return out
+
+
+def _filing_link(url: str, exch: str, sym: str) -> str:
+    """Clickable link for a filing. A real PDF → the document itself. But NSE's
+    XBRL 'WebXMLFile' attachments (board-meeting prior intimations etc.) are NOT
+    publicly downloadable — that link 404s (Lakshmi hit exactly this 31-Jul-2026)
+    — so for any non-PDF NSE filing we point at the stock's NSE page instead of
+    emitting a dead link. BSE keeps its own attachment URL."""
+    url = (url or "").strip()
+    esc = html.escape
+    if url.lower().endswith(".pdf"):
+        return f'<a href="{esc(url, quote=True)}">filing ↗</a>'
+    if exch == "XNSE" and sym:
+        return (f'<a href="https://www.nseindia.com/get-quotes/equity?'
+                f'symbol={esc(sym, quote=True)}">NSE page ↗</a>')
+    if url:
+        return f'<a href="{esc(url, quote=True)}">filing ↗</a>'
+    return ('<a href="https://www.nseindia.com/companies-listing/'
+            'corporate-filings-announcements">NSE filings ↗</a>')
 
 
 def run_filings(nse_only: bool = False):
@@ -1517,17 +1536,23 @@ def run_filings(nse_only: bool = False):
             if fp in seen or fp in fp_meta:
                 continue
             starred = any(k in hl for k in MATERIAL_KEYWORDS)
-            # Only spend summary tokens on filings that will actually be sent.
+            url = a["url"] or ""
+            is_pdf = url.lower().endswith(".pdf")
+            # Only spend summary tokens on filings that will actually be sent AND
+            # are a readable PDF. XBRL/xml intimations can't be summarized (and
+            # their attachment 404s), so don't waste a fetch/token/log on them.
             gist = ""
-            if enabled and summaries_done < MAX_SUMMARIES_PER_RUN:
-                gist = summarize_filing(e["name"], a["headline"], a["url"])
+            if enabled and is_pdf and summaries_done < MAX_SUMMARIES_PER_RUN:
+                gist = summarize_filing(e["name"], a["headline"], url)
                 if gist:
                     summaries_done += 1
+            # Full headline (was double-truncated to 200 → cut mid-word); for a
+            # filing we can't summarize, the headline IS the payload. Link never
+            # dead: non-PDF NSE filings route to the stock's NSE page.
             body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b>: "
-                    f"{esc(a['headline'][:200])}"
+                    f"{esc(a['headline'][:500])}"
                     + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
-                    + f"\n{esc(a['date'] or '')} · "
-                    f"<a href=\"{esc(a['url'] or '', quote=True)}\">filing</a>")
+                    + f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
             fp_meta[fp] = (sym, a["headline"], a["date"])
             if enabled:
                 for g in enabled:

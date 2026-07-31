@@ -287,6 +287,23 @@ break.
     board outcomes drop in the EVENING and the NSE feed is only a ~1-day snapshot,
     so infrequent polling let them age off unseen. `MATERIAL_KEYWORDS` now
     includes "board meeting" (results are decided there).
+  - **Summaries were silently DEAD + XBRL link fix (31-Jul-2026, Lakshmi caught
+    both):** ROOT bug — `_download_pdf_b64` referenced an **undefined `HEADERS`**,
+    so it NameError'd inside its bare `except` and returned None for EVERY PDF →
+    `summarize_filing` bailed before calling Claude → every filing had gone out
+    **headline-only since that code landed**, regardless of the (present)
+    ANTHROPIC_API_KEY. Fix: module-level `HEADERS` (browser UA) + logging on the
+    missing-key / fetch-fail paths (were silent, rule #3). Content upgrades:
+    generic gist now ends with a "Why it matters" line; the results template ends
+    with a computed **"Take:"** line (margin story from the numbers, Python-derived
+    — rule #2). `dryrun.py` now passes ANTHROPIC_API_KEY through so
+    `python dryrun.py filings-nse` previews real summaries.
+  - **XBRL intimations (`_filing_link`):** NSE board-meeting **prior intimations**
+    are `/corporate/xbrl/…WebXMLFile_….xml` links that **404** and can't be
+    summarized. So: the AI gist ONLY runs on `.pdf` attachments; non-PDF NSE
+    filings stay headline-only (the full headline IS the payload) and their link
+    is swapped for the stock's **NSE page** so it's never dead. Headline cap raised
+    200→500 (was double-truncated, cutting "June"→"Ju").
 - Bulk/block deals: BUILT for NSE + BSE (21-Jul-2026) — `alerts.run_deals`.
   NSE: `fetch_nse_deals` reads daily bulk.csv/block.csv (friendly archives host),
   matched by trading SYMBOL. BSE: `fetch_bse_deals` hits BulkDeal_Beta/BlockDeal_Beta
