@@ -330,6 +330,19 @@ break.
   the source), so the 52W window can't silently differ per row. `high_52w` is **display-only**
   — no alert path consumes it. The sibling `peak` (risk-stop, 126d) is deliberately 6-month
   and was NOT touched.
+- **Today's P&L intraday bug FIXED (31-Jul-2026, Vishal caught it):** during market
+  hours `app.fetch_live_prices` took the "bar (settled close)" branch because Yahoo's
+  DAILY endpoint returns today's IN-PROGRESS bar (its date >= expected close) and that
+  daily series frequently OMITS the prior session — so `b_prev` (`iloc[-2]`) was TWO
+  sessions stale and **every holding's day-change was computed against a 2-day-old
+  close**. Dashboard showed Today's P&L **-Rs 13,282** on a day the broker showed
+  **~+Rs 20k**; e.g. ADF Foods rendered -8.4% (276 vs a stale 301.8 from two days back)
+  when it was really +5.4% (276 vs the true prior close 262.1). Fix: the settled-bar
+  branch now also requires **`not market_is_open()`** — intraday the live **quote**
+  wins (its `previous_close` is the correct reference). After the fix Today's P&L read
+  +Rs 29,929, matching the broker. **Display-only** (KPI + Day Change % column); no
+  alert path consumes it. **Caveat (unchanged):** SME/bhavcopy names have no live feed,
+  so intraday their "day change" is still the last EOD session's move — structural.
 
 ## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
 - **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,

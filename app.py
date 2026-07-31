@@ -384,6 +384,7 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
             pass
 
     expected = last_expected_close_date()
+    market_open = market_is_open()
     MAX_PLAUSIBLE_MOVE = 0.25   # smallcap daily circuit ~20%; beyond this per
                                  # missing day, the quote is garbage, not a move
     rows = []
@@ -418,8 +419,14 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
             if abs(q_lp / b_close - 1) > band:
                 quote_ok = False
 
-        if bar_is_fresh and b_close:
-            # After close with a same-date bar: the settled close is authoritative
+        if bar_is_fresh and b_close and not market_open:
+            # After close with a same-date bar: the settled close is authoritative.
+            # But NOT during market hours — Yahoo's daily endpoint returns today's
+            # IN-PROGRESS bar and often OMITS the prior session, so b_prev (iloc[-2])
+            # is TWO sessions stale and the day-change is wrong (Vishal 31-Jul-2026:
+            # portfolio read -₹13k vs a real +₹20k because every name was compared
+            # to a 2-day-old close). Intraday the live quote — which carries the
+            # correct previous_close — must win.
             cmp_, prev, stale, source = b_close, b_prev, False, "bar (settled close)"
         elif quote_ok:
             cmp_ = q_lp
