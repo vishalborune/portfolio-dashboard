@@ -54,9 +54,14 @@ def _now():
     return datetime.now(IST)
 
 
-def _within(now, start, end) -> bool:
-    """Is (hh, mm) inside [start, end] on a weekday?"""
-    if now.weekday() >= 5:
+def _within(now, start, end, weekends=False) -> bool:
+    """Is (hh, mm) inside [start, end]? Weekday-only unless weekends=True.
+    Market/live checks stay weekday (market's shut Sat/Sun) but FILINGS run 7
+    days — companies file board-meeting outcomes/results on Saturdays and NSE's
+    feed is a ~1-day snapshot, so a weekend filing would age off before Monday's
+    first weekday run and be MISSED (found 01-Aug-2026: 13 holdings' filings sat
+    unpolled on a Saturday)."""
+    if not weekends and now.weekday() >= 5:
         return False
     return start <= (now.hour, now.minute) <= end
 
@@ -102,8 +107,8 @@ def main():
                 except Exception as e:
                     print(f"⚠️ [worker] live cycle failed: {type(e).__name__}: {e}")
 
-            # ---- NSE filings ------------------------------------------------
-            if (_within(now, FILINGS_OPEN, FILINGS_CLOSE)
+            # ---- NSE filings (7 days — companies file on weekends too) ------
+            if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)
                     and time.time() - last_nse >= NSE_FILINGS_INTERVAL):
                 last_nse = time.time()
                 try:
@@ -112,8 +117,9 @@ def main():
                 except Exception as e:
                     print(f"⚠️ [worker] NSE filings failed: {type(e).__name__}: {e}")
 
-            # ---- BSE filings (gentle) ---------------------------------------
-            if (_within(now, FILINGS_OPEN, FILINGS_CLOSE)
+            # ---- BSE filings (gentle; 7 days — and weekends have NO bhavcopy
+            #      IP contention since bhavcopy is weekday-only) --------------
+            if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)
                     and time.time() - last_bse >= BSE_FILINGS_INTERVAL):
                 last_bse = time.time()
                 try:
@@ -126,7 +132,7 @@ def main():
             if time.time() - last_beat >= 900:
                 last_beat = time.time()
                 where = ("market hours" if _within(now, MARKET_OPEN, MARKET_CLOSE)
-                         else ("filings window" if _within(now, FILINGS_OPEN, FILINGS_CLOSE)
+                         else ("filings window" if _within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)
                                else "idle (outside hours)"))
                 print(f"[{now:%Y-%m-%d %H:%M}] heartbeat — {where}, "
                       f"{len(levels)} tickers armed")
