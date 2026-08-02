@@ -435,6 +435,7 @@ def daily_entry_levels(ticker: str) -> dict | None:
     except Exception:
         high_52w = None
     return {
+        "ema5": float(close.ewm(span=5, adjust=False).mean().iloc[-1]),
         "ema10": float(close.ewm(span=10, adjust=False).mean().iloc[-1]),
         "ema21": float(close.ewm(span=21, adjust=False).mean().iloc[-1]),
         "ref_close": float(close.iloc[-1]),

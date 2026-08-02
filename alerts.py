@@ -497,6 +497,91 @@ def check_wema_touch(client, prices: dict):
         print(f"Sent {sent} 10-week EMA touch alert(s).")
 
 
+JUMP_MIN = 0.01   # 5-EMA touch: CMP must close >=1% above the 5-EMA to count as a
+                  # "jump" (not merely holding the line). Tuning knob — lower for
+                  # more alerts, higher for only the strongest bounces.
+
+
+def check_ema5_touch(client, prices: dict):
+    """5-DAY EMA touch alert for WATCHLIST stocks (Lakshmi 02-Aug-2026). A fast-
+    momentum timing signal — a watchlist name in an UPTREND pulls back to its
+    5-day EMA and BOUNCES ('touching ema5 and jumping'). `prices` =
+    {ticker: (cmp, day_low, ema5, prev_close, ema21)}; LIVE from the fast poller
+    (~1 min) or EOD closes in the evening pass (covers SME watchlist too).
+
+    An EVENT, not proximity. The 5-EMA is so fast that price hugs it every day, so
+    a plain 'near it' alert would fire on nearly every trending stock daily (the
+    exact lesson the 10-week EMA touch already taught). We require ALL of:
+      • dipped   — the day's LOW reached the 5-EMA (it actually touched the line)
+      • jumped   — CMP is clearly ABOVE the 5-EMA *and* up on the day (the bounce)
+      • uptrend  — CMP above the 21-DMA (only meaningful in an uptrend)
+    That captures both a pullback-to-5EMA bounce and a cross-up through it, but
+    excludes stocks merely loitering on the line (no dip, or no jump) and anything
+    not trending. Dedup kind EMA5, once/stock/group/day."""
+    rows = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    if not rows:
+        return
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    by_ticker = {}
+    for r in rows:
+        m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(r.get("stock_name") or ""))
+        if not m:
+            continue
+        exch, sym = m.group(1), m.group(2).strip()
+        ticker = f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+        grp = PF_GROUP.get(int(r.get("portfolio_id", 1)), "vishal")
+        e = by_ticker.setdefault(ticker, {"name": short_name(r["stock_name"]), "groups": {}})
+        e["groups"].setdefault(grp, []).append(int(r.get("portfolio_id", 1)))
+
+    band = signals.TOUCH_BAND
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        cmp_, day_low, ema5, prev_close, ema21 = prices.get(ticker, (None, None, None, None, None))
+        if cmp_ is None or not ema5:
+            continue
+        dipped = day_low is not None and day_low <= ema5 * (1 + band)         # touched the line
+        # bounced DECISIVELY (>=1% above the 5-EMA) and up on the day — not just
+        # holding the line (JUMP_MIN is the knob: lower = more alerts).
+        jumped = cmp_ >= ema5 * (1 + JUMP_MIN) and (prev_close is None or cmp_ > prev_close)
+        uptrend = ema21 is not None and cmp_ > ema21                          # in an uptrend
+        if not (dipped and jumped and uptrend):
+            continue
+        for grp, pfs in e["groups"].items():
+            if (ticker, grp, "EMA5") in already:
+                continue
+            pct = (cmp_ / ema5 - 1) * 100
+            msgs_by_group.setdefault(grp, []).append(
+                f"⚡ {_grp_tag(grp, pfs)}<b>{e['name']}</b> — bounced off the 5-day EMA (uptrend)\n"
+                f"CMP ₹{cmp_:,.2f} vs 5EMA ₹{ema5:,.2f} ({pct:+.1f}%), above 21-DMA")
+            to_log.append((ticker, grp, "EMA5"))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} 5EMA touch alert(s) for '{grp}' — Telegram off)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("⚡ <b>5-day EMA touch · watchlist</b>\n\n" + "\n\n".join(msgs), chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp, "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} 5-day EMA touch alert(s).")
+
+
 # ---------------------------------------------------------------------------
 # FAST INTRADAY ENTRY POLLING (mainboard) + EOD entry pass (all, incl SME)
 # Lakshmi 21-Jul-2026: alert latency is the app's core value. Mainboard names
@@ -632,6 +717,23 @@ def run_eod_entries():
         check_holding_adds(client)
     except Exception as e:
         print(f"⚠️ eod holding adds failed: {e}")
+    # 5-day EMA touch on the WATCHLIST off EOD closes (the only pass for SME
+    # watchlist names; a final authoritative pass for mainboard).
+    try:
+        wl = client.table("watchlist").select("stock_name").execute().data or []
+        ema5_prices, seen5 = {}, set()
+        for r in wl:
+            t = extract_yf_ticker(r.get("stock_name"))
+            if not t or t in seen5:
+                continue
+            seen5.add(t)
+            lv = signals.daily_entry_levels(t)
+            if lv:
+                ema5_prices[t] = (lv["ref_close"], lv["ref_low"], lv.get("ema5"),
+                                  lv.get("prev_close"), lv.get("ema21"))
+        check_ema5_touch(client, ema5_prices)
+    except Exception as e:
+        print(f"⚠️ eod 5EMA touch failed: {e}")
     # Risk stops on EOD closes — the ONLY risk pass for SME (no live feed) and a
     # daily backstop for mainboard. Levels/peak come from the same daily fetch.
     try:
@@ -696,6 +798,10 @@ def fast_cycle(client, levels: dict, wema: dict) -> int:
     wema_prices = {t: (quotes[t][0], quotes[t][1], w, levels.get(t, {}).get("prev_close"))
                    for t, w in wema.items() if quotes.get(t, (None,))[0] is not None}
     check_wema_touch(client, wema_prices)
+    ema5_prices = {t: (quotes[t][0], quotes[t][1], lv.get("ema5"),
+                       lv.get("prev_close"), lv.get("ema21"))
+                   for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
+    check_ema5_touch(client, ema5_prices)
     return priced
 
 

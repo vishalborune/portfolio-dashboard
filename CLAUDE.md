@@ -185,6 +185,17 @@ switch sources without disclosure.
   have closed clearly above it previously. Plain proximity fired on 19 holdings
   in one day (the 10wEMA is a slow mean-reversion line stocks loiter around);
   requiring the approach cut it to 8 real arrivals. Don't "simplify" that away.
+- **5-day EMA touch (`alerts.check_ema5_touch`, Lakshmi 02-Aug-2026)**: WATCHLIST-only
+  fast-momentum timing — a name that TOUCHES its 5-DAY EMA and JUMPS. Same cadence
+  (mainboard live ~1 min via `fast_cycle`; SME + final pass in `run_eod_entries`),
+  `ema5` added to `signals.daily_entry_levels`, dedup kind EMA5. **The 5-EMA is
+  faster than the 10wEMA — price hugs it DAILY — so an even stricter EVENT gate:**
+  fires only when (a) the day's LOW reached the 5-EMA (dipped), (b) CMP closed
+  **≥`JUMP_MIN`=1% ABOVE** it AND up on the day (a real bounce, not just holding),
+  AND (c) CMP > 21-DMA (uptrend). A plain proximity/hold gate fired on 6/15
+  watchlist names in one day; the 1% jump gate cut it to 4 decisive bounces.
+  `JUMP_MIN` is the tuning knob (lower = more alerts). Don't drop the dipped/jumped/
+  uptrend trio — that's what keeps this off nearly-every-trending-stock-daily.
 - Dashboard shows **% distance** to the DMAs/10wEMA, never the ₹ level (Lakshmi
   22-Jul-2026: "how far from the zone" is the decision; the rupee value isn't).
 - **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires
