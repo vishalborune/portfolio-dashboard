@@ -2741,9 +2741,10 @@ def _bench_html(xirr, bench):
 
 
 def run_morning_brief():
-    """~08:30 IST daily: ONE Telegram brief of Lakshmi+Abinaya holdings that have a
+    """~08:30 IST daily: ONE Telegram brief of Lakshmi+Abinaya names with a
     corporate event (board meeting → results/dividend/fund-raise/…) scheduled
-    TODAY, from prior intimations captured by run_filings. Forward-looking
+    TODAY — HOLDINGS (📌) and WATCHLIST (👀) in separate sections — from prior
+    intimations captured by run_filings. Forward-looking
     'today's agenda' so Lakshmi knows what's coming before the open (Lakshmi
     02-Aug-2026). SILENT when nothing is due today. Dedup marker in
     entry_alert_log (ticker '__morning_brief__') so worker + a backstop can't
@@ -2761,18 +2762,28 @@ def run_morning_brief():
         pass
     holdings = get_holdings(client)
     lak = {p for p, g in PF_GROUP.items() if g == "lakshmi"}
-    names = {}
+    hold_names = {}
     for _, h in holdings.iterrows():
-        if int(h.get("portfolio_id", 1)) not in lak:
-            continue
-        t = extract_yf_ticker(h["stock_name"])
-        if t:
-            names[t] = short_name(h["stock_name"])
-    if not names:
+        if int(h.get("portfolio_id", 1)) in lak:
+            t = extract_yf_ticker(h["stock_name"])
+            if t:
+                hold_names[t] = short_name(h["stock_name"])
+    try:
+        wl = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    except Exception:
+        wl = []
+    watch_names = {}
+    for r in wl:
+        if int(r.get("portfolio_id", 1)) in lak:
+            t = extract_yf_ticker(r.get("stock_name"))
+            if t and t not in hold_names:              # a held name counts as a holding
+                watch_names[t] = short_name(r["stock_name"])
+    all_t = list(set(hold_names) | set(watch_names))
+    if not all_t:
         return
     try:
         evs = client.table("scheduled_events").select("*") \
-            .eq("event_date", today_iso).in_("ticker", list(names)).execute().data or []
+            .eq("event_date", today_iso).in_("ticker", all_t).execute().data or []
     except Exception as e:
         print(f"(morning brief: scheduled_events query failed — is the table created? {e})")
         return
@@ -2782,10 +2793,17 @@ def run_morning_brief():
     if not by_t:
         print("(morning brief: no events scheduled today)")
         return
-    lines = [f"• <b>{html.escape(names.get(t, t))}</b> — {html.escape(ev.get('purpose') or 'board meeting')}"
-             for t, ev in sorted(by_t.items(), key=lambda kv: names.get(kv[0], kv[0]))]
-    body = (f"🗓 <b>Today's agenda · {date.today():%d %b}</b>\n"
-            f"Holdings with a board meeting / event scheduled today:\n\n" + "\n".join(lines))
+
+    def _ln(nm, ev):
+        return f"• <b>{html.escape(nm)}</b> — {html.escape(ev.get('purpose') or 'board meeting')}"
+    hold_lines = sorted(_ln(hold_names[t], ev) for t, ev in by_t.items() if t in hold_names)
+    watch_lines = sorted(_ln(watch_names[t], ev) for t, ev in by_t.items() if t in watch_names)
+    parts = [f"🗓 <b>Today's agenda · {date.today():%d %b}</b>"]
+    if hold_lines:
+        parts.append("📌 <b>Holdings</b>\n" + "\n".join(hold_lines))
+    if watch_lines:
+        parts.append("👀 <b>Watchlist</b>\n" + "\n".join(watch_lines))
+    body = "\n\n".join(parts)
     chat = chat_id_for_group("lakshmi")
     if not chat:
         return
