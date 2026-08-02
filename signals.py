@@ -504,6 +504,8 @@ def daily_entry_state(ticker: str) -> dict | None:
         return None
     d = classify_entry_zone(ticker, lv["ref_close"], lv["ref_low"],
                             lv["ema10"], lv["ema21"])
+    e5 = lv.get("ema5")
+    d["% vs 5DMA"] = round((lv["ref_close"] / e5 - 1) * 100, 1) if e5 else None
     hi = lv.get("high_52w")
     d["52W High"] = round(hi, 2) if hi else None
     d["% vs 52WH"] = round((lv["ref_close"] / hi - 1) * 100, 1) if hi else None
@@ -511,7 +513,7 @@ def daily_entry_state(ticker: str) -> dict | None:
 
 
 def entry_states_for_watchlist(tickers: tuple) -> "pd.DataFrame":
-    _cols = ["Ticker", "CMP (d)", "10DMA", "21DMA", "% vs 10DMA", "% vs 21DMA",
+    _cols = ["Ticker", "CMP (d)", "10DMA", "21DMA", "% vs 5DMA", "% vs 10DMA", "% vs 21DMA",
              "Entry Zone", "Entry Advice", "52W High", "% vs 52WH"]
     if not tickers:
         return pd.DataFrame(columns=_cols)

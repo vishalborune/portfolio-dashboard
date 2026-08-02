@@ -195,7 +195,10 @@ switch sources without disclosure.
   AND (c) CMP > 21-DMA (uptrend). A plain proximity/hold gate fired on 6/15
   watchlist names in one day; the 1% jump gate cut it to 4 decisive bounces.
   `JUMP_MIN` is the tuning knob (lower = more alerts). Don't drop the dipped/jumped/
-  uptrend trio — that's what keeps this off nearly-every-trending-stock-daily.
+  uptrend trio — that's what keeps this off nearly-every-trending-stock-daily. The
+  **watchlist dashboard also shows a `% vs 5DMA` column** (02-Aug-2026) next to
+  10/21 — `signals.daily_entry_state`/`entry_states_for_watchlist` carry it (the
+  alert is Telegram; this is the on-screen view Lakshmi expected to see).
 - **Morning agenda brief (`alerts.run_morning_brief`, Lakshmi 02-Aug-2026)**: ONE
   Telegram message ~08:30 IST listing Lakshmi+Abinaya names with a corporate
   event (board meeting → results/dividend/fund-raise) scheduled TODAY — HOLDINGS
