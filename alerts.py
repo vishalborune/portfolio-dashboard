@@ -1926,6 +1926,59 @@ def _filing_link(url: str, exch: str, sym: str) -> str:
             'corporate-filings-announcements">NSE filings ↗</a>')
 
 
+_BM_DATE_RE = re.compile(
+    r"(?:to be held on|will be held on|convened on|held on|scheduled (?:on|for))\s+"
+    r"([0-9]{1,2}(?:st|nd|rd|th)?[-./ ][A-Za-z0-9]{2,9}[-./, ]+[0-9]{2,4}"
+    r"|[A-Za-z]{3,9}\s+[0-9]{1,2},?\s*[0-9]{4})", re.I)
+_BM_PURPOSE = [("result", "results"), ("dividend", "dividend"), ("fund rais", "fund-raise"),
+               ("fund-rais", "fund-raise"), ("buy back", "buyback"), ("buyback", "buyback"),
+               ("bonus", "bonus"), ("stock split", "split"), ("sub-division", "split"),
+               ("preferential", "preferential"), ("rights issue", "rights issue")]
+
+
+def _parse_board_meeting(headline):
+    """If `headline` is a board-meeting PRIOR INTIMATION, return (event_date_iso,
+    purpose) for a TODAY-or-future meeting; else None. Feeds the morning 'today's
+    agenda' brief (Lakshmi 02-Aug-2026)."""
+    h = headline or ""
+    if "board meeting" not in h.lower():
+        return None
+    m = _BM_DATE_RE.search(h)
+    if not m:
+        return None
+    d = _parse_stmt_date(re.sub(r"(st|nd|rd|th)", "", m.group(1)))
+    if not d:
+        return None
+    try:
+        ev = date(d[0], d[1], d[2])
+    except Exception:
+        return None
+    if ev < date.today():
+        return None                       # a past meeting (an outcome, or stale)
+    hl = h.lower()
+    tags = []
+    for k, lbl in _BM_PURPOSE:
+        if k in hl and lbl not in tags:
+            tags.append(lbl)
+    return ev.isoformat(), (", ".join(tags) or "board meeting")
+
+
+def _capture_event(client, ticker, headline, source_date):
+    """Store a board-meeting intimation in scheduled_events (idempotent upsert).
+    Never raises — a missing table or a non-intimation just means no capture."""
+    ev = _parse_board_meeting(headline)
+    if not ev:
+        return
+    try:
+        client.table("scheduled_events").upsert({
+            "ticker": ticker, "event_date": ev[0], "event_type": "board_meeting",
+            "purpose": ev[1], "headline": (headline or "")[:300],
+            "source_date": source_date or None},
+            on_conflict="ticker,event_date,event_type").execute()
+    except Exception:
+        pass
+
+
 def run_filings(nse_only: bool = False):
     """Exchange-announcement alerts for stocks we HOLD or WATCH. nse_only=True
     skips the BSE per-scrip fetch (used by the 3-min fast path so only NSE's
@@ -2038,6 +2091,10 @@ def run_filings(nse_only: bool = False):
             if is_xml and enabled and gist:      # summary already in THIS msg —
                 fps.append(fp_sum)               # record fp_sum too, no follow-up
             fp_meta[fp] = (sym, a["headline"], a["date"])
+            # Capture a board-meeting PRIOR INTIMATION for the morning agenda brief
+            # (idempotent; ticker in yf form so it matches holdings later).
+            _capture_event(client, f"{sym}.NS" if e["exch"] == "XNSE" else f"{sym}.BO",
+                           a["headline"], a["date"])
             if len(fps) > 1:
                 fp_meta[fp_sum] = (sym, a["headline"] + " [xbrl summary]", a["date"])
             if enabled:
@@ -2683,6 +2740,65 @@ def _bench_html(xirr, bench):
             f"<span style='color:{col}'>{verdict}</span>{note}</p>")
 
 
+def run_morning_brief():
+    """~08:30 IST daily: ONE Telegram brief of Lakshmi+Abinaya holdings that have a
+    corporate event (board meeting → results/dividend/fund-raise/…) scheduled
+    TODAY, from prior intimations captured by run_filings. Forward-looking
+    'today's agenda' so Lakshmi knows what's coming before the open (Lakshmi
+    02-Aug-2026). SILENT when nothing is due today. Dedup marker in
+    entry_alert_log (ticker '__morning_brief__') so worker + a backstop can't
+    double-send. NOTE: it populates FORWARD — only meetings intimated AFTER this
+    shipped are known, so it fills in over ~1-2 weeks (NSE's forthcoming-meetings
+    API is datacenter-blocked, House Rule #1, so no backfill)."""
+    client = sb()
+    today_iso = date.today().isoformat()
+    try:
+        if client.table("entry_alert_log").select("ticker").eq("alert_date", today_iso) \
+                .eq("ticker", "__morning_brief__").eq("kind", "BRIEF").execute().data:
+            print("(morning brief already sent today)")
+            return
+    except Exception:
+        pass
+    holdings = get_holdings(client)
+    lak = {p for p, g in PF_GROUP.items() if g == "lakshmi"}
+    names = {}
+    for _, h in holdings.iterrows():
+        if int(h.get("portfolio_id", 1)) not in lak:
+            continue
+        t = extract_yf_ticker(h["stock_name"])
+        if t:
+            names[t] = short_name(h["stock_name"])
+    if not names:
+        return
+    try:
+        evs = client.table("scheduled_events").select("*") \
+            .eq("event_date", today_iso).in_("ticker", list(names)).execute().data or []
+    except Exception as e:
+        print(f"(morning brief: scheduled_events query failed — is the table created? {e})")
+        return
+    by_t = {}
+    for ev in evs:
+        by_t.setdefault(ev["ticker"], ev)
+    if not by_t:
+        print("(morning brief: no events scheduled today)")
+        return
+    lines = [f"• <b>{html.escape(names.get(t, t))}</b> — {html.escape(ev.get('purpose') or 'board meeting')}"
+             for t, ev in sorted(by_t.items(), key=lambda kv: names.get(kv[0], kv[0]))]
+    body = (f"🗓 <b>Today's agenda · {date.today():%d %b}</b>\n"
+            f"Holdings with a board meeting / event scheduled today:\n\n" + "\n".join(lines))
+    chat = chat_id_for_group("lakshmi")
+    if not chat:
+        return
+    if send_telegram(body, chat_id=chat):
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": "__morning_brief__", "grp": "lakshmi",
+                "alert_date": today_iso, "kind": "BRIEF"}).execute()
+        except Exception:
+            pass
+        print(f"Morning brief sent: {len(by_t)} event(s) today.")
+
+
 def run_digest():
     """Weekly digest emailed to DIGEST_EMAILS. Covers ALL THREE portfolios so
     Vishal sees his OWN book in the email he already receives (added 01-Aug-2026,
@@ -3081,4 +3197,5 @@ if __name__ == "__main__":
          "deals": run_deals,
          "calendar": run_calendar,
          "digest": run_digest,
+         "morning-brief": run_morning_brief,
          "eod-entries": run_eod_entries}.get(mode, run_states)()

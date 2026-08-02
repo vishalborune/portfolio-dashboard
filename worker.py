@@ -48,6 +48,8 @@ MARKET_OPEN = (9, 10)       # a few minutes before the 09:15 open
 MARKET_CLOSE = (15, 35)
 FILINGS_OPEN = (8, 30)
 FILINGS_CLOSE = (23, 0)
+BRIEF_OPEN = (8, 30)        # morning 'today's agenda' brief window (once/day)
+BRIEF_CLOSE = (9, 15)
 
 
 def _now():
@@ -81,6 +83,7 @@ def main():
     levels, wema, levels_day = {}, {}, None
     last_live = last_nse = last_bse = 0.0
     last_beat = 0.0
+    brief_day = None            # morning brief runs once per calendar day
 
     while True:
         try:
@@ -106,6 +109,14 @@ def main():
                     print(f"[{now:%H:%M:%S}] live: {priced}/{len(levels)} priced")
                 except Exception as e:
                     print(f"⚠️ [worker] live cycle failed: {type(e).__name__}: {e}")
+
+            # ---- morning 'today's agenda' brief (once/day ~08:30, 7 days) ---
+            if _within(now, BRIEF_OPEN, BRIEF_CLOSE, weekends=True) and brief_day != today:
+                brief_day = today
+                try:
+                    alerts.run_morning_brief()
+                except Exception as e:
+                    print(f"⚠️ [worker] morning brief failed: {type(e).__name__}: {e}")
 
             # ---- NSE filings (7 days — companies file on weekends too) ------
             if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)

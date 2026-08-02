@@ -196,6 +196,23 @@ switch sources without disclosure.
   watchlist names in one day; the 1% jump gate cut it to 4 decisive bounces.
   `JUMP_MIN` is the tuning knob (lower = more alerts). Don't drop the dipped/jumped/
   uptrend trio — that's what keeps this off nearly-every-trending-stock-daily.
+- **Morning agenda brief (`alerts.run_morning_brief`, Lakshmi 02-Aug-2026)**: ONE
+  Telegram message ~08:30 IST listing Lakshmi+Abinaya HOLDINGS with a corporate
+  event (board meeting → results/dividend/fund-raise) scheduled TODAY — forward-
+  looking 'what's coming today' so he plans the session. Board-meeting PRIOR
+  INTIMATIONS ("Board Meeting to be held on <date>") are captured by `run_filings`
+  (`_capture_event`/`_parse_board_meeting`) into the `scheduled_events` table as
+  they arrive; the brief queries event_date==today. Runs on the WORKER (precise,
+  once/day via `brief_day` guard, `_within(...,weekends=True)`) + a dedup marker
+  in entry_alert_log (ticker '__morning_brief__') so it can't double-send. SILENT
+  when nothing's due. **Populates FORWARD only** — meetings intimated before this
+  shipped aren't known (NSE's forthcoming-meetings API is datacenter-blocked, no
+  backfill), so it fills in over ~1-2 weeks. **NEEDS a one-time table** (schema not
+  in repo, per the Files table note):
+  `create table if not exists scheduled_events (id bigserial primary key, ticker
+  text not null, event_date date not null, event_type text default 'board_meeting',
+  purpose text, headline text, source_date date, created_at timestamptz default
+  now(), unique (ticker, event_date, event_type));`
 - Dashboard shows **% distance** to the DMAs/10wEMA, never the ₹ level (Lakshmi
   22-Jul-2026: "how far from the zone" is the decision; the rupee value isn't).
 - **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires

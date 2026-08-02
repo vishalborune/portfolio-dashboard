@@ -56,6 +56,7 @@ else:
         "filings-audit": alerts.run_filings_audit,
         "deals": alerts.run_deals,
         "digest": alerts.run_digest,
+        "morning-brief": alerts.run_morning_brief,
         "eod-entries": alerts.run_eod_entries,
     }.get(mode, alerts.run_states)()
 
