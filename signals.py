@@ -300,6 +300,54 @@ def classify_series(df: pd.DataFrame) -> pd.DataFrame:
     return ind
 
 
+def _reconcile_last_week(ticker: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Guard against a STALE weekly close (House Rule #7 — "non-empty != usable").
+
+    Yahoo's 1-week bar can silently MISS the latest session, so the
+    just-completed week's close comes back stale-LOW. That once fired a FALSE
+    'MOMENTUM FADING' on HFCL (03-Aug-2026): the weekly bar showed Thursday's
+    close ₹184.69 — below the 10-wk EMA — instead of Friday's true close
+    ₹193.92, which was ABOVE it (state should have stayed MAINTAIN/ADD). Same
+    family as the Today's-P&L bug: Yahoo's endpoint dropping the most recent bar.
+
+    Fix: cross-check the last weekly close against a FRESH daily fetch for the
+    SAME ISO week and correct it if they disagree. The daily fetch is only
+    trusted when it is at least as fresh as the weekly frame, so this can never
+    move the close in the STALER direction. SME names resolve both sides from the
+    same bhavcopy table, so they agree and nothing changes."""
+    try:
+        wk_ts = pd.Timestamp(df["date"].iloc[-1])
+        wk_close = float(df["close"].iloc[-1])
+        if not wk_close or pd.isna(wk_ts):
+            return df
+        dd = _fetch_daily(ticker)
+        if dd.empty or not pd.api.types.is_datetime64_any_dtype(dd.index):
+            return df
+        if dd.index.max() < wk_ts:            # daily is BEHIND weekly — don't stale it
+            return df
+        wk_iso = wk_ts.isocalendar()
+        ic = dd.index.isocalendar()
+        mask = (ic["year"] == wk_iso[0]) & (ic["week"] == wk_iso[1])
+        same = dd[mask.values]
+        if same.empty:
+            return df
+        true_close = float(same["close"].iloc[-1])
+        if true_close and abs(true_close - wk_close) / wk_close > 0.005:
+            out = df.copy()
+            out.iloc[-1, out.columns.get_loc("close")] = true_close
+            # keep the bar internally consistent (close must sit within high/low)
+            if "high" in out.columns:
+                out.iloc[-1, out.columns.get_loc("high")] = max(float(out["high"].iloc[-1]), true_close)
+            if "low" in out.columns:
+                out.iloc[-1, out.columns.get_loc("low")] = min(float(out["low"].iloc[-1]), true_close)
+            print(f"  [signals] {ticker}: stale weekly close reconciled "
+                  f"{wk_close:.2f} -> {true_close:.2f} (House Rule #7)")
+            return out
+    except Exception as e:
+        print(f"  [signals] {ticker}: weekly reconcile skipped ({e})")
+    return df
+
+
 def current_state(ticker: str) -> dict:
     """Fetch weekly data for one ticker and return the latest state + detail."""
     df = fetch_weekly(ticker)
@@ -308,6 +356,7 @@ def current_state(ticker: str) -> dict:
                 "reason": "Could not fetch weekly data" if df.empty
                           else f"Only {len(df)} weeks of history (need {MIN_WEEKS_REQUIRED}+)",
                 "ticker": ticker}
+    df = _reconcile_last_week(ticker, df)
     ind = compute_indicators(df)
     prev = ind.iloc[-2] if len(ind) >= 2 else None
     d = classify_row(ind.iloc[-1], prev_row=prev)
