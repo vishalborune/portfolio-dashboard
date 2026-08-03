@@ -449,6 +449,26 @@ break.
   +Rs 29,929, matching the broker. **Display-only** (KPI + Day Change % column); no
   alert path consumes it. **Caveat (unchanged):** SME/bhavcopy names have no live feed,
   so intraday their "day change" is still the last EOD session's move — structural.
+- **False state-change alert FIXED (03-Aug-2026, Lakshmi caught it):** the SAME Yahoo
+  "drops the latest session" gremlin as the Today's-P&L bug, now on the WEEKLY flowchart.
+  Yahoo's 1-wk bar silently omitted Friday's session, so HFCL's just-completed weekly
+  close came back as **Thursday's ₹184.69 (below the 10wEMA) instead of Friday's true
+  ₹193.92 (above it)** → fired a false **🟣 MOMENTUM FADING** when the real state was
+  **MAINTAIN/ADD** (stock was actually +4% making new highs). The stale numbers
+  reproduced the alert EXACTLY (184.69 / 10wEMA 188.9 / 20wEMA 162.4). Fix:
+  `signals._reconcile_last_week` — `current_state` (the single chokepoint BOTH the
+  dashboard and `alerts.run_states` use) now cross-checks the last weekly close against
+  a FRESH `_fetch_daily` for the **same ISO week** and corrects it if they disagree.
+  Only trusts the daily side when it's **at least as fresh as the weekly frame**
+  (`dd.index.max() >= wk_ts`), so it can NEVER move the close in the staler direction;
+  the bar's high/low are widened to stay internally consistent; correction fires only on
+  a >0.5% gap and logs WHY (rule #3). SME names resolve both sides from the same bhavcopy
+  table → agree → untouched. Verified: stale frame corrects 184.69→193.92 /
+  FADING→MAINTAIN/ADD, healthy frame left unchanged, live `states` dry-run reads
+  MAINTAIN/ADD. **Third lesson that a wrong number is worse than a blank (rule #2)** —
+  and the second consumer of Yahoo dailies to need its own freshness guard (the guard
+  doesn't port automatically — you must add it at each new consumer, cf. the `_sane_quotes`
+  lesson). Self-heals: next states run sends "HFCL → MAINTAIN/ADD (was MOMENTUM FADING)".
 
 ## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
 - **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,
