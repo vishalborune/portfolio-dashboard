@@ -24,6 +24,7 @@ TELEGRAM_CHAT_ID, and for digest: RESEND_API_KEY, DIGEST_EMAILS.
 import os
 import re
 import sys
+import time
 import html
 import hashlib
 from datetime import date, datetime, timedelta
@@ -1559,14 +1560,26 @@ BSE_FILING_SCRIPS = {
     "TRUECOLORS": "544531",
     "LEHAR": "532829",
     "SGRL": "540737",
+    "TANFACIND": "506854",   # BSE-only (verified: not on NSE), watchlist name
+}
+
+# Dual-listed on NSE too — route THEIR filings through the WORKING NSE RSS feed
+# (near real-time) instead of the dead BSE announcements API. NSE symbols verified
+# against NSE's own master equity list, 04-Aug-2026.
+BSE_TO_NSE = {
+    "539997": "KPL",          # Kwality Pharmaceuticals
+    "532856": "TIMETECHNO",   # Time Technoplast
 }
 
 
 def fetch_bse_announcements(scrip_code: str) -> list:
     """BSE announcements for one scrip. Returns list of dicts; [] on any failure.
-    Hardened 19-Jul-2026: explicit 7-day date range (empty date params now
-    return 'No Record Found!' even for valid codes), symbol->code mapping,
-    and BSE's quirky bare-string empty response treated as normal."""
+
+    SUPERSEDED 04-Aug-2026 by fetch_bse_announcements_screener and NO LONGER
+    CALLED by run_filings: BSE rebuilt this API behind an Akamai JS challenge that
+    returns 'No Record Found!' to any plain HTTP client (proven even from real
+    headless Chrome — 0 BSE filings had ever reached filings_seen). Kept for
+    reference / the response shape. See the Screener workaround below."""
     scrip_code = BSE_FILING_SCRIPS.get(scrip_code, scrip_code)
     if not str(scrip_code).isdigit():
         print(f"  (BSE: no scrip code known for '{scrip_code}' — add to BSE_FILING_SCRIPS)")
@@ -1610,6 +1623,107 @@ def fetch_bse_announcements(scrip_code: str) -> list:
         return out
     except Exception as e:
         print(f"  (BSE fetch failed for {scrip_code}: {e})")
+        return []
+
+
+# --- BSE announcements via Screener.in (the workaround for BSE's dead API) -----
+# BSE rebuilt its own announcements API behind an Akamai JS challenge that returns
+# "No Record Found!" to any plain HTTP client — verified 04-Aug-2026 even from a
+# REAL headless Chrome and every param variant (0 BSE filings had ever landed in
+# filings_seen as a result). Screener.in aggregates the same BSE announcements,
+# stays reachable from a datacenter IP (our fundamentals scraper already proves
+# this), and ingests a filing within MINUTES (measured: a live BSE filing showed
+# as '4m' on Screener). So an hourly poll here gives ~1h-latency BSE alerts.
+# Returns the SAME {headline, date, url} shape as fetch_bse_announcements, so it
+# drops straight into run_filings (dedup / routine-filter / AI summary / Telegram).
+_SCREENER_HDRS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
+_SCREENER_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def _screener_reltime_to_iso(txt: str) -> str:
+    """Screener's announcement timestamp label -> ISO date 'YYYY-MM-DD'.
+    It shows recent items relative ('36m','5h','2d') and older ones as a date
+    ('22 Jul', '15 Jun 2025'). We need only day precision (the filings cutoff is
+    coarse) AND stability across polls: 'Nm'/'Nh' -> today, 'Nd' -> today-N,
+    'DD Mon[ YYYY]' -> that date — all of which resolve to the real filing DAY, so
+    a later poll showing a different label still fingerprints to the same date.
+    Empty string on anything unparseable (caller treats blank as 'no cutoff')."""
+    t = (txt or "").strip().lower()
+    today = date.today()
+    try:
+        m = re.fullmatch(r"(\d+)\s*(m|min|mins|h|hr|hrs|d)", t)
+        if m:
+            n, unit = int(m.group(1)), m.group(2)
+            return ((today - timedelta(days=n)) if unit.startswith("d") else today).isoformat()
+        m = re.fullmatch(r"(\d{1,2})\s+([a-z]{3})(?:\s+(\d{4}))?", t)
+        if m:
+            mon = _SCREENER_MONTHS.get(m.group(2))
+            if mon:
+                yr = int(m.group(3)) if m.group(3) else today.year
+                iso = date(yr, mon, int(m.group(1)))
+                if not m.group(3) and iso > today:      # no year & future -> last year
+                    iso = date(yr - 1, mon, int(m.group(1)))
+                return iso.isoformat()
+    except Exception:
+        pass
+    return ""
+
+
+def fetch_bse_announcements_screener(scrip_code: str) -> list:
+    """BSE announcements for one scrip, scraped from its Screener.in page.
+    [] on any failure (logged, House Rule #3). Polite: one throttled request per
+    name, backs off on 429/403."""
+    code = BSE_FILING_SCRIPS.get(scrip_code, scrip_code)
+    time.sleep(1.5)                       # gentle guest — ~7 names per sweep
+    try:
+        r = requests.get(f"https://www.screener.in/company/{code}/",
+                         timeout=25, headers=_SCREENER_HDRS)
+        if r.status_code in (403, 429):
+            print(f"  (Screener {r.status_code} for {code} — backing off this cycle)")
+            return []
+        if r.status_code != 200:
+            print(f"  (Screener HTTP {r.status_code} for {code})")
+            return []
+        # SCOPE to the "Announcements" section only. The page also has "Annual
+        # reports" and "Concalls" sections whose <li>s look identical (same PDF-link
+        # shape) but are NOT filings — scraping them spammed old "Financial Year
+        # 20XX" items (no date → leaked past the cutoff) and their huge PDFs blew
+        # the summary token limit. The announcements div is <div class="documents
+        # flex-column"><h3>Announcements</h3>…; cut at the next documents section.
+        i = r.text.find(">Announcements</h3>")
+        if i == -1:
+            print(f"  (Screener: Announcements section not found for {code} — layout change?)")
+            return []
+        j = r.text.find('<div class="documents ', i + 10)
+        block = r.text[i:j] if j != -1 else r.text[i:i + 12000]
+        # each announcement: <li ...><a href="<bse pdf url>" ...>Headline
+        #   <span|div class="ink-600 smaller">36m | DD Mon - desc</span|div></a></li>
+        items = re.findall(
+            r'<li[^>]*>\s*<a[^>]*href="(https://www\.bseindia\.com/[^"]*'
+            r'(?:AnnPdfOpen|AttachLive|AttachHis)[^"]*)"[^>]*>(.*?)</a>\s*</li>',
+            block, re.S)
+        out = []
+        for url, inner in items:
+            # the meta is a <span>/<div class="ink-600 smaller"> holding either just
+            # a relative time ("36m") or "DD Mon - <description>". Headline is the
+            # anchor text BEFORE it; the leading token of the meta is the timestamp.
+            meta_m = re.search(r'<(?:span|div)[^>]*ink-600[^>]*>(.*?)</(?:span|div)>', inner, re.S)
+            meta = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", meta_m.group(1)))).strip() if meta_m else ""
+            head_html = inner[:meta_m.start()] if meta_m else inner
+            headline = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", head_html))).strip()
+            tok = re.match(r"(\d+\s*(?:m|min|mins|h|hr|hrs|d)\b|\d{1,2}\s+[a-z]{3}(?:\s+\d{4})?)", meta, re.I)
+            when = tok.group(1) if tok else ""
+            if headline:
+                out.append({"headline": headline,
+                            "date": _screener_reltime_to_iso(when),
+                            "url": html.unescape(url)})
+        if not out:
+            print(f"  (Screener: no announcements parsed for {code} — layout change?)")
+        return out[:15]
+    except Exception as e:
+        print(f"  (Screener fetch failed for {code}: {e})")
         return []
 
 
@@ -2032,10 +2146,19 @@ def run_filings(nse_only: bool = False):
     summaries_done = 0
 
     for sym, e in scope.items():
-        if nse_only and e["exch"] != "XNSE":
-            continue
-        anns = (fetch_nse_announcements(sym, e["company"]) if e["exch"] == "XNSE"
-                else fetch_bse_announcements(sym))
+        nse_equiv = BSE_TO_NSE.get(sym)
+        if e["exch"] == "XNSE":
+            anns = fetch_nse_announcements(sym, e["company"])
+        elif nse_equiv:
+            # dual-listed BSE name → ride the WORKING NSE RSS feed (near real-time)
+            anns = fetch_nse_announcements(nse_equiv, e["company"])
+        else:
+            # BSE-only → Screener (BSE's own announcements API is dead: Akamai).
+            # This is the slower source, so it rides the full run, not the 3-min
+            # NSE burst — the nse_only fast path skips it.
+            if nse_only:
+                continue
+            anns = fetch_bse_announcements_screener(sym)
         enabled = [g for g in e["groups"] if g in TELEGRAM_ALERT_GROUPS]
         for a in anns:
             if not a["headline"] or (a["date"] and a["date"] < cutoff):

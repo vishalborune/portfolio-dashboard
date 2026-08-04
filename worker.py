@@ -12,9 +12,11 @@ RHYTHMS (all IST, Mon–Fri)
   • live checks   every 60s   09:10–15:35 — 21-DMA / 10-week EMA touch /
                                             watchlist zones / risk stops
   • NSE filings   every 3min  08:30–23:00 — friendly archives host, safe to poll
-  • BSE filings   every 2h    08:30–23:00 — its API is bot-hostile AND shares the
-                                            runner IP with the SME bhavcopy, so
-                                            it stays deliberately gentle
+  • BSE filings   every 1h    08:30–23:00 — BSE's own API is dead (Akamai), so
+                                            BSE-only names are scraped from
+                                            Screener.in (~7 light requests/sweep);
+                                            Screener ingests filings within minutes
+                                            so hourly gives ~1h latency
 
 Everything heavy/nightly (bhavcopy, deals, evening EOD pass, exit audit, weekly
 digest) stays on GitHub Actions for now. Dedup (entry_alert_log / filings_seen)
@@ -41,7 +43,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 LIVE_INTERVAL = 60          # seconds between live price checks
 NSE_FILINGS_INTERVAL = 180  # 3 minutes
-BSE_FILINGS_INTERVAL = 7200 # 2 hours
+BSE_FILINGS_INTERVAL = 3600 # 1 hour (BSE-only names via Screener; light + fast)
 TICK = 5                    # main loop granularity (seconds)
 
 MARKET_OPEN = (9, 10)       # a few minutes before the 09:15 open
@@ -128,14 +130,15 @@ def main():
                 except Exception as e:
                     print(f"⚠️ [worker] NSE filings failed: {type(e).__name__}: {e}")
 
-            # ---- BSE filings (gentle; 7 days — and weekends have NO bhavcopy
-            #      IP contention since bhavcopy is weekday-only) --------------
+            # ---- BSE filings (hourly, 7 days — BSE-only names scraped from
+            #      Screener since BSE's own API is dead; weekends included
+            #      because results/board outcomes file on Saturdays) ----------
             if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)
                     and time.time() - last_bse >= BSE_FILINGS_INTERVAL):
                 last_bse = time.time()
                 try:
                     alerts._NSE_RSS_CACHE = None
-                    alerts.run_filings()              # full run, incl BSE
+                    alerts.run_filings()              # full run, incl BSE-via-Screener
                 except Exception as e:
                     print(f"⚠️ [worker] BSE filings failed: {type(e).__name__}: {e}")
 

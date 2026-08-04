@@ -343,12 +343,40 @@ break.
     paginated yet.
   - **Filings cadence (split by exchange):** NSE announcements run **every 15
     min** (`filings-nse`, `run_filings(nse_only=True)`, 08:30–23:15 IST) — the
-    archives host is friendly, safe to poll often. BSE stays on the **2-hourly
-    full run** (`filings`) — its API is bot-hostile and shares the runner IP with
-    the daily SME bhavcopy, so it must NOT be hammered. Was twice-daily; results/
+    archives host is friendly, safe to poll often. BSE rides the **hourly full
+    run** (`filings`, worker `BSE_FILINGS_INTERVAL=3600`). Was twice-daily; results/
     board outcomes drop in the EVENING and the NSE feed is only a ~1-day snapshot,
     so infrequent polling let them age off unseen. `MATERIAL_KEYWORDS` now
     includes "board meeting" (results are decided there).
+  - **BSE filings had NEVER worked → fixed via Screener (04-Aug-2026, Vishal
+    caught it):** `fetch_bse_announcements` hit BSE's `AnnGetData` API, which BSE
+    rebuilt behind an **Akamai JS challenge**: it returns HTTP 200 + `"No Record
+    Found!"` to any plain HTTP client — proven exhaustively (plain requests, TLS
+    impersonation via `curl_cffi`, and a REAL headless Chrome all failed; the live
+    ann page makes 0 XHR calls = server-rendered). Net effect: **0 BSE filings had
+    ever reached `filings_seen`** (checked: 0 of 291 rows). NOTE BSE's *other* API
+    endpoints (deals `fetch_bse_deals`, quote `ComHeader`) DO answer plain
+    requests — only announcements is JS-walled. Fix: **scrape Screener.in**
+    (`fetch_bse_announcements_screener`) — it aggregates BSE announcements, is
+    reachable from a datacenter IP (our fundamentals scraper already proves it),
+    and ingests a filing within **minutes** (measured a live filing at '4m' on
+    Screener), so the hourly poll gives ~1h latency. Returns the SAME
+    `{headline,date,url}` shape → drops into run_filings unchanged (dedup / routine
+    filter / AI PDF summary / Telegram). **Parser gotchas (both fixed):** (a) SCOPE
+    to the `<div class="documents flex-column"><h3>Announcements</h3>` block — the
+    page's "Annual reports"/"Concalls" sections have identical `<li>` shape and
+    leaked dateless "Financial Year 20XX" items (no date → past the cutoff) whose
+    huge PDFs also blew the summary token limit; (b) the per-item timestamp is a
+    `<span|div class="ink-600 smaller">` holding either "36m" or "DD Mon - <desc>"
+    — parse the leading token, drop the desc. `_screener_reltime_to_iso` maps
+    'Nm'/'Nh'→today, 'Nd'→today−N, 'DD Mon[ YYYY]'→that date (all resolve to the
+    real filing DAY, so a later poll's shifted label still fingerprints the same →
+    no duplicate). Politeness: 1.5s/name, back off on 429/403. **Dual-listed BSE
+    names route to NSE instead** (`BSE_TO_NSE`, near-real-time via the working RSS):
+    Kwality=KPL, Time Technoplast=TIMETECHNO (verified on NSE's master equity list;
+    the other 7 — CWD, Hemant Surgical, True Colors, Shree Ganesh, Lehar, BMW
+    Industries, TANFAC — are BSE-only, so Screener is their only source). The old
+    `fetch_bse_announcements` is kept but SUPERSEDED/uncalled.
   - **Summaries were silently DEAD + XBRL link fix (31-Jul-2026, Lakshmi caught
     both):** ROOT bug — `_download_pdf_b64` referenced an **undefined `HEADERS`**,
     so it NameError'd inside its bare `except` and returned None for EVERY PDF →
