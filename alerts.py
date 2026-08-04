@@ -1186,7 +1186,16 @@ def _parse_stmt_date(s):
         m = re.search(r"(\d{1,2})[-\s/.]+([A-Za-z]{3,})[-\s/.,]+(\d{2,4})", s)
         if m and m.group(2)[:3].lower() in months:
             return (y4(m.group(3)), months[m.group(2)[:3].lower()], int(m.group(1)))
-        # MonName [DD,] YYYY   e.g. June 30, 2026 / Jun-2026
+        # MonName <sep> DD <sep> YYYY   e.g. 'Jun, 30 2026', 'June 30, 2026', 'Mar 31, 2026'.
+        # MUST precede the day-optional pattern below: on 'Jun, 30 2026' that pattern's
+        # day slot is empty (its separator class excluded the comma), so it took 30 as
+        # the YEAR -> 2030, and 'Mar, 31 2026' -> 2031 then out-sorted the real current
+        # column -> the Styrenix false alert (04-Aug-2026, Lakshmi caught it: it showed
+        # the Mar quarter ₹826 Cr as 'current', not the true Jun quarter ₹1010 Cr).
+        m = re.search(r"([A-Za-z]{3,})[\s,./-]+(\d{1,2})[\s,./-]+(\d{2,4})", s)
+        if m and m.group(1)[:3].lower() in months:
+            return (y4(m.group(3)), months[m.group(1)[:3].lower()], int(m.group(2)))
+        # MonName [DD,] YYYY   e.g. Jun-2026 (no day)
         m = re.search(r"([A-Za-z]{3,})[-\s/.]*(\d{1,2})?[-\s/.,]+(\d{2,4})", s)
         if m and m.group(1)[:3].lower() in months:
             return (y4(m.group(3)), months[m.group(1)[:3].lower()], int(m.group(2) or 1))

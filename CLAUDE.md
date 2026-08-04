@@ -300,6 +300,22 @@ break.
     mis-read (rare). Only the RESULTS table carries precise numbers — XBRL (acq/board
     changes) is structured tagged data and the generic gist is qualitative, so
     neither is subject to this table-column failure mode.
+  - **RESULTS wrong-period bug FIXED (04-Aug-2026, Lakshmi caught it on Styrenix):**
+    the current-quarter column is chosen by `max(period date)`, so a date-PARSE slip
+    silently picks the wrong column. Styrenix printed its headers **'Jun, 30 2026'**
+    (month-COMMA-day) and `_parse_stmt_date` read the DAY '30' as the YEAR → **2030**;
+    'Mar, 31 2026' → 2031; so the March quarter out-sorted June and became 'current'.
+    Result: the alert showed the PRECEDING quarter (₹826 Cr, −18% QoQ, everything
+    collapsing) when the real Q1 was ₹1,010.9 Cr **+22% QoQ, PAT +88%, margin
+    15.5→22.1%** — a scary-wrong flip (House Rule #2). Lakshmi read it as "standalone
+    not consolidated"; it was actually consolidated data for the WRONG PERIOD (verified
+    from the PDF: consolidated Jun rev ₹1010.9 Cr / standalone ₹768.0 Cr — our fixed
+    output matches consolidated). Fix: `_parse_stmt_date` now has a **'MonName<sep>DD<sep>
+    YYYY'** pattern (handles 'Jun, 30 2026' / 'June 30, 2026' / 'Mar 31, 2026') placed
+    BEFORE the day-optional pattern that mis-fired. Verified live on the Styrenix PDF
+    (now reads Jun-2026 consolidated) and against all prior date formats. **Lesson: the
+    period selection is only as good as the date parse — any new header format is a
+    silent wrong-column risk.**
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock
