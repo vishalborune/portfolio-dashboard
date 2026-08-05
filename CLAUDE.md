@@ -263,6 +263,22 @@ break.
 - Render free-tier stability under real load — watch for exit-139 crashes;
   root-caused once already to Yahoo retry storms (fixed by excluding SME
   tickers from Yahoo calls and reducing quote-fetch threads 8→4)
+  - **Worker OOM-restart FIXED without upsizing (05-Aug-2026, Vishal — "make it
+    work with what we have", no upgrade):** the 512 MB Starter worker exceeded its
+    memory limit and auto-restarted (Render email) during the results-season
+    evening filing surge. Two drivers: (a) each filing PDF summary loads the PDF +
+    base64 (~1.33x) AND `requests` copies the base64 again into the API body →
+    ~50 MB transient per PDF, up to `MAX_SUMMARIES_PER_RUN`=10/cycle; (b) glibc
+    malloc keeps freed heap in its arena, so over hours of the loop RSS creeps up
+    (Python frees the objects but the pages never return to the OS). Fixes, all
+    within 512 MB: `MAX_PDF_BYTES` 20→15 MB (still covers scanned results, caps the
+    spike); `summarize_filing` now `del pdf_b64; gc.collect()` in a `finally` so
+    summaries can't stack; and **`worker._reclaim_memory()` (gc.collect + glibc
+    `malloc_trim(0)` via ctypes) after every NSE/BSE filings run**, which returns
+    the freed pages to the kernel so RSS stays flat instead of climbing to OOM.
+    `_NSE_RSS_CACHE` is also nulled after each run to release the ~2000-item feed.
+    malloc_trim is a no-op off glibc (local Windows). The auto-restart self-heals
+    and dedup means no double-alerts, so this was never data-loss — just downtime.
 - Filing-summary classification: RESULTS filings now use a TYPED template
   (21-Jul-2026) — consolidated Revenue/EBITDA/PBT/PAT/EPS, each with QoQ + YoY %
   (plus an **EBITDA-margin line** — EBITDA/Revenue for all 3 periods — and a

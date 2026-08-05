@@ -32,7 +32,10 @@ ENV: SUPABASE_URL, SUPABASE_SERVICE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
 """
 from __future__ import annotations
 
+import gc
 import time
+import ctypes
+import ctypes.util
 import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -40,6 +43,27 @@ from zoneinfo import ZoneInfo
 import alerts
 
 IST = ZoneInfo("Asia/Kolkata")
+
+_LIBC = None
+try:
+    _LIBC = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+except Exception:
+    _LIBC = None
+
+
+def _reclaim_memory():
+    """Hand freed heap back to the OS. On the 512 MB Render worker, glibc's malloc
+    keeps freed blocks in its arena — Python releases the objects but RSS stays
+    high and creeps up over hours of the loop until an OOM auto-restart (Render
+    alerts, 04/05-Aug-2026). gc.collect() drops cyclic garbage (big PDF-summary /
+    RSS-parse transients); malloc_trim(0) returns the now-free pages to the kernel
+    so RSS actually falls. No-op on non-glibc platforms (e.g. local Windows)."""
+    gc.collect()
+    if _LIBC is not None and hasattr(_LIBC, "malloc_trim"):
+        try:
+            _LIBC.malloc_trim(0)
+        except Exception:
+            pass
 
 LIVE_INTERVAL = 60          # seconds between live price checks
 NSE_FILINGS_INTERVAL = 180  # 3 minutes
@@ -129,6 +153,8 @@ def main():
                     alerts.run_filings(nse_only=True)
                 except Exception as e:
                     print(f"⚠️ [worker] NSE filings failed: {type(e).__name__}: {e}")
+                alerts._NSE_RSS_CACHE = None          # release the ~2000-item feed
+                _reclaim_memory()                     # RSS-parse transients -> back to OS
 
             # ---- BSE filings (hourly, 7 days — BSE-only names scraped from
             #      Screener since BSE's own API is dead; weekends included
@@ -141,6 +167,8 @@ def main():
                     alerts.run_filings()              # full run, incl BSE-via-Screener
                 except Exception as e:
                     print(f"⚠️ [worker] BSE filings failed: {type(e).__name__}: {e}")
+                alerts._NSE_RSS_CACHE = None          # release the feed + PDF transients
+                _reclaim_memory()
 
             # ---- heartbeat so the logs show it's alive ----------------------
             if time.time() - last_beat >= 900:

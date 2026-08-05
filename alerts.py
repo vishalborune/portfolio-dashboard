@@ -24,6 +24,7 @@ TELEGRAM_CHAT_ID, and for digest: RESEND_API_KEY, DIGEST_EMAILS.
 import os
 import re
 import sys
+import gc
 import time
 import html
 import hashlib
@@ -1014,13 +1015,14 @@ SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, headline-only
 
 
-MAX_PDF_BYTES = 20 * 1024 * 1024  # was 8 MB, which SKIPPED real filings: a SCANNED
-                                  # quarterly-results PDF (image pages) runs 9-12 MB
-                                  # (Banswara's 9.5 MB Q1 outcome went headline-only,
-                                  # 31-Jul-2026). Claude's PDF API accepts ≤32 MB /
-                                  # ≤100 pages; 20 MB covers scanned results, still
-                                  # blocks 300-page annual reports. base64 of 20 MB
-                                  # ≈ 27 MB, safely under the 32 MB request limit.
+MAX_PDF_BYTES = 15 * 1024 * 1024  # was 8 MB (SKIPPED scanned results ~9-12 MB, e.g.
+                                  # Banswara's 9.5 MB), briefly 20 MB. Trimmed to 15 MB
+                                  # 05-Aug-2026 after the 512 MB Render worker OOM-
+                                  # restarted: base64 of a PDF is ~1.33x its size AND
+                                  # requests copies it again into the API request body,
+                                  # so a 20 MB PDF spiked ~54 MB per summary. 15 MB still
+                                  # covers scanned results (base64 ≈ 20 MB) but caps the
+                                  # spike; giant annual reports/decks stay headline-only.
 
 # Browser UA for pulling NSE-archive filing PDFs. Its ABSENCE (undefined name)
 # was NameError-ing inside _download_pdf_b64's bare except → every PDF returned
@@ -1097,11 +1099,19 @@ def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
     if not pdf_b64:
         print(f"  [filings] PDF fetch failed (headline-only): {pdf_url[:90]}")
         return ""
-    if _is_results_filing(headline):
-        typed = _summarize_results(company, pdf_b64, api_key)
-        if typed:
-            return typed          # else fall through to the generic summary
-    return _summarize_generic(company, headline, pdf_b64, api_key)
+    try:
+        if _is_results_filing(headline):
+            typed = _summarize_results(company, pdf_b64, api_key)
+            if typed:
+                return typed          # else fall through to the generic summary
+        return _summarize_generic(company, headline, pdf_b64, api_key)
+    finally:
+        # FREE the base64 (~1.33x the PDF) + let gc reclaim the transient request-body
+        # copy PROMPTLY. Up to MAX_SUMMARIES_PER_RUN of these run per filings cycle on
+        # the 512 MB Render worker; without this the big strings linger and the peak
+        # tipped it into an OOM auto-restart (Render alert, 05-Aug-2026).
+        del pdf_b64
+        gc.collect()
 
 
 def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) -> str:
