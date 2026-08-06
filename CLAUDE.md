@@ -332,6 +332,24 @@ break.
     (now reads Jun-2026 consolidated) and against all prior date formats. **Lesson: the
     period selection is only as good as the date parse — any new header format is a
     silent wrong-column risk.**
+  - **RESULTS exceptional-item distortion FIXED (06-Aug-2026, Lakshmi caught it on
+    Advent Hotels):** EBITDA was `reported PBT + finance + depreciation`, so a large
+    EXCEPTIONAL one-off sitting in reported PBT flowed straight into EBITDA. Advent's
+    **year-ago quarter had a ₹41.6 Cr exceptional GAIN**, which faked an **84.7%
+    year-ago EBITDA margin** and a "-58% EBITDA / margin pressure" Take — when the real
+    OPERATING quarter was **UP ~8%, margin 32.8→35.5%** (operating PBT more than
+    doubled). Fix: extract the **signed `exceptional_items`** line per column (+gain /
+    −charge) and compute **EBITDA = PBT + finance + depreciation − exceptional**, so
+    one-offs are stripped; a **⚠️ line flags any period with a material exceptional**
+    (>3% of revenue) since the reported PBT/PAT/EPS YoY/QoQ are still distorted by it.
+    **Format-agnostic (the key subtlety):** do NOT compute EBITDA as `TotalIncome −
+    TotalExpenses + finance + depn` — whether TE *includes* finance/depn varies by
+    company (Advent's TE includes them → TI−TE = pre-exceptional PBT; Styrenix's TE
+    EXCLUDES them → TI−TE already = EBITDA), so that form double-counts and false-flags.
+    `PBT + fin + depn − exceptional` is correct for both. `exceptional_items` rides the
+    re-anchor pool (travels with its PBT if columns are reassigned) and defaults to 0,
+    so the no-one-off majority is unchanged. Verified live: Advent (real operating story
+    + flag) and Styrenix (unchanged ₹223.6 Cr / 22.1%, no false flag).
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock

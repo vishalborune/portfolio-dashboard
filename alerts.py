@@ -1168,13 +1168,17 @@ _RESULTS_JSON_PROMPT = (
     "absent. Keep the statement's own unit. total_income = the 'Total income' "
     "line; total_expenses = the 'Total expenses' line; ebitda_reported = the "
     "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
-    "(after exceptional items if any); pat='profit for the period' after tax.\n"
+    "(after exceptional items if any); pat='profit for the period' after tax. "
+    "exceptional_items = the 'Exceptional items' line if the statement has one, "
+    "SIGNED so pbt = (profit before exceptional & tax) + exceptional_items: "
+    "POSITIVE for an exceptional GAIN/income, NEGATIVE for a charge/expense; "
+    "0 if there is no exceptional-items line.\n"
     "Return ONLY a JSON object — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
     '"columns":[{"period_end":"as printed","is_quarter":true,'
     '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'
     '"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
-    '"pbt":n,"pat":n,"basic_eps":n}]}\n'
+    '"pbt":n,"exceptional_items":n,"pat":n,"basic_eps":n}]}\n'
     "If this is NOT a quarterly results statement, return {\"basis\":null}."
 )
 
@@ -1318,7 +1322,8 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
                 t -= (f + d)
             return t
 
-        pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps")) for c in selected]
+        pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps"), _n(c, "exceptional_items"))
+                for c in selected]
         best_assign, best_resid = None, None
         if all(p[0] is not None for p in pool):
             for sub in (False, True):
@@ -1345,7 +1350,7 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
                       f"(resid {cur_t/cur_denom:.0%}) — falling back to gist")
                 return ""
             for c, tup in zip(selected, best_assign):
-                c["pbt"], c["pat"], c["basic_eps"] = tup
+                c["pbt"], c["pat"], c["basic_eps"], c["exceptional_items"] = tup
 
         def trio(metric):
             g = lambda c: (float(c[metric]) if isinstance(c.get(metric), (int, float)) else None)
@@ -1358,6 +1363,7 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
             "finance_costs": trio("finance_costs"),
             "depreciation": trio("depreciation"),
             "pbt": trio("pbt"), "pat": trio("pat"), "basic_eps": trio("basic_eps"),
+            "exceptional_items": trio("exceptional_items"),
             "ebitda_reported": trio("ebitda_reported"),
         }
         return _format_results(company, data)
@@ -1404,10 +1410,21 @@ def _format_results(company: str, data: dict) -> str:
     pbt = trio("pbt")
     pat = trio("pat")
     eps = trio("basic_eps")
-    # EBITDA per period = PBT + Finance + Depreciation (Lakshmi's definition)
-    ebitda = tuple((pbt[i] + fin[i] + dep[i])
-                   if (pbt[i] is not None and fin[i] is not None and dep[i] is not None)
-                   else None for i in range(3))
+    exc = trio("exceptional_items")     # signed: +gain / −charge (0/None if absent)
+    # EBITDA per period = reported PBT + Finance + Depreciation − EXCEPTIONAL items.
+    # Adding finance+depn back to PBT reconstructs EBITDA regardless of whether the
+    # statement lists them inside or outside 'total expenses' (Lakshmi's definition);
+    # subtracting the exceptional strips one-offs that would otherwise inflate a
+    # period's EBITDA and every YoY/QoQ off it. (Advent Hotels 06-Aug-2026: a
+    # ₹41.6 Cr year-ago exceptional GAIN in reported PBT faked an 84.7% year-ago
+    # margin and a "-58% / margin pressure" read; real operating EBITDA was UP ~8%,
+    # margin 32.8→35.3%.) exceptional defaults to 0 so the no-one-off case (the vast
+    # majority) is exactly PBT+finance+depn as before.
+    def _ebit(i):
+        if pbt[i] is None or fin[i] is None or dep[i] is None:
+            return None
+        return pbt[i] + fin[i] + dep[i] - (exc[i] or 0.0)
+    ebitda = tuple(_ebit(i) for i in range(3))
 
     # Guard: if we couldn't even read the current revenue AND PBT, it's not a
     # usable results table — fall back rather than emit a hollow template.
@@ -1490,8 +1507,31 @@ def _format_results(company: str, data: dict) -> str:
                 take = f"revenue {rev_yoy:.0f}% & PAT {pat_yoy:.0f}% YoY — both contracting"
             else:
                 take = f"revenue {rev_yoy:+.0f}% · PAT {pat_yoy:+.0f}% YoY"
-    footer = "<i>EBITDA = PBT + finance costs + depreciation</i>"
+    # Flag a MATERIAL exceptional item in any shown period (reported PBT vs the
+    # operating profit above it). EBITDA/margin are already ex-exceptional, but the
+    # reported PBT/PAT/EPS lines still carry it, so their YoY/QoQ can be badly
+    # distorted by a one-off in the BASE period — say so rather than let the reader
+    # misread it (Advent Hotels: year-ago one-off gain → reported PBT/PAT/EPS "fell"
+    # 76-81% while the business was actually up). >3% of revenue = real one-off, not
+    # rounding noise.
+    exc_labels = ["Current quarter", "Preceding quarter", "Year-ago quarter"]
+    exc_notes = []
+    for i in range(3):
+        if exc[i] and rev[i] and abs(exc[i]) > 0.03 * abs(rev[i]):
+            cr = _to_cr(abs(exc[i]), unit)
+            if cr is not None and cr >= 0.1:
+                exc_notes.append(f"{exc_labels[i]} had a ₹{cr:,.1f} Cr exceptional "
+                                 f"{'gain' if exc[i] > 0 else 'charge'}")
+    warn = None
+    if exc_notes:
+        warn = ("⚠️ " + "; ".join(exc_notes)
+                + " — EBITDA/margin above are operating (ex-exceptional); reported "
+                "PBT/PAT/EPS YoY/QoQ are distorted by it.")
+
+    footer = "<i>EBITDA = operating profit (ex-exceptional) + finance costs + depreciation</i>"
     parts = [header] + rows
+    if warn:
+        parts.append(html.escape(warn))
     if take:
         parts.append(f"<b>Take:</b> {html.escape(take)}")
     parts.append(footer)
