@@ -96,6 +96,15 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    the ratio against the BSE/NSE filing (rule #5), append one dict to
    `CORPORATE_ACTIONS`.** `price_divisor` = shares multiplier (4:1 bonus or
    1:5 split → 5).
+   **Second event caught 06-Aug-2026 — Time Technoplast (532856.BO) 1:1 bonus,
+   ex/record 23-Sep-2025 (₹477.75→₹227.35), divisor 2.** It had been UNADJUSTED
+   since the ticker was added (22-Jul-2026), inflating the 40wEMA to ₹211.1 and
+   firing a **FALSE 🔴 EXIT** (close ₹207.3 just under it); adjusted, the 40wEMA
+   is ₹189.95 and the real state is **MAINTAIN/ADD** (close above all EMAs). Same
+   failure mode as CWD — verified vs multiple sources AND our own raw price step.
+   Lesson: when a NEW bhavcopy ticker is added, its full backfill can contain an
+   OLD unadjusted split/bonus — the detector will flag it on the next daily run,
+   so act on that flag (don't let it recur silently every run).
 
 ## Architecture: portfolio-scoping
 Every table has `portfolio_id`. Alerts aggregate per (group, ticker) so a

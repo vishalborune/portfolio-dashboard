@@ -48,6 +48,17 @@ CORPORATE_ACTIONS = [
                 "unchanged (bonus, not a face-value split). Verified 21-Jul-2026 "
                 "against BSE corporate-action filing + multiple sources.",
     },
+    {
+        "ticker": "532856.BO",
+        "ex_date": "2025-09-23",     # record date per BSE filing; price stepped this day
+        "action": "1:1 bonus",       # 1 new fully-paid share per 1 held
+        "price_divisor": 2.0,        # 2x shares outstanding -> prices /2
+        "note": "BSE 532856 / NSE TIMETECHNO. Time Technoplast's first bonus, "
+                "22,69,29,066 shares, face value ₹1. Verified 06-Aug-2026 against "
+                "multiple sources AND our own raw signature ₹477.75->₹227.35 on "
+                "23-Sep-2025. Unadjusted, this inflated the 40wEMA and fired a FALSE "
+                "EXIT (close ₹207.3 vs a bloated 40wEMA ₹211.1).",
+    },
 ]
 
 GAP_THRESHOLD_PCT = 25.0   # a >25% overnight close move == probable split/bonus
