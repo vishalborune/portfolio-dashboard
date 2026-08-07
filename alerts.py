@@ -3000,28 +3000,36 @@ def run_morning_brief():
 
 
 def run_digest():
-    """Weekly digest emailed to DIGEST_EMAILS. Covers ALL THREE portfolios so
-    Vishal sees his OWN book in the email he already receives (added 01-Aug-2026,
-    on his request). The Telegram TEASER stays scoped to Lakshmi/Abinaya — Vishal
-    opted out of Telegram, so his data is not pushed to the group. Including pf1
-    here also starts storing his weekly digest_history snapshots, so his
-    week-over-week / vs-index scorecard builds from next Friday on."""
+    """Weekly digest — TWO separate emails (Vishal 07-Aug-2026): his OWN book in
+    one email, the Lakshmi+Abinaya book in another, so neither email carries the
+    other's (long) all-holdings states table. Both go to DIGEST_EMAILS. The
+    Telegram TEASER rides ONLY the Lakshmi/Abinaya email (Vishal opted out of
+    Telegram). Each call stores its portfolios' weekly digest_history snapshots."""
     client = sb()
     all_holdings = get_holdings(client)
     if all_holdings.empty:
         return
     lak = [p for p, g in PF_GROUP.items() if g == "lakshmi"]
-    _digest_for(client, all_holdings, tg_pf_ids=lak)
+    vis = [p for p, g in PF_GROUP.items() if g == "vishal"]
+    hl = all_holdings[all_holdings["portfolio_id"].isin(lak)]
+    hv = all_holdings[all_holdings["portfolio_id"].isin(vis)]
+    if not hl.empty:
+        _digest_for(client, hl, tg_pf_ids=lak, label="Lakshmi & Abinaya", telegram=True)
+    if not hv.empty:
+        _digest_for(client, hv, tg_pf_ids=[], label="Vishal", telegram=False)
 
 
-def _digest_for(client, holdings, tg_pf_ids=None):
+def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
     """Digest v2 (19-Jul-2026): the weekly review meeting. Per-portfolio
     money numbers with week-over-week trend, states, dead-money flags,
     profit tiers, journal+audit corner, delivery conviction, concentration.
     Every section is individually try/excepted: one broken data layer
-    degrades that section to a note, never kills the digest."""
+    degrades that section to a note, never kills the digest.
+    `label` names this email (subject + header, e.g. 'Vishal'); `telegram=False`
+    suppresses the Telegram teaser (used for the email-only Vishal digest)."""
     import json as _json
     today = date.today()
+    label_suffix = f" — {label}" if label else ""
     pf_ids = sorted(int(p) for p in holdings["portfolio_id"].unique())
 
     # ---- per-ticker compute (once), incl. bars for dead-money ----
@@ -3301,7 +3309,7 @@ def _digest_for(client, holdings, tg_pf_ids=None):
                 margin:0 auto;background:#f1f5f9;padding:18px">
       <div style="background:#1e3a8a;color:#ffffff;border-radius:10px;
                   padding:20px 24px;margin-bottom:6px">
-        <div style="font-size:21px;font-weight:800">📊 Weekly Portfolio Digest</div>
+        <div style="font-size:21px;font-weight:800">📊 Weekly Portfolio Digest{label_suffix}</div>
         <div style="font-size:13px;opacity:.85;margin-top:4px">
           {today.strftime('%A, %d %B %Y')} · {len(rows)} holdings scanned ·
           {len(exits)} EXIT · {len(cautions)} caution · {len(adds)} healthy</div>
@@ -3333,7 +3341,8 @@ def _digest_for(client, holdings, tg_pf_ids=None):
         trends vs last week's snapshot</div>
     </div>"""
 
-    send_email(f"Portfolio Weekly Digest — {today.strftime('%d %b')}", html)
+    send_email(f"Weekly Portfolio Digest{f' ({label})' if label else ''} — "
+               f"{today.strftime('%d %b')}", html)
 
     # compact Telegram version of the same review
     try:
@@ -3373,7 +3382,7 @@ def _digest_for(client, holdings, tg_pf_ids=None):
             tg.append(f"💤 {len(dead_money)} stock(s) on dead-money watch")
         tg.append("Full review in the email 📧")
         chat = chat_id_for_group("lakshmi")
-        if chat:
+        if telegram and chat:            # Vishal's email-only digest sends no teaser
             send_telegram("\n".join(tg), chat_id=chat)
     except Exception as ex:
         print(f"(digest: telegram summary failed: {ex})")

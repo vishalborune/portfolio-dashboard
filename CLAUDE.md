@@ -503,12 +503,19 @@ break.
   STILL TODO: a richer typed insider format (who/how many shares).
 - Resend email digest DELIVERS to Vishal's address (confirmed 01-Aug-2026 — he
   gets it); domain verification may still be pending for a branded from-address,
-  but it is NOT blocking delivery. **The Friday digest now covers ALL THREE
-  portfolios in the EMAIL** (Vishal added 01-Aug-2026 on request via
-  `run_digest` → `_digest_for(..., tg_pf_ids=lakshmi)`); the Telegram TEASER stays
-  Lakshmi/Abinaya only (Vishal opted out of Telegram, so his data isn't pushed to
-  the group). Including pf1 also starts storing his `digest_history` snapshots, so
-  his week-over-week / vs-index scorecard builds from the next Friday on.
+  but it is NOT blocking delivery. **The Friday digest is now TWO SEPARATE EMAILS
+  (Vishal 07-Aug-2026): his own book in one, the Lakshmi+Abinaya book in another**
+  — `run_digest` filters holdings by group and calls `_digest_for` twice (each
+  self-contained: its own header count, EXIT box, and all-holdings states table),
+  so neither email carries the other's long states list (Vishal's complaint: the
+  combined email got too long). `_digest_for(..., label=, telegram=)` — `label`
+  names the email (subject + header), `telegram=False` suppresses the teaser for
+  the email-only Vishal digest. The Telegram TEASER rides ONLY the Lakshmi/Abinaya
+  email (Vishal opted out). Each call stores its portfolios' `digest_history`
+  snapshots, so pf1's week-over-week / vs-index scorecard builds from the next
+  Friday on. NOTE: email creds (`RESEND_API_KEY`/`DIGEST_EMAILS`) live on
+  GitHub/Render, NOT in local secrets — a real send only happens from the Friday
+  cron or the `send_digest_now` dispatch, not from a local run.
 - **52-week-high bug FIXED (27-Jul-2026, Lakshmi caught it):** the watchlist/holdings
   "52W High" (and "% vs 52WH") read badly low — up to ~20% — because
   `signals._fetch_daily`'s Yahoo branch fetched only `period="6mo"`, so
