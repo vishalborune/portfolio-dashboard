@@ -2817,6 +2817,15 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
                 "the comparison starts from next week's digest.</p>", None)
     try:
         prev_d = date.fromisoformat(str(prev["snap_date"])[:10])
+        # Guard against a SUB-WEEK gap (08-Aug-2026): the digest is a Friday-to-Friday
+        # measure, but if it's run off-cadence the newest prior snapshot can be only a
+        # day or two old — comparing over 1 day and calling it "this week" is nonsense
+        # (and the live-vs-settled price basis between the two makes the % garbage). A
+        # real week is ~7 days; require at least 4 before showing the comparison.
+        if (today - prev_d).days < 4:
+            return ("<p style='color:#888'>Weekly vs index: last snapshot is only "
+                    f"{(today - prev_d).days} day(s) old — the weekly comparison needs a "
+                    "full week between digests (resumes next Friday).</p>", None)
         prev_val = float(prev.get("current_value") or 0)
         prev_unreal = float(prev.get("unrealised") or 0)
         if prev_val <= 0:
