@@ -3118,6 +3118,18 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                 prev = (r.data or [None])[0]
             except Exception:
                 pass
+            # A weekly digest is a Friday-to-Friday measure. If run OFF-CADENCE the
+            # newest prior snapshot can be only a day or two old — treat that as NO
+            # prior (baseline) so NO metric (money deltas OR the weekly-vs-index box)
+            # shows a garbage sub-week "WoW": adjacent-day snapshots differ mostly by
+            # the live-vs-settled price basis, which makes any 1-day % nonsense
+            # (surfaced as a bogus "-4.35% behind the index" mid-week, 08-Aug-2026).
+            if prev and prev.get("snap_date"):
+                try:
+                    if (today - date.fromisoformat(str(prev["snap_date"])[:10])).days < 4:
+                        prev = None
+                except (ValueError, TypeError):
+                    pass
 
             def _delta(cur, prev_v, pct=False, pts=False):
                 if prev_v is None or cur is None:
