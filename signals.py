@@ -323,7 +323,16 @@ def _reconcile_last_week(ticker: str, df: pd.DataFrame) -> pd.DataFrame:
         dd = _fetch_daily(ticker)
         if dd.empty or not pd.api.types.is_datetime64_any_dtype(dd.index):
             return df
-        if dd.index.max() < wk_ts:            # daily is BEHIND weekly — don't stale it
+        # Only trust the daily OVER the weekly if the daily actually reaches that
+        # week's FRIDAY (the weekly bar's close is the week's LAST trading day, not
+        # its Monday label). Otherwise the WEEKLY may hold the fresher Friday close
+        # while the DAILY is the stale side (Yahoo's daily feed missing Friday), and
+        # correcting toward the daily would WRONGLY move a good weekly close down.
+        # (PGIL 08-Aug-2026: daily missing Fri sat at ₹2221; the real Fri close was
+        # ₹2464 in the weekly bar — the old `< wk_ts` (Monday) guard over-corrected
+        # it ~10%, knocking ₹2L off Lakshmi's book. Verified vs TickerTape/ICICI.)
+        wk_friday = wk_ts + pd.Timedelta(days=(4 - wk_ts.weekday()))
+        if dd.index.max() < wk_friday:
             return df
         wk_iso = wk_ts.isocalendar()
         ic = dd.index.isocalendar()
