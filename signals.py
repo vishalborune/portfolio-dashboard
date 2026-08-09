@@ -361,9 +361,16 @@ def current_state(ticker: str) -> dict:
     """Fetch weekly data for one ticker and return the latest state + detail."""
     df = fetch_weekly(ticker)
     if df.empty or len(df) < MIN_WEEKS_REQUIRED:
+        # Still return the latest CLOSE even without enough history for the flowchart
+        # — a young listing (INSUFFICIENT DATA) has a real market price, and consumers
+        # that VALUE holdings (the digest) must use it, not fall back to cost. Without
+        # this the digest priced e.g. Advent Hotels at cost ₹197 while its market price
+        # was ₹147 — hiding a 25% loss and overstating the book vs the dashboard
+        # (Abinaya, 08-Aug-2026). None only when there are truly no bars at all.
         return {"state": "NO DATA" if df.empty else "INSUFFICIENT DATA",
                 "reason": "Could not fetch weekly data" if df.empty
                           else f"Only {len(df)} weeks of history (need {MIN_WEEKS_REQUIRED}+)",
+                "close": (float(df["close"].iloc[-1]) if not df.empty else None),
                 "ticker": ticker}
     df = _reconcile_last_week(ticker, df)
     ind = compute_indicators(df)
