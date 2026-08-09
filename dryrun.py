@@ -11,6 +11,8 @@ dedup/state row (so it can never suppress a later real alert). Safe anytime.
     python dryrun.py fast-poll      # one live intraday cycle (entries + risk)
     python dryrun.py digest         # weekly digest (email + telegram preview)
     python dryrun.py filings-audit  # read-only coverage report
+    python dryrun.py reconcile      # read-only: does the digest's valuation
+                                    # still match an independent re-pricing?
 
 Creds are read from .streamlit/secrets.toml. ALERTS_DRY_RUN makes notify.py print
 instead of deliver, and makes alerts.sb() return a read-only client.
@@ -56,6 +58,7 @@ else:
         "filings-audit": alerts.run_filings_audit,
         "deals": alerts.run_deals,
         "digest": alerts.run_digest,
+        "reconcile": alerts.run_reconcile,
         "morning-brief": alerts.run_morning_brief,
         "eod-entries": alerts.run_eod_entries,
     }.get(mode, alerts.run_states)()

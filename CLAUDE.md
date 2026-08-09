@@ -516,6 +516,34 @@ break.
   Friday on. NOTE: email creds (`RESEND_API_KEY`/`DIGEST_EMAILS`) live on
   GitHub/Render, NOT in local secrets — a real send only happens from the Friday
   cron or the `send_digest_now` dispatch, not from a local run.
+- **Digest-vs-dashboard VALUATION CROSS-CHECK (08-Aug-2026, Vishal — after two
+  wrong-money bugs in one day).** The digest prices holdings via
+  `signals.current_state(...)["close"]` (weekly bars) while the dashboard uses
+  `app.fetch_live_prices` (live quote / daily bar / bhavcopy). Two code paths, one
+  question — and they drifted twice: (a) the weekly-close reconcile knocked ~10%
+  off **PGIL** (₹2,221 vs the true ₹2,464), and (b) **young listings** (<45wk, state
+  INSUFFICIENT DATA) returned NO close, so the digest fell back to **PURCHASE COST**
+  — hiding a 25% loss on Advent Hotels (cost ₹197 vs market ₹148) and understating
+  young winners. Both looked plausible and tripped nothing; only Vishal reading the
+  PDF against the dashboard caught them. **Root lesson: valuing at cost is the most
+  dangerous kind of wrong — it reads as "no gain/loss" exactly where the truth
+  matters, and a blank would have raised questions on day one (rule #2).**
+  Guard: `_valuation_mismatches` re-prices EVERY holding through an independent
+  daily path (`_independent_price` → `signals._fetch_daily`, never the weekly bars)
+  and flags two kinds — **COST** (digest has no price → cost fallback) and **DRIFT**
+  (both priced, >`RECONCILE_PRICE_TOL_PCT` 2% apart) — plus a portfolio-total gap
+  (`RECONCILE_VALUE_TOL_PCT` 0.5%) so many small gaps can't slip under the per-
+  holding bar. It runs in `_digest_for` **BEFORE the per-portfolio loop**, because
+  that loop WRITES the `digest_history` snapshot — blocking there means nothing wrong
+  is emailed *or* stored (a bad snapshot would poison next week's WoW too).
+  `DIGEST_RECONCILE_MODE`: **block** (default — refuse to send, log why),
+  `warn` (send with a red ⚠️ MISMATCH banner listing the offending holdings), `off`.
+  Both historical bugs were replayed against it and are CAUGHT with the stock named.
+  Spot-check anytime, read-only: **`python alerts.py reconcile`** (or
+  `python dryrun.py reconcile`) — prints per-portfolio digest-vs-independent totals.
+  Both paths settle to the same Friday close on healthy data and the digest only runs
+  after the close, so a real gap means one side is stale — don't "fix" it by widening
+  the tolerance.
 - **52-week-high bug FIXED (27-Jul-2026, Lakshmi caught it):** the watchlist/holdings
   "52W High" (and "% vs 52WH") read badly low — up to ~20% — because
   `signals._fetch_daily`'s Yahoo branch fetched only `period="6mo"`, so

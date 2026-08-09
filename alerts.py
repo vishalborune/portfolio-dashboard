@@ -3008,6 +3008,132 @@ def run_morning_brief():
         print(f"Morning brief sent: {len(by_t)} event(s) today.")
 
 
+# ---------------------------------------------------------------------------
+# VALUATION CROSS-CHECK (08-Aug-2026, Vishal).
+# The digest and the dashboard price holdings through DIFFERENT code paths, and
+# they drifted apart twice in one day: (a) a weekly-close reconcile bug knocked
+# 10% off PGIL, (b) young listings (<45wk history) had no state close, so the
+# digest valued them at PURCHASE COST -- hiding a 25% loss on Advent Hotels and
+# understating young winners. Both shipped numbers that looked plausible and
+# tripped no alarm; only Vishal reading the email against the dashboard caught
+# them. So: before the digest reports a single rupee, re-price every holding
+# through an INDEPENDENT path and refuse to send if the two disagree.
+#
+# House Rule #2 (a wrong number is worse than a blank one) is the whole reason
+# this blocks rather than warns; DIGEST_RECONCILE_MODE=warn sends with a banner
+# instead, =off disables it.
+RECONCILE_PRICE_TOL_PCT = 2.0   # per-holding price gap that counts as a mismatch
+RECONCILE_VALUE_TOL_PCT = 0.5   # portfolio-total gap that blocks the send
+
+
+def _independent_price(ticker: str):
+    """Latest market close from the DAILY path (bhavcopy-first, Yahoo for
+    mainboard names) — deliberately NOT `current_state`'s weekly bars, so this is
+    a genuinely independent second opinion rather than the same source re-read.
+    Both paths settle to the same Friday close on healthy data, and the digest
+    only runs after the close, so a real gap means one side is stale/wrong.
+    None when the ticker has no daily data at all (can't judge -> not a finding)."""
+    try:
+        d = signals._fetch_daily(ticker)
+        if d is None or d.empty or "close" not in d.columns:
+            return None
+        return float(d["close"].iloc[-1])
+    except Exception:
+        return None
+
+
+def _valuation_mismatches(holdings, by_ticker, memo=None):
+    """Re-price every holding independently. Returns (findings, digest_total,
+    reference_total). A finding is a holding the digest would misprice:
+      • 'COST'  — the digest has no close and would fall back to purchase cost
+                  (the Advent Hotels bug: silently reports no gain/loss)
+      • 'DRIFT' — both paths priced it but disagree by >RECONCILE_PRICE_TOL_PCT
+                  (the PGIL bug: one side stale)
+    Totals are compared separately so many tiny gaps can't slip through under a
+    per-holding threshold."""
+    memo = {} if memo is None else memo
+    findings, dig_total, ref_total = [], 0.0, 0.0
+    for _, h in holdings.iterrows():
+        ticker = extract_yf_ticker(h["stock_name"])
+        qty = float(h.get("quantity") or 0)
+        cost = float(h.get("purchase_cost") or 0)
+        if not ticker or qty <= 0:
+            continue
+        dig = ((by_ticker.get(ticker) or {}).get("d") or {}).get("close")
+        try:
+            dig = float(dig) if dig not in (None, "") else None
+        except (TypeError, ValueError):
+            dig = None
+        if ticker not in memo:
+            memo[ticker] = _independent_price(ticker)
+        ref = memo[ticker]
+        # value the digest WOULD report (cost fallback is exactly the danger)
+        dig_total += qty * (dig if dig is not None else cost)
+        ref_total += qty * (ref if ref is not None else
+                            (dig if dig is not None else cost))
+        if ref is None:
+            continue                      # no second opinion -> can't call it wrong
+        if dig is None:
+            findings.append({"ticker": ticker, "name": short_name(h["stock_name"]),
+                             "kind": "COST", "digest": cost, "ref": ref, "qty": qty,
+                             "gap_pct": (cost - ref) / ref * 100 if ref else None})
+        elif abs(dig - ref) / ref * 100 > RECONCILE_PRICE_TOL_PCT:
+            findings.append({"ticker": ticker, "name": short_name(h["stock_name"]),
+                             "kind": "DRIFT", "digest": dig, "ref": ref, "qty": qty,
+                             "gap_pct": (dig - ref) / ref * 100})
+    return findings, dig_total, ref_total
+
+
+def _report_mismatches(findings, dig_total, ref_total, label=""):
+    """Print the cross-check result the same way for the digest and the CLI
+    (House Rule #3: say WHY, with the numbers, never just 'failed')."""
+    gap = abs(dig_total - ref_total)
+    gap_pct = gap / ref_total * 100 if ref_total else 0.0
+    who = f" [{label}]" if label else ""
+    print(f"[digest-reconcile]{who} digest Rs {dig_total:,.0f} vs independent "
+          f"Rs {ref_total:,.0f} (gap Rs {gap:,.0f} = {gap_pct:.2f}%)")
+    for f in findings:
+        if f["kind"] == "COST":
+            print(f"    COST-FALLBACK {f['name']} ({f['ticker']}): digest has no "
+                  f"price, would use cost Rs {f['digest']:,.2f} vs market "
+                  f"Rs {f['ref']:,.2f} ({f['gap_pct']:+.1f}%), qty {f['qty']:.0f}")
+        else:
+            print(f"    PRICE-DRIFT   {f['name']} ({f['ticker']}): digest "
+                  f"Rs {f['digest']:,.2f} vs independent Rs {f['ref']:,.2f} "
+                  f"({f['gap_pct']:+.1f}%), qty {f['qty']:.0f}")
+    return gap_pct
+
+
+def run_reconcile():
+    """Read-only: cross-check every portfolio's digest valuation against the
+    independent price path and print any mismatch. Nothing sent, nothing written.
+    Run it any time (`python alerts.py reconcile`) — the scalable spot-check that
+    the digest and the dashboard still agree about money."""
+    client = sb()
+    holdings = get_holdings(client)
+    if holdings.empty:
+        print("No holdings.")
+        return
+    memo, bad = {}, 0
+    for pf in sorted(int(p) for p in holdings["portfolio_id"].unique()):
+        sub = holdings[holdings["portfolio_id"] == pf]
+        by_ticker = {}
+        for _, h in sub.iterrows():
+            t = extract_yf_ticker(h["stock_name"])
+            if not t or t in by_ticker:
+                continue
+            try:
+                by_ticker[t] = {"d": signals.current_state(t) or {}}
+            except Exception as e:
+                print(f"  ({t}: state failed — {e})")
+                by_ticker[t] = {"d": {}}
+        finds, dig, ref = _valuation_mismatches(sub, by_ticker, memo)
+        gap_pct = _report_mismatches(finds, dig, ref, PF_NAME.get(pf, str(pf)))
+        if finds or gap_pct > RECONCILE_VALUE_TOL_PCT:
+            bad += 1
+    print(f"[digest-reconcile] {'OK — all portfolios agree' if not bad else f'{bad} portfolio(s) MISMATCHED'}")
+
+
 def run_digest():
     """Weekly digest — TWO separate emails (Vishal 07-Aug-2026): his OWN book in
     one email, the Lakshmi+Abinaya book in another, so neither email carries the
@@ -3081,6 +3207,38 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                     dead_money.append((name, move * 100))
         except Exception:
             pass
+
+    # ---- valuation cross-check, BEFORE any money is stored or sent ----------
+    # Deliberately placed ahead of the per-portfolio loop: that loop WRITES the
+    # digest_history snapshot, and a bad snapshot would poison next week's
+    # week-over-week too. Blocking here means nothing wrong is emailed OR stored.
+    recon_box = ""
+    _mode = (os.environ.get("DIGEST_RECONCILE_MODE") or "block").strip().lower()
+    if _mode != "off":
+        try:
+            _finds, _dig, _ref = _valuation_mismatches(holdings, by_ticker)
+            _gap_pct = _report_mismatches(_finds, _dig, _ref, label or "")
+            if _finds or _gap_pct > RECONCILE_VALUE_TOL_PCT:
+                if _mode == "block":
+                    print(f"[digest-reconcile] BLOCKED — digest for '{label or 'portfolio'}' "
+                          f"NOT sent and no snapshot stored. Fix the pricing gap above, "
+                          f"then re-run. (DIGEST_RECONCILE_MODE=warn to send anyway.)")
+                    return
+                _rows_html = "<br>".join(
+                    f"{html.escape(str(f['name']))}: digest ₹{f['digest']:,.2f} vs "
+                    f"market ₹{f['ref']:,.2f} ({f['gap_pct']:+.1f}%)"
+                    f"{' — digest has NO price, using cost' if f['kind'] == 'COST' else ''}"
+                    for f in _finds) or "portfolio totals disagree"
+                recon_box = (
+                    "<div style='background:#fef2f2;border:1px solid #fecaca;"
+                    "border-left:4px solid #dc2626;border-radius:8px;padding:14px 18px;"
+                    "margin:14px 0'><div style='font-size:15px;font-weight:800;color:#dc2626'>"
+                    "⚠️ VALUATION MISMATCH — treat the numbers below as unverified</div>"
+                    f"<div style='font-size:13px;color:#7f1d1d;margin-top:6px'>{_rows_html}"
+                    f"<br><i>Digest total ₹{_dig:,.0f} vs independent re-pricing "
+                    f"₹{_ref:,.0f} ({_gap_pct:.2f}% apart).</i></div></div>")
+        except Exception as ex:
+            print(f"(digest: valuation cross-check failed — {ex})")
 
     # ---- per-portfolio money numbers + snapshot diffs ----
     pf_sections = []
@@ -3336,6 +3494,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
           {len(exits)} EXIT · {len(cautions)} caution · {len(adds)} healthy</div>
       </div>
 
+      {recon_box}
       {action_box}
       {''.join(pf_sections)}
 
@@ -3427,5 +3586,6 @@ if __name__ == "__main__":
          "deals": run_deals,
          "calendar": run_calendar,
          "digest": run_digest,
+         "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
          "eod-entries": run_eod_entries}.get(mode, run_states)()
