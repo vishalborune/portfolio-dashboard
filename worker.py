@@ -76,6 +76,8 @@ FILINGS_OPEN = (8, 30)
 FILINGS_CLOSE = (23, 0)
 BRIEF_OPEN = (8, 30)        # morning 'today's agenda' brief window (once/day)
 BRIEF_CLOSE = (9, 15)
+LEVELS_OPEN = (8, 45)       # morning 5/10-DMA order levels (once/day, WEEKDAYS:
+LEVELS_CLOSE = (9, 12)      # it exists to place orders, so no point Sat/Sun)
 
 
 def _now():
@@ -110,6 +112,7 @@ def main():
     last_live = last_nse = last_bse = 0.0
     last_beat = 0.0
     brief_day = None            # morning brief runs once per calendar day
+    levels_day = None           # morning 5/10-DMA levels — once per calendar day
 
     while True:
         try:
@@ -143,6 +146,14 @@ def main():
                     alerts.run_morning_brief()
                 except Exception as e:
                     print(f"⚠️ [worker] morning brief failed: {type(e).__name__}: {e}")
+
+            # ---- morning 5/10-DMA order levels (once/day, weekdays only) ----
+            if _within(now, LEVELS_OPEN, LEVELS_CLOSE) and levels_day != today:
+                levels_day = today
+                try:
+                    alerts.run_morning_levels()
+                except Exception as e:
+                    print(f"⚠️ [worker] morning levels failed: {type(e).__name__}: {e}")
 
             # ---- NSE filings (7 days — companies file on weekends too) ------
             if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)

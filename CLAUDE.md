@@ -208,6 +208,23 @@ switch sources without disclosure.
   **watchlist dashboard also shows a `% vs 5DMA` column** (02-Aug-2026) next to
   10/21 — `signals.daily_entry_state`/`entry_states_for_watchlist` carry it (the
   alert is Telegram; this is the on-screen view Lakshmi expected to see).
+- **Morning 5/10-DMA order levels (`alerts.run_morning_levels`, Lakshmi 11-Aug-2026)**:
+  ~08:45 IST **weekdays** (it exists to place orders — pointless Sat/Sun), ONE Telegram
+  message listing Lakshmi+Abinaya HOLDINGS (📌) and WATCHLIST (👀) names that are
+  **trending up AND sitting on the 5/10-day EMA** — with the **rupee levels** to place
+  morning limit orders at. His words: *"send a digest of ema 5/10 in the morning so that
+  it sends us the price for us to place orders, it is just kissing and moving up."*
+  **Deliberate exception to the dashboard %-only rule** (22-Jul-2026: dashboard shows %
+  distance, never the ₹ level) — here the ₹ LEVEL IS the deliverable, so both are shown.
+  Don't "fix" it back to percent-only. Levels come off COMPLETED daily closes
+  (`signals.daily_entry_levels`), which is the right pre-open reference — today's bar
+  doesn't exist yet. Gates: uptrend (close > 21-DMA, same gate as `check_ema5_touch`)
+  AND within **`MORNING_NEAR_PCT`=1.5%** of the 5- or 10-DMA. **The 1.5 matters:** the
+  first cut used 3.0 and listed 26+ names — in a trending market most stocks sit within
+  3% of those lines, so it was noise not an order list. Sorted nearest-first, capped at
+  `MORNING_MAX_PER_SECTION`=12/section with the overflow count DISCLOSED (no silent
+  truncation). Silent when nothing qualifies. Dedup marker in entry_alert_log
+  (ticker `__morning_levels__`, kind LEVELS). Test: `python dryrun.py morning-levels`.
 - **Morning agenda brief (`alerts.run_morning_brief`, Lakshmi 02-Aug-2026)**: ONE
   Telegram message ~08:30 IST listing Lakshmi+Abinaya names with a corporate
   event (board meeting → results/dividend/fund-raise) scheduled TODAY — HOLDINGS

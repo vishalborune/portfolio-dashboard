@@ -2931,6 +2931,131 @@ def _bench_html(xirr, bench):
             f"<span style='color:{col}'>{verdict}</span>{note}</p>")
 
 
+# "Kissing" means AT the line, not near it. 3.0 was the first cut and it listed
+# 26+ names — in a trending market most stocks sit within 3% of their 5/10-DMA,
+# so it was noise, not an order list. 1.5 keeps it to names actually touching.
+# This is the tuning knob: raise it for more candidates, lower it for fewer.
+MORNING_NEAR_PCT = 1.5    # only list names trading within this % of the 5/10-day EMA
+MORNING_MAX_PER_SECTION = 12   # Telegram-safe cap; any drop is disclosed, never silent
+
+
+def run_morning_levels():
+    """~08:45 IST weekdays: the 5-day and 10-day EMA LEVELS for Lakshmi+Abinaya
+    names that are TRENDING UP and trading NEAR those lines — i.e. the prices to
+    place this morning's orders at (Lakshmi 11-Aug-2026: "send a digest of ema
+    5/10 in the morning so that it sends us the price for us to place orders in
+    the morning, it is just kissing and moving up").
+
+    Levels are computed off COMPLETED daily closes, which is exactly the right
+    reference before the open — today's bar doesn't exist yet, and the prior
+    close is what an order placed pre-open is judged against.
+
+    NOTE — deliberate exception to the dashboard rule: the dashboard shows only
+    the % distance to a DMA, never the ₹ level (Lakshmi 22-Jul-2026: "how far
+    from the zone" is the decision). Here the RUPEE LEVEL IS the deliverable —
+    he is placing limit orders off it — so both are shown. Don't "fix" this back
+    to percent-only.
+
+    Filters (keeps it to a list you can act on, not 50 lines of noise):
+      • uptrend  — close above the 21-DMA (same gate as check_ema5_touch)
+      • near     — within MORNING_NEAR_PCT of the 5-DMA or 10-DMA, so an order
+                   placed there has a real chance of filling today
+    Sorted nearest-first. SILENT when nothing qualifies. Dedup marker in
+    entry_alert_log ('__morning_levels__') so worker + backstop can't double-send.
+    """
+    client = sb()
+    today_iso = date.today().isoformat()
+    try:
+        if client.table("entry_alert_log").select("ticker").eq("alert_date", today_iso) \
+                .eq("ticker", "__morning_levels__").eq("kind", "LEVELS").execute().data:
+            print("(morning levels already sent today)")
+            return
+    except Exception:
+        pass
+
+    lak = {p for p, g in PF_GROUP.items() if g == "lakshmi"}
+    holdings = get_holdings(client)
+    hold_names = {}
+    for _, h in holdings.iterrows():
+        if int(h.get("portfolio_id", 1)) in lak:
+            t = extract_yf_ticker(h["stock_name"])
+            if t:
+                hold_names[t] = short_name(h["stock_name"])
+    try:
+        wl = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    except Exception:
+        wl = []
+    watch_names = {}
+    for r in wl:
+        if int(r.get("portfolio_id", 1)) in lak:
+            t = extract_yf_ticker(r.get("stock_name"))
+            if t and t not in hold_names:
+                watch_names[t] = short_name(r["stock_name"])
+
+    rows = {"hold": [], "watch": []}
+    for t, nm in list(hold_names.items()) + list(watch_names.items()):
+        try:
+            lv = signals.daily_entry_levels(t)
+        except Exception as e:
+            print(f"  ({t}: levels failed — {e})")
+            continue
+        if not lv:
+            continue
+        close, e5, e10, e21 = (lv.get("ref_close"), lv.get("ema5"),
+                               lv.get("ema10"), lv.get("ema21"))
+        if not (close and e5 and e10):
+            continue
+        if e21 and close <= e21:          # not trending up — skip
+            continue
+        d5 = (close - e5) / e5 * 100
+        d10 = (close - e10) / e10 * 100
+        near = min(abs(d5), abs(d10))
+        if near > MORNING_NEAR_PCT:
+            continue
+        bucket = "hold" if t in hold_names else "watch"
+        rows[bucket].append((near, nm, close, e5, d5, e10, d10))
+
+    if not rows["hold"] and not rows["watch"]:
+        print("(morning levels: nothing near the 5/10-DMA today)")
+        return
+
+    def _fmt(group):
+        out = []
+        for _, nm, close, e5, d5, e10, d10 in sorted(group)[:MORNING_MAX_PER_SECTION]:
+            out.append(f"• <b>{html.escape(nm)}</b>  ₹{close:,.1f}\n"
+                       f"   5DMA <b>₹{e5:,.1f}</b> ({d5:+.1f}%) · "
+                       f"10DMA <b>₹{e10:,.1f}</b> ({d10:+.1f}%)")
+        # never truncate silently — say what was left out (nearest-first, so the
+        # dropped ones are the furthest from the line)
+        if len(group) > MORNING_MAX_PER_SECTION:
+            out.append(f"<i>…{len(group) - MORNING_MAX_PER_SECTION} more just outside "
+                       f"— nearest {MORNING_MAX_PER_SECTION} shown</i>")
+        return out
+
+    parts = [f"📈 <b>Morning levels · {date.today():%d %b}</b>\n"
+             f"<i>Uptrend names within {MORNING_NEAR_PCT:g}% of the 5/10-DMA — "
+             f"order levels off last close</i>"]
+    if rows["hold"]:
+        parts.append("📌 <b>Holdings</b>\n" + "\n".join(_fmt(rows["hold"])))
+    if rows["watch"]:
+        parts.append("👀 <b>Watchlist</b>\n" + "\n".join(_fmt(rows["watch"])))
+    body = "\n\n".join(parts)
+
+    chat = chat_id_for_group("lakshmi")
+    if not chat:
+        print("(morning levels: no Telegram chat for lakshmi)")
+        return
+    if send_telegram(body, chat_id=chat):
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": "__morning_levels__", "grp": "lakshmi",
+                "alert_date": today_iso, "kind": "LEVELS"}).execute()
+        except Exception:
+            pass
+        print(f"Morning levels sent: {len(rows['hold'])} holding(s), "
+              f"{len(rows['watch'])} watchlist name(s).")
+
+
 def run_morning_brief():
     """~08:30 IST daily: ONE Telegram brief of Lakshmi+Abinaya names with a
     corporate event (board meeting → results/dividend/fund-raise/…) scheduled
@@ -3588,4 +3713,5 @@ if __name__ == "__main__":
          "digest": run_digest,
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
+         "morning-levels": run_morning_levels,
          "eod-entries": run_eod_entries}.get(mode, run_states)()
