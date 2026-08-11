@@ -1162,6 +1162,11 @@ _RESULTS_JSON_PROMPT = (
     "so EVERY figure inside an object comes from the SAME column — this is "
     "critical, do NOT mix columns. Include EVERY column shown: current quarter, "
     "preceding quarter, year-ago quarter, AND any full-year / 'Year ended' column.\n"
+    "An Indian quarterly statement almost always prints FOUR columns — the three "
+    "quarters (current, IMMEDIATELY PRECEDING, year-ago) plus a full-year column. "
+    "Two columns often share the same end date (e.g. Q4 and the full year both end "
+    "31-03): return BOTH as separate objects. Do NOT omit the preceding quarter — "
+    "dropping it silently loses every quarter-on-quarter comparison.\n"
     "For each column give period_end (the date exactly as printed) and is_quarter "
     "(true for a single ~3-month quarter, false for a full-year/'year ended' column).\n"
     "Numbers exactly as printed: strip commas; parentheses mean NEGATIVE; null if "
@@ -1484,6 +1489,7 @@ def _format_results(company: str, data: dict) -> str:
     # direction + margin change in bps YoY = his "sales up + margin up" check.
     # Falls back to the PAT-vs-revenue read when margin isn't computable.
     rev_yoy = _pct(rev[0], rev[2])
+    eb_yoy = _pct(ebitda[0], ebitda[2])
     take = None
     if rev_yoy is not None and emar[0] is not None and emar[2] is not None:
         bps = (emar[0] - emar[2]) * 100          # EBITDA-margin change YoY, in bps
@@ -1493,7 +1499,24 @@ def _format_results(company: str, data: dict) -> str:
         elif bps >= 0:
             take = f"{mv} on revenue {rev_yoy:+.0f}% — margin expanding"
         elif rev_yoy >= 0:
-            take = f"revenue +{rev_yoy:.0f}% YoY but {mv} — margin pressure"
+            # A FALLING margin % is NOT automatically "pressure" (Krishival
+            # 11-Aug-2026, Lakshmi): revenue +80% with EBITDA +50% got labelled
+            # "margin pressure" purely because the ratio slipped 15.6→13.0% —
+            # while EBITDA itself grew ₹7.7cr→₹11.6cr and the SEQUENTIAL margin
+            # actually expanded. Scaling hard almost always dilutes the ratio;
+            # that is dilution, not pressure. Only call it pressure when EBITDA
+            # in RUPEES is flat/falling while sales rise — that's the real thing.
+            if eb_yoy is not None and eb_yoy > 0:
+                take = (f"revenue +{rev_yoy:.0f}% YoY & EBITDA +{eb_yoy:.0f}% — growing, "
+                        f"margin diluted ({emar[2]:.1f}→{emar[0]:.1f}%)")
+            elif eb_yoy is not None:
+                take = (f"revenue +{rev_yoy:.0f}% YoY but EBITDA {eb_yoy:+.0f}% — "
+                        f"margin pressure ({mv})")
+            else:
+                take = f"revenue +{rev_yoy:.0f}% YoY but {mv} — margin pressure"
+            # the sequential read is the fresher one — say so when it disagrees
+            if emar[1] is not None and emar[0] > emar[1]:
+                take += f"; but QoQ margin UP {emar[1]:.1f}→{emar[0]:.1f}%"
         else:
             take = f"revenue {rev_yoy:.0f}% YoY & {mv} — both weak"
     if take is None:

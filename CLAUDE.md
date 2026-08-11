@@ -376,6 +376,28 @@ break.
     re-anchor pool (travels with its PBT if columns are reassigned) and defaults to 0,
     so the no-one-off majority is unchanged. Verified live: Advent (real operating story
     + flag) and Styrenix (unchanged ₹223.6 Cr / 22.1%, no false flag).
+  - **RESULTS "margin pressure" mislabel FIXED (11-Aug-2026, Lakshmi caught it on
+    Krishival):** the Take called a quarter with **revenue +80% YoY and EBITDA +50% YoY**
+    "margin pressure", purely because the margin RATIO slipped 15.6→13.0% — while EBITDA
+    in rupees grew ₹7.7cr→₹11.6cr and the SEQUENTIAL margin actually EXPANDED. Every
+    number was arithmetically correct; the **verdict** was the opposite of the story.
+    Lesson: a falling margin % is not automatically pressure — scaling hard almost always
+    dilutes the ratio. Fix: the Take now weighs **EBITDA growth in RUPEES** (`eb_yoy`), so
+    rev-up + margin-down + EBITDA-up reads *"growing, margin diluted"*, and only
+    rev-up + EBITDA **flat/falling** is called *margin pressure*; when the QoQ margin
+    disagrees with the YoY read it is appended ("but QoQ margin UP x→y%") since the
+    sequential number is the fresher one.
+    **Same alert also exposed run-to-run column flakiness:** the live run dropped the
+    PRECEDING-QUARTER column entirely, so every QoQ read "—" (a re-run minutes later
+    had it). `_RESULTS_JSON_PROMPT` now states that an Indian quarterly statement almost
+    always prints FOUR columns, that two columns often share an end date (Q4 and FY both
+    end 31-03) and BOTH must be returned, and that omitting the preceding quarter
+    silently loses every QoQ. Side benefit: Advent now extracts its preceding quarter too
+    and flags a ₹15.7cr exceptional there that was previously invisible.
+    **KNOWN LIMIT (unchanged):** current-quarter figures are reconciled and stable across
+    runs, but the COMPARISON columns can still vary slightly run-to-run (a Krishival
+    prev-Q margin read 10.0% one run, 11.2% another — same direction, different decimal).
+    Treat QoQ/YoY as direction-accurate, not to-the-decimal.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock
