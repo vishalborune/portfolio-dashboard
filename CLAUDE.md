@@ -225,6 +225,12 @@ switch sources without disclosure.
   `MORNING_MAX_PER_SECTION`=12/section with the overflow count DISCLOSED (no silent
   truncation). Silent when nothing qualifies. Dedup marker in entry_alert_log
   (ticker `__morning_levels__`, kind LEVELS). Test: `python dryrun.py morning-levels`.
+  **Shipped broken, fixed 12-Aug-2026 (Lakshmi got nothing on day one):** the worker
+  guard reused the variable name `levels_day`, which the FAST-POLL level cache already
+  sets at 08:30 (`_within(now, FILINGS_OPEN, MARKET_CLOSE)`). By 08:45 the `!= today`
+  test was therefore already satisfied and this digest never ran — not once. Renamed to
+  `morning_levels_day`. **Lesson: a once-per-day guard is only as good as its variable
+  being unique — grep the worker for the name before adding a new daily block.**
 - **Morning agenda brief (`alerts.run_morning_brief`, Lakshmi 02-Aug-2026)**: ONE
   Telegram message ~08:30 IST listing Lakshmi+Abinaya names with a corporate
   event (board meeting → results/dividend/fund-raise) scheduled TODAY — HOLDINGS

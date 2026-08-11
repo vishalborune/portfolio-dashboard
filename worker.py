@@ -112,7 +112,11 @@ def main():
     last_live = last_nse = last_bse = 0.0
     last_beat = 0.0
     brief_day = None            # morning brief runs once per calendar day
-    levels_day = None           # morning 5/10-DMA levels — once per calendar day
+    # NOTE: deliberately NOT called `levels_day` — that name is already taken by
+    # the fast-poll level cache above, which sets it at 08:30. Reusing it meant
+    # this digest's `!= today` guard was already satisfied by 08:45 and it never
+    # fired once (11-Aug-2026, Lakshmi got no alert).
+    morning_levels_day = None   # morning 5/10-DMA order levels — once per day
 
     while True:
         try:
@@ -148,8 +152,8 @@ def main():
                     print(f"⚠️ [worker] morning brief failed: {type(e).__name__}: {e}")
 
             # ---- morning 5/10-DMA order levels (once/day, weekdays only) ----
-            if _within(now, LEVELS_OPEN, LEVELS_CLOSE) and levels_day != today:
-                levels_day = today
+            if _within(now, LEVELS_OPEN, LEVELS_CLOSE) and morning_levels_day != today:
+                morning_levels_day = today
                 try:
                     alerts.run_morning_levels()
                 except Exception as e:
