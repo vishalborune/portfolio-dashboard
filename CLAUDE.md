@@ -394,10 +394,16 @@ break.
     end 31-03) and BOTH must be returned, and that omitting the preceding quarter
     silently loses every QoQ. Side benefit: Advent now extracts its preceding quarter too
     and flags a ₹15.7cr exceptional there that was previously invisible.
-    **KNOWN LIMIT (unchanged):** current-quarter figures are reconciled and stable across
-    runs, but the COMPARISON columns can still vary slightly run-to-run (a Krishival
-    prev-Q margin read 10.0% one run, 11.2% another — same direction, different decimal).
-    Treat QoQ/YoY as direction-accurate, not to-the-decimal.
+    **ROOT CAUSE OF THE FLAKINESS FOUND AND FIXED — `temperature: 0`.**
+    `_anthropic_pdf_call` set no temperature, so the API defaulted to **1.0 (maximum
+    sampling randomness)** on what is a pure TRANSCRIPTION task. That is why the same PDF
+    yielded different comparison-column figures on consecutive runs and why a column was
+    sometimes dropped. Reading numbers off a table has exactly one right answer — there is
+    nothing to sample. With `temperature: 0` the extraction is **deterministic**: verified
+    by running Krishival 3x (byte-identical, same SHA) and Advent + Styrenix 2x each
+    (identical). This applies to EVERY filing summary — results, XBRL and the generic
+    gist — so the whole summary pipeline is now reproducible. Any future
+    "the alert said something different last time" is a real bug, not sampling noise.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock

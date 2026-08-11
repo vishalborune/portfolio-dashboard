@@ -1056,6 +1056,14 @@ def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int
                  "content-type": "application/json"},
         json={
             "model": SUMMARY_MODEL, "max_tokens": max_tokens,
+            # temperature 0 — this is TRANSCRIPTION, not writing. The API defaults
+            # to 1.0 (maximum sampling randomness), which is why the same results
+            # PDF extracted different comparison-column figures on consecutive runs
+            # (Krishival 11-Aug-2026: prev-quarter margin read 10.0% one run and
+            # 11.2% the next, and one run dropped the preceding-quarter column
+            # entirely). Reading numbers off a table has exactly one right answer,
+            # so there is nothing to sample — pin it.
+            "temperature": 0,
             "messages": [{"role": "user", "content": [
                 {"type": "document",
                  "source": {"type": "base64", "media_type": "application/pdf",
