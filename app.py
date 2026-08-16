@@ -1182,9 +1182,20 @@ def tab_watchlist():
 
         # Lakshmi 22-Jul-2026: show the % DISTANCE to the DMAs, not the ₹ levels —
         # "how far am I from the entry zone" is the decision, the rupee value isn't.
+        # Manual support levels + how far price is from each, so he can see at a
+        # glance which names are armed and which still need a level typed in.
+        for _col, _label in (("support_minor", "Minor Sup"), ("support_major", "Major Sup")):
+            if _col in wl_view.columns:
+                wl_view[_label] = wl_view[_col]
+                if "CMP" in wl_view.columns:
+                    wl_view[f"% vs {_label}"] = (
+                        (wl_view["CMP"] - wl_view[_col]) / wl_view[_col] * 100)
+
         cols = ["Short Name", "Score", "Verdict", "Ticker", "CMP", "Entry Advice",
                 "% vs 5DMA", "% vs 10DMA", "% vs 21DMA", "52W High", "% vs 52WH", "Day Change %",
-                "target_buy_price", "Distance to Target %", "notes", "added_by"]
+                "target_buy_price", "Distance to Target %",
+                "Minor Sup", "% vs Minor Sup", "Major Sup", "% vs Major Sup",
+                "notes", "added_by"]
         cols = [c for c in cols if c in wl_view.columns]
         styled = (
             wl_view[cols].rename(columns={
@@ -1195,6 +1206,8 @@ def tab_watchlist():
                 "% vs 5DMA": "{:+.1f}%",
                 "% vs 10DMA": "{:+.1f}%", "% vs 21DMA": "{:+.1f}%",
                 "52W High": "₹{:,.2f}", "% vs 52WH": "{:+.1f}%",
+                "Minor Sup": "₹{:,.2f}", "% vs Minor Sup": "{:+.1f}%",
+                "Major Sup": "₹{:,.2f}", "% vs Major Sup": "{:+.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)
@@ -1281,6 +1294,23 @@ def _form_edit_watchlist(wl: pd.DataFrame):
     company0, exch0, sym0 = parse_stock_name(row["stock_name"])
     target0 = float(row["target_buy_price"]) if pd.notna(row.get("target_buy_price")) else 0.0
     notes0 = row.get("notes") or ""
+    minor0 = float(row["support_minor"]) if pd.notna(row.get("support_minor")) else 0.0
+    major0 = float(row["support_major"]) if pd.notna(row.get("support_major")) else 0.0
+
+    # Offer the computed levels as a STARTING POINT only — he can accept, adjust
+    # or ignore them. Deliberately not pre-filled into the boxes: an auto value
+    # sitting in an input box gets saved by accident and then looks like a level
+    # he chose. Only what he actually types ever fires an alert.
+    suggestion = ""
+    try:
+        _tk = extract_yf_ticker(row["stock_name"])
+        _auto = signals.support_levels(_tk) if _tk else None
+        if _auto:
+            suggestion = " · ".join(
+                f"{k} ₹{v:,.2f}" for k, v in (("minor", _auto.get("minor")),
+                                              ("major", _auto.get("major"))) if v)
+    except Exception:
+        suggestion = ""
 
     with st.form(f"edit_wl_form_{rid}"):
         c1, c2 = st.columns([2, 1])
@@ -1293,6 +1323,27 @@ def _form_edit_watchlist(wl: pd.DataFrame):
                                help="No spaces — e.g. JITFINFRA, not 'JITF INFRA'")
         target = st.number_input("Target buy price (0 = clear it)", min_value=0.0,
                                  step=0.01, format="%.2f", value=target0)
+
+        # Support levels are TYPED IN, not derived (Lakshmi 16-Aug-2026): the
+        # automatic rules didn't generalise across charts, so he sets them.
+        # Blank = no support alert for that level; we stay silent rather than
+        # fall back to a level he doesn't believe.
+        st.caption("**Support levels** — alerts fire within "
+                   f"{signals.SUPPORT_NEAR_PCT:g}% of these. Leave blank for no alert.")
+        s1, s2 = st.columns(2)
+        with s1:
+            sup_minor = st.number_input("Minor support (0 = clear it)", min_value=0.0,
+                                        step=0.01, format="%.2f", value=minor0,
+                                        help="The near-term shelf you expect a bounce from.")
+        with s2:
+            sup_major = st.number_input("Major support (0 = clear it)", min_value=0.0,
+                                        step=0.01, format="%.2f", value=major0,
+                                        help="The structural floor — where the trend "
+                                             "would actually break.")
+        if suggestion:
+            st.caption(f"↳ for reference, computed from price history: {suggestion} "
+                       "(a suggestion only — nothing alerts on these)")
+
         note = st.text_area("Notes / thesis", value=notes0, height=80)
         submitted = st.form_submit_button("💾 Save changes", type="primary")
 
@@ -1310,6 +1361,8 @@ def _form_edit_watchlist(wl: pd.DataFrame):
             new_name = build_stock_name(company, exchange, symbol)
             db.update_watchlist(rid, stock_name=new_name,
                                 target_buy_price=target if target > 0 else None,
+                                support_minor=sup_minor if sup_minor > 0 else None,
+                                support_major=sup_major if sup_major > 0 else None,
                                 notes=note or None)
             st.success("✅ Watchlist item updated")
             st.rerun()

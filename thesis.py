@@ -616,8 +616,12 @@ def render_markdown(t: dict) -> str:
     ]
     sup = t.get("support") or {}
     if sup:
-        out.append(f"*Support — minor {_rupees(sup.get('minor'))} · "
-                   f"major {_rupees(sup.get('major'))}*")
+        # Labelled AUTO on purpose: since 16-Aug-2026 the support levels that
+        # actually fire alerts are the ones Lakshmi types on the watchlist. These
+        # are the computed suggestion, and the note must not let them be mistaken
+        # for his own levels.
+        out.append(f"*Support (auto-derived, not his entered levels) — "
+                   f"minor {_rupees(sup.get('minor'))} · major {_rupees(sup.get('major'))}*")
     if t.get("unverified"):
         out += ["", "## Could not verify"] + [f"- {u}" for u in t["unverified"]]
     if t.get("sources"):

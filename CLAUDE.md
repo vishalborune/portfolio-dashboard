@@ -236,6 +236,38 @@ switch sources without disclosure.
   rising market by design** — measured 15-Aug-2026, all 6 watchlist names sat
   13–55% above support. Shallow pullbacks are already covered by the 10/21-DMA ZONE
   alerts; these are the DEEP-support ones.
+  - **LEVELS ARE NOW MANUAL, entered per stock on the watchlist (Lakshmi 16-Aug-2026).**
+    They were originally DERIVED (minor = lowest daily low of 25 bars; major = the weekly
+    5-week CENTERED swing-pivot low from `compute_indicators`). He asked how that worked
+    and concluded it *"might not make sense to predict it easily for different stocks"* —
+    correctly: on HFCL those rules put **major (₹193.92) ABOVE minor (₹181.05)**, because
+    a lone intraday wick set the minor and no weekly close ever confirmed it. Defensible
+    per-rule, nonsense per-chart. He reads the chart, he types the level.
+    **`alerts.SUPPORT_ALERTS_REQUIRE_MANUAL = True`: a blank level is SILENT — there is NO
+    fallback to the computed value.** An alert at a level he doesn't believe is worse than
+    no alert and would train him to ignore the channel (House Rule #2). Flip the flag to
+    False to restore auto-firing. `signals.support_levels()` survives only as an on-screen
+    SUGGESTION under the edit form — shown as text and deliberately NOT pre-filled into the
+    input, because an auto value sitting in a box gets saved by accident and then looks
+    like a level he chose — and is labelled "auto-derived" in `thesis.py`.
+    `alerts.manual_support_levels()` reads them in ONE query per run (cheaper than the old
+    per-ticker history fetch) and logs loudly + returns {} if the migration is missing, so
+    the worker degrades to silence, never a crash. `SUPPORT_NEAR_PCT` moved to `signals.py`
+    so the dashboard can show the same number without importing the alert engine into the
+    512 MB web service. Dashboard gains `Minor Sup` / `Major Sup` + % distance columns.
+    **Needs a one-time migration:**
+    ```sql
+    alter table watchlist
+      add column if not exists support_minor numeric,
+      add column if not exists support_major numeric;
+    ```
+- **Windows console encoding (16-Aug-2026):** `alerts.py` now reconfigures stdout/stderr to
+  UTF-8 at import. Its log lines are full of ⚠️/emoji and most exist to explain a FAILURE —
+  under Windows cp1252 the `print()` inside an `except` raised UnicodeEncodeError and turned
+  a *handled* error into an unhandled crash, losing the diagnostic it was written to give
+  (House Rule #3). Found when a correctly-caught "column does not exist" error killed a local
+  dry-run. Render is UTF-8, so this only ever bit local runs — which is exactly where
+  `dryrun.py` lives.
 - **Morning 5/10-DMA order levels (`alerts.run_morning_levels`, Lakshmi 11-Aug-2026)**:
   ~08:45 IST **weekdays** (it exists to place orders — pointless Sat/Sun), ONE Telegram
   message listing Lakshmi+Abinaya HOLDINGS (📌) and WATCHLIST (👀) names that are

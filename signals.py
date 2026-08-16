@@ -470,6 +470,12 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
 
 MINOR_SUPPORT_DAYS = 25    # ~5 weeks of daily bars = the near-term shelf
 
+# How close to a support level counts as "there". Lives HERE rather than in
+# alerts.py because the dashboard shows the same number in its help text, and
+# app.py must not import the alert engine (that would pull the whole engine into
+# the 512 MB free-tier web service). Both sides read this one definition.
+SUPPORT_NEAR_PCT = 2.0
+
 
 def support_levels(ticker: str) -> dict | None:
     """MINOR and MAJOR support for one ticker (Lakshmi 15-Aug-2026 — he buys at

@@ -445,8 +445,13 @@ def update_watchlist(watchlist_id: int, **kwargs):
     # clears that column (e.g. removing a target price), which the edit form
     # relies on. Fields not passed are left untouched.
     payload = dict(kwargs)
-    if payload.get("target_buy_price") is not None:
-        payload["target_buy_price"] = float(payload["target_buy_price"])  # numpy->py, rule #6
+    # numpy/pandas scalars silently fail Supabase's JSON serialization -> plain
+    # float at the write boundary (rule #6). Applies to every numeric column here,
+    # not just the target price: the manual support levels come off st.number_input
+    # and go through the same path.
+    for _col in ("target_buy_price", "support_minor", "support_major"):
+        if payload.get(_col) is not None:
+            payload[_col] = float(payload[_col])
     if payload:
         _client().table("watchlist").update(payload).eq("id", watchlist_id).execute()
         _bust()

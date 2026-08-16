@@ -36,6 +36,20 @@ from supabase import create_client
 
 import signals
 from notify import send_telegram, send_email, _dry_run as _dry
+
+# Every log line in this file uses ⚠️/emoji, and most of them exist to explain a
+# FAILURE. On Windows the console defaults to cp1252, which cannot encode them —
+# so the print() inside an `except` raises UnicodeEncodeError and turns a handled
+# error into an unhandled crash, losing the very diagnostic it was written to
+# give (House Rule #3). Caught 16-Aug-2026 running a local dry-run: the DB error
+# was caught correctly and then the log line about it killed the process. Render
+# is UTF-8 so this only ever bit local runs — which is exactly where dryrun.py
+# lives. No-op where stdout is already UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 # _dry() is True when ALERTS_DRY_RUN is set. In dry-run NOTHING is sent AND no
 # dedup/state rows are written — otherwise a test run would mark items "seen"
 # and the next REAL run would silently skip them (read-only is the whole point).
@@ -504,7 +518,57 @@ JUMP_MIN = 0.01   # 5-EMA touch: CMP must close >=1% above the 5-EMA to count as
                   # more alerts, higher for only the strongest bounces.
 
 
-SUPPORT_NEAR_PCT = 2.0   # alert when CMP is within this % of a support level
+# Defined in signals.py so the dashboard can show the same number without
+# importing the alert engine. Aliased here because every call site says
+# SUPPORT_NEAR_PCT.
+SUPPORT_NEAR_PCT = signals.SUPPORT_NEAR_PCT
+
+# Support levels are MANUAL (Lakshmi 16-Aug-2026). He read how the automatic
+# levels were derived — minor = lowest daily low of ~5 weeks, major = a 5-week
+# CENTERED weekly pivot low — and said it won't generalise: those rules produce
+# a defensible number on some charts and a meaningless one on others (on HFCL
+# the "major" structural level came out ABOVE the "minor" one, because a single
+# intraday wick set the minor and no weekly close ever confirmed it). He reads
+# the chart; he types the level.
+#
+# So the manual value is the ONLY thing that fires an alert. When it's blank we
+# stay SILENT rather than fall back to the computed guess: an alert at a level
+# he doesn't believe is worse than no alert at all, and it would quietly retrain
+# him to ignore the whole channel (House Rule #2 — a wrong number beats no
+# number only in the wrong direction). signals.support_levels() survives purely
+# as an on-screen SUGGESTION to seed the box.
+# Set this False to restore the old auto-firing behaviour.
+SUPPORT_ALERTS_REQUIRE_MANUAL = True
+
+
+def manual_support_levels(client) -> dict:
+    """{ticker: {'minor': float|None, 'major': float|None}} from the watchlist's
+    manually-entered columns. Empty dict (and a loud log line) if the migration
+    hasn't been run yet, so the alert path degrades to silence, never to a crash."""
+    try:
+        rows = client.table("watchlist").select(
+            "stock_name, support_minor, support_major").execute().data or []
+    except Exception as e:
+        print(f"⚠️ [support] cannot read manual levels ({type(e).__name__}: {e}) — "
+              f"has the support_minor/support_major migration been run? "
+              f"Support alerts are OFF until it is.")
+        return {}
+    out = {}
+    for r in rows:
+        t = extract_yf_ticker(r.get("stock_name"))
+        if not t:
+            continue
+        e = out.setdefault(t, {"minor": None, "major": None})
+        # A stock can sit on two people's watchlists; take the first non-null of
+        # each so one person's blank row can't erase the other's typed level.
+        for key, col in (("minor", "support_minor"), ("major", "support_major")):
+            v = r.get(col)
+            if v is not None and e[key] is None:
+                try:
+                    e[key] = float(v)
+                except (TypeError, ValueError):
+                    pass
+    return out
 
 
 def check_support_touch(client, prices: dict):
@@ -513,10 +577,12 @@ def check_support_touch(client, prices: dict):
     actually buys at. `prices` = {ticker: (cmp, minor, major)}; LIVE from the fast
     poller, and off EOD closes in the evening pass (so SME watchlist is covered).
 
-      MINOR (kind SUPMIN) — lowest daily low of the last ~5 weeks: the near-term
-        shelf. Fires more often; a bounce candidate, not a floor.
-      MAJOR (kind SUPMAJ) — the weekly swing-pivot support the flowchart already
-        computes: the structural level. Rarer and more meaningful.
+      MINOR (kind SUPMIN) — the near-term shelf he expects a bounce from.
+      MAJOR (kind SUPMAJ) — the structural floor. Rarer and more meaningful.
+
+    BOTH ARE TYPED IN BY HAND on the watchlist (16-Aug-2026) — see
+    SUPPORT_ALERTS_REQUIRE_MANUAL above for why the computed versions no longer
+    fire. A name with no level entered is simply silent.
 
     Both are reported when both are in range, because "sitting on the weekly
     floor" and "sitting on last month's low" are different decisions. PROXIMITY
@@ -822,16 +888,26 @@ def run_eod_entries():
     # watchlist names, and a settled-close backstop for mainboard.
     try:
         wl = client.table("watchlist").select("stock_name").execute().data or []
-        sup_prices, seen_s = {}, set()
+        manual_sup = manual_support_levels(client) if SUPPORT_ALERTS_REQUIRE_MANUAL else {}
+        sup_prices, seen_s, no_level = {}, set(), []
         for r in wl:
             t = extract_yf_ticker(r.get("stock_name"))
             if not t or t in seen_s:
                 continue
             seen_s.add(t)
+            if SUPPORT_ALERTS_REQUIRE_MANUAL:
+                sup = manual_sup.get(t) or {}
+            else:
+                sup = signals.support_levels(t) or {}
+            if not (sup.get("minor") or sup.get("major")):
+                no_level.append(t)
+                continue          # nothing typed in -> stay silent, don't guess
             lv = signals.daily_entry_levels(t)
-            sup = signals.support_levels(t) or {}
-            if lv and sup:
+            if lv:
                 sup_prices[t] = (lv["ref_close"], sup.get("minor"), sup.get("major"))
+        if no_level:
+            print(f"[support] no manual level set for {len(no_level)}: {no_level} "
+                  f"— silent (enter them on the watchlist to arm these)")
         check_support_touch(client, sup_prices)
     except Exception as e:
         print(f"⚠️ eod support levels failed: {e}")
@@ -865,11 +941,17 @@ def compute_fast_levels(client):
     live feed and are covered by the evening pass."""
     sme = _sme_ticker_set()
     mainboard = sorted(t for t in _all_entry_tickers(client) if t not in sme)
+    # Manual support levels — one read for the whole day, not a per-ticker
+    # history fetch. Cheaper AND more trustworthy than the computed version.
+    manual_sup = manual_support_levels(client) if SUPPORT_ALERTS_REQUIRE_MANUAL else {}
     levels, wema, skipped = {}, {}, []
     for t in mainboard:
         lv = signals.daily_entry_levels(t)
         if lv:
-            sup = signals.support_levels(t) or {}
+            if SUPPORT_ALERTS_REQUIRE_MANUAL:
+                sup = manual_sup.get(t) or {}
+            else:
+                sup = signals.support_levels(t) or {}
             lv["support_minor"] = sup.get("minor")
             lv["support_major"] = sup.get("major")
             levels[t] = lv
