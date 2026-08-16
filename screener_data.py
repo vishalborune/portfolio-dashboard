@@ -52,6 +52,12 @@ SLUG_OVERRIDES = {
     "TRUECOLORS.BO": "544531",
     "LEHAR.BO": "532829",
     "SGRL.BO": "540737",
+    # Technocraft Industries (India): screener has no TIIL slug, only the BSE
+    # scrip code. Verified 16-Aug-2026 — /company/532804/ is "Technocraft
+    # Industries (India) Ltd" and its page names NSE: TIIL. (Note NSE also lists
+    # a separate TECHNOCRAF symbol, which is a DIFFERENT company — adding that
+    # one would have quietly watched the wrong stock.)
+    "TIIL.NS": "532804",
 }
 
 _STOPWORDS = {"LIMITED", "LTD", "INDIA", "INDIAN", "THE", "AND", "&", "COMPANY"}
@@ -160,7 +166,14 @@ def _identity_ok(page: str, expected_name: str) -> bool:
     page_name = _strip(m.group(1) if m else "").upper()
     want = {w for w in re.split(r"[^A-Z0-9]+", expected_name.upper())
             if len(w) >= 3 and w not in _STOPWORDS}
-    if want and not any(w in page_name for w in want):
+    # WHOLE-WORD match, never substring. A plain `w in page_name` accepted
+    # "Innovana Thinklabs" as "Innova Captab" (INNOVA sits inside INNOVANA) —
+    # caught 16-Aug-2026 while verifying new watchlist symbols. That is the same
+    # failure that mis-attributed filings when 'EMS' matched inside 'R Systems',
+    # and here it would silently store a DIFFERENT company's financials against
+    # our stock, which is the exact thing this gate exists to prevent.
+    page_words = set(re.split(r"[^A-Z0-9]+", page_name))
+    if want and not (want & page_words):
         print(f"  [screener] identity MISMATCH: page is '{page_name.title()}', "
               f"expected ~'{expected_name}' — REJECTED (add a SLUG_OVERRIDES entry)")
         return False
