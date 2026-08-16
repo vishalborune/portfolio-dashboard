@@ -1212,6 +1212,16 @@ def tab_watchlist():
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)
 
+        # The table above is display-only (st.dataframe never accepts typing).
+        # Lakshmi went straight to clicking into the Minor/Major Sup cells and
+        # found nothing happened — which is the right instinct and the wrong
+        # widget. Support levels are MANUAL now, so entering them has to be the
+        # easiest thing on this page, not a dropdown-and-form round trip per
+        # stock. This grid is editable, covers every watchlist name at once, and
+        # writes only the rows actually changed.
+        if can_edit_watchlist():
+            _editor_watchlist_levels(wl)
+
     if not can_edit_watchlist():
         return
 
@@ -1276,6 +1286,76 @@ def _form_remove_watchlist(wl: pd.DataFrame):
             st.rerun()
         except Exception as e:
             st.error(f"Failed: {e}")
+
+
+def _editor_watchlist_levels(wl: pd.DataFrame):
+    """Type-in-the-grid editor for the three MANUAL numbers on the watchlist:
+    target buy, minor support, major support.
+
+    Only these columns are editable — CMP, the DMA distances and the 52W high are
+    all derived, and letting someone type over a computed number is how a wrong
+    number gets into the system (House Rule #2). Blank means "no alert for that
+    level", which is a real and useful state, so clearing a cell must work as
+    well as setting one."""
+    st.caption(f"✏️ **Set your levels** — type directly below, then Save. "
+               f"Support alerts fire within {signals.SUPPORT_NEAR_PCT:g}% of the "
+               f"level you enter; leave blank for no alert.")
+
+    base = wl[["id", "stock_name"]].copy()
+    base["Stock"] = base["stock_name"].apply(short_name)
+    for col, label in (("target_buy_price", "Target Buy"),
+                       ("support_minor", "Minor Support"),
+                       ("support_major", "Major Support")):
+        base[label] = pd.to_numeric(wl[col], errors="coerce") if col in wl.columns else np.nan
+
+    grid = base[["Stock", "Target Buy", "Minor Support", "Major Support"]]
+    edited = st.data_editor(
+        grid,
+        hide_index=True,
+        width="stretch",
+        disabled=["Stock"],
+        key="wl_levels_editor",
+        column_config={
+            "Stock": st.column_config.TextColumn("Stock", width="medium"),
+            "Target Buy": st.column_config.NumberColumn(
+                "Target Buy ₹", format="%.2f", min_value=0.0,
+                help="Personal target price — alerts when CMP reaches it."),
+            "Minor Support": st.column_config.NumberColumn(
+                "Minor Support ₹", format="%.2f", min_value=0.0,
+                help="The near-term shelf you expect a bounce from."),
+            "Major Support": st.column_config.NumberColumn(
+                "Major Support ₹", format="%.2f", min_value=0.0,
+                help="The structural floor — where the trend would actually break."),
+        },
+    )
+
+    if st.button("💾 Save levels", type="primary", key="save_wl_levels"):
+        changed = 0
+        for pos in range(len(grid)):
+            payload = {}
+            for label, col in (("Target Buy", "target_buy_price"),
+                               ("Minor Support", "support_minor"),
+                               ("Major Support", "support_major")):
+                was, now = grid.iloc[pos][label], edited.iloc[pos][label]
+                # NaN != NaN, so compare the blank case explicitly — otherwise
+                # every untouched empty cell looks "changed" and we'd rewrite
+                # the whole watchlist on every save.
+                both_blank = pd.isna(was) and pd.isna(now)
+                if both_blank or (pd.notna(was) and pd.notna(now) and float(was) == float(now)):
+                    continue
+                payload[col] = None if pd.isna(now) or float(now) <= 0 else float(now)
+            if payload:
+                try:
+                    db.update_watchlist(int(base.iloc[pos]["id"]), **payload)
+                    changed += 1
+                except Exception as e:
+                    st.error(f"Failed saving {base.iloc[pos]['Stock']}: {e}")
+                    return
+        if changed:
+            st.success(f"✅ Saved levels for {changed} stock(s)")
+            st.rerun()
+        else:
+            st.info("Nothing changed.")
 
 
 def _form_edit_watchlist(wl: pd.DataFrame):
