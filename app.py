@@ -919,8 +919,13 @@ def _form_add_holding():
         try:
             stock_name = build_stock_name(company, exchange, symbol)
             db.add_holding(stock_name, qty, cost, buy_date=buy_dt, notes=notes or None)
-            if db.graduate_from_watchlist(stock_name):
-                st.info("🎓 Removed from watchlist — it's a holding now.")
+            # A stock that becomes a holding STAYS on the watchlist (Lakshmi
+            # 16-Aug-2026). It used to be auto-removed, which broke the tranching
+            # workflow: he buys tranche 1 at the 10-DMA and keeps adding at the
+            # 21-DMA, so the same name is legitimately BOTH held and watched —
+            # and the watchlist row is where its support levels and thesis score
+            # live. Removing it silently threw those away. Take it off the
+            # watchlist by hand when you're done accumulating.
             st.success(f"✅ Added {qty:g} × {short_name(stock_name)} @ ₹{cost:,.2f}")
             st.rerun()
         except Exception as e:

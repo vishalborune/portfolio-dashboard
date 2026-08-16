@@ -210,6 +210,24 @@ def check_watchlist_entries(client, price_fn=None):
             # target hadn't been reached yet.)
             ge["targets"].append((pf, float(t)))
 
+    # Which (ticker, group) pairs are ALSO held. Since 16-Aug-2026 a stock stays
+    # on the watchlist after it becomes a holding (that's the tranching workflow),
+    # so the same 21-DMA touch would otherwise fire TWICE — once here as
+    # "2nd & FINAL tranche" and once from check_holding_adds as "add zone
+    # (holding)". Same level, same event, two messages. The holding alert is the
+    # correct one for a stock he already owns, so the watchlist TRANCHE 2 is
+    # suppressed for held names. TRANCHE 1 (10-DMA) still fires: holdings
+    # deliberately get only the 21-DMA signal (Lakshmi, 21-Jul-2026), so this is
+    # the one place a held name can still be told about the 10-DMA.
+    held = set()
+    try:
+        for _, h in get_holdings(client).iterrows():
+            ht = extract_yf_ticker(h.get("stock_name"))
+            if ht:
+                held.add((ht, PF_GROUP.get(int(h.get("portfolio_id", 1)), "vishal")))
+    except Exception as ex:
+        print(f"⚠️ [watchlist] could not read holdings for overlap check: {ex}")
+
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
         # price_fn (fast intraday poller) injects a LIVE-price zone; when absent
@@ -224,7 +242,11 @@ def check_watchlist_entries(client, price_fn=None):
             tag = ""
             if grp == "lakshmi":
                 tag = "[Both] " if len(uniq) > 1 else f"[{PF_NAME.get(uniq[0], uniq[0])}] "
-            if zone in ("TRANCHE 1", "TRANCHE 2") and (ticker, grp, "ZONE") not in already:
+            # TRANCHE 2 on a name we already hold is the holding ADD21 alert's
+            # job — firing both is one event, two pings.
+            dup_of_holding_add = (zone == "TRANCHE 2" and (ticker, grp) in held)
+            if (zone in ("TRANCHE 1", "TRANCHE 2") and not dup_of_holding_add
+                    and (ticker, grp, "ZONE") not in already):
                 which = ("1st tranche (10DMA ₹{:,.2f})".format(d["10DMA"])
                          if zone == "TRANCHE 1"
                          else "2nd & FINAL tranche (21DMA ₹{:,.2f})".format(d["21DMA"]))

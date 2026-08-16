@@ -414,10 +414,17 @@ def add_watchlist(stock_name: str, target_buy_price: Optional[float] = None,
 
 
 def graduate_from_watchlist(stock_name: str) -> bool:
-    """When a stock becomes a holding, silently remove it from the SAME
-    portfolio's watchlist. Matches on the (XNSE:SYM)/(XBOM:CODE) part so the
-    free-text company-name half doesn't have to be identical. Returns True
-    if something was removed."""
+    """Remove a stock from the SAME portfolio's watchlist. Matches on the
+    (XNSE:SYM)/(XBOM:CODE) part so the free-text company-name half doesn't have
+    to be identical. Returns True if something was removed.
+
+    NO LONGER CALLED AUTOMATICALLY (Lakshmi 16-Aug-2026). It used to run the
+    moment a stock became a holding, which broke the tranching workflow — he
+    buys tranche 1 at the 10-DMA and keeps adding at the 21-DMA, so a name is
+    legitimately both held and watched — and it silently discarded that row's
+    support levels and thesis score. A stock now stays on the watchlist until
+    it is removed by hand. Kept here in case a deliberate 'graduate' button is
+    ever wanted."""
     import re as _re
     m = _re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", stock_name or "")
     if not m:
