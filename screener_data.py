@@ -167,9 +167,40 @@ def _identity_ok(page: str, expected_name: str) -> bool:
     return True
 
 
+# A quarterly reporter should have a column no more than ~2 quarters old; SME
+# names reporting half-yearly, plus filing lag, can legitimately reach ~6 months.
+# Beyond this the page is stale, not slow.
+MAX_STALE_DAYS = 270
+
+
+def _latest_quarter_date(page: str):
+    """Newest quarterly column as a date, or None if the table is empty."""
+    from datetime import date as _date
+    best = None
+    for key in _headers(_section(page, "quarters")):
+        try:
+            y, m, d = (int(x) for x in key.split("-"))
+        except (ValueError, AttributeError):
+            continue          # 'TTM' and friends
+        dt = _date(y, m, d)
+        if best is None or dt > best:
+            best = dt
+    return best
+
+
 def fetch_page(slug: str, expected_name: str = "") -> tuple:
-    """(html, basis) where basis is 'consolidated' or 'standalone'. ('', '') on
-    failure — and the reason is always logged (House Rule #3)."""
+    """(html, basis) — the FRESHEST usable view. ('', '') on failure, always logged.
+
+    Both views are evaluated and the one with the most recent quarterly column
+    wins. Checking merely that the string 'id="quarters"' appears is NOT enough:
+    GIPCL's consolidated page is a stale stub — it still carries every section id
+    but its quarterly table has ZERO columns and its annuals stop at 2019 (the
+    company presumably stopped reporting consolidated). That page returns HTTP
+    200 and looked perfectly healthy to the old guard, so a thesis would have
+    been scored on seven-year-old financials. A non-empty response is not
+    automatically a usable one (House Rule #7)."""
+    from datetime import date as _date
+    candidates = []
     for view, basis in (("consolidated/", "consolidated"), ("", "standalone")):
         url = BASE.format(slug=slug, view=view)
         try:
@@ -182,13 +213,30 @@ def fetch_page(slug: str, expected_name: str = "") -> tuple:
             continue
         if not _identity_ok(r.text, expected_name):
             return "", ""
-        if 'id="quarters"' not in r.text:
-            print(f"  [screener] {url} -> 200 but no quarterly table "
-                  f"({len(r.text)} bytes) — trying the other view")
+        latest = _latest_quarter_date(r.text)
+        if latest is None:
+            print(f"  [screener] {basis}: quarterly table is EMPTY — unusable, "
+                  f"trying the other view")
             continue
-        return r.text, basis
-    print(f"  [screener] no usable page for slug '{slug}'")
-    return "", ""
+        candidates.append((latest, basis, r.text))
+
+    if not candidates:
+        print(f"  [screener] no usable page for slug '{slug}' (no view had a "
+              f"quarterly table)")
+        return "", ""
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    latest, basis, page = candidates[0]
+    age = (_date.today() - latest).days
+    if age > MAX_STALE_DAYS:
+        print(f"  [screener] freshest data for '{slug}' is {basis} to {latest} "
+              f"({age} days old) — STALE, refusing. Scoring a thesis on data this "
+              f"old is worse than not scoring one.")
+        return "", ""
+    if len(candidates) > 1 and candidates[0][1] != "consolidated":
+        print(f"  [screener] using {basis} (to {latest}) — it is fresher than the "
+              f"consolidated view")
+    return page, basis
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +287,64 @@ def quarterly(page: str, keep: int = 8) -> list:
 
 def annual(page: str, keep: int = 6) -> list:
     return _periodic(_section(page, "profit-loss"), keep)
+
+
+# Cash flow is the governance pillar's most important input and the one thing a
+# dressed-up P&L cannot fake. Lakshmi's own batch report AVOIDed Susan
+# Electricals almost entirely on this line: "operating cash flow was NEGATIVE all
+# three years — profits never became cash; receivables ballooned Rs 13cr -> 46cr".
+_CF_MAP = {
+    "Cash from Operating Activity": "cfo",
+    "Cash from Investing Activity": "cfi",
+    "Cash from Financing Activity": "cff",
+    "Net Cash Flow": "net_cash",
+    "Free Cash Flow": "fcf",
+    "CFO/OP": "cfo_over_op_pct",
+}
+
+_BS_MAP = {
+    "Equity Capital": "equity_capital", "Reserves": "reserves",
+    "Borrowings": "borrowings", "Other Liabilities": "other_liabilities",
+    "Total Liabilities": "total_liabilities", "Fixed Assets": "fixed_assets",
+    "CWIP": "cwip", "Investments": "investments", "Other Assets": "other_assets",
+}
+
+_RATIO_MAP = {
+    "Debtor Days": "debtor_days", "Inventory Days": "inventory_days",
+    "Days Payable": "days_payable", "Cash Conversion Cycle": "cash_conversion_cycle",
+    "Working Capital Days": "working_capital_days", "ROCE %": "roce_pct",
+}
+
+
+def _mapped(segment: str, mapping: dict, keep: int) -> list:
+    cols = _headers(segment)
+    if not cols:
+        return []
+    rows = _rows(segment)
+    series = {key: _series(rows, cols, label)
+              for label, key in mapping.items() if label in rows}
+    out = []
+    for i, period in enumerate(cols):
+        rec = {"period": period}
+        for key, vals in series.items():
+            rec[key] = vals[i]
+        out.append(rec)
+    return out[-keep:]
+
+
+def cash_flow(page: str, keep: int = 5) -> list:
+    return _mapped(_section(page, "cash-flow"), _CF_MAP, keep)
+
+
+def balance_sheet(page: str, keep: int = 5) -> list:
+    return _mapped(_section(page, "balance-sheet"), _BS_MAP, keep)
+
+
+def efficiency(page: str, keep: int = 5) -> list:
+    """Working-capital quality: debtor/inventory days and the cash conversion
+    cycle. Receivables ballooning faster than sales is how 'growth' that never
+    becomes cash shows up BEFORE the auditor says anything."""
+    return _mapped(_section(page, "ratios"), _RATIO_MAP, keep)
 
 
 _TOP_LABELS = {
@@ -414,6 +520,101 @@ def _months_apart(a: str, b: str):
     return (by - ay) * 12 + (bm - am)
 
 
+def quality_flags(snap: dict) -> list:
+    """Hard, checkable quality/governance flags — computed HERE, not spotted by a
+    model. Each is a sentence with the numbers already in it.
+
+    These are the checks that separated AVOID from BUILD SLOWLY in Lakshmi's own
+    batch report (negative CFO, receivables funding 'growth', debt build). Asking
+    a model to notice them in a JSON blob is strictly worse than handing them
+    over already computed: a missed red flag is the most expensive failure this
+    scorecard can have."""
+    flags = []
+    cf = snap.get("cash_flow") or []
+    ann = snap.get("annual") or []
+
+    # 1. Profit that never becomes cash — the single most important smallcap check.
+    yrs = [c for c in cf if c.get("period") != "TTM" and c.get("cfo") is not None]
+    neg = [c for c in yrs if c["cfo"] < 0]
+    if yrs and len(neg) >= 2:
+        detail = ", ".join(f"{c['period'][:4]}: Rs {c['cfo']:,.0f} cr" for c in yrs[-4:])
+        flags.append(
+            f"🚨 OPERATING CASH FLOW NEGATIVE in {len(neg)} of the last {len(yrs)} "
+            f"years ({detail}). Reported profit is not converting to cash.")
+    elif yrs and yrs[-1]["cfo"] < 0:
+        flags.append(
+            f"⚠️ Operating cash flow was NEGATIVE in the latest year "
+            f"({yrs[-1]['period'][:4]}: Rs {yrs[-1]['cfo']:,.0f} cr) despite the "
+            f"reported P&L. Check working capital before trusting the growth.")
+
+    # 2. Cumulative CFO vs cumulative PAT over the same years.
+    pat_by_yr = {a["period"]: a.get("pat") for a in ann if a.get("period") != "TTM"}
+    pair = [(c["cfo"], pat_by_yr.get(c["period"])) for c in yrs
+            if pat_by_yr.get(c["period"]) is not None]
+    if len(pair) >= 3:
+        tot_cfo = sum(p[0] for p in pair)
+        tot_pat = sum(p[1] for p in pair)
+        if tot_pat > 0:
+            ratio = tot_cfo / tot_pat
+            if ratio < 0.5:
+                flags.append(
+                    f"🚨 Over the last {len(pair)} years cumulative operating cash flow "
+                    f"is Rs {tot_cfo:,.0f} cr against cumulative PAT of Rs {tot_pat:,.0f} cr "
+                    f"({ratio*100:.0f}% conversion). Profits are largely on paper.")
+            elif ratio < 0.8:
+                flags.append(
+                    f"⚠️ Cash conversion is weak: {ratio*100:.0f}% of the last "
+                    f"{len(pair)} years' PAT arrived as operating cash flow.")
+
+    # 3. Receivables stretching — how uncollected 'growth' shows up early.
+    eff = [e for e in (snap.get("efficiency") or []) if e.get("debtor_days") is not None]
+    if len(eff) >= 2:
+        first, last = eff[0], eff[-1]
+        if last["debtor_days"] > first["debtor_days"] * 1.5 and last["debtor_days"] > 60:
+            flags.append(
+                f"⚠️ Debtor days rose {first['debtor_days']:.0f} -> {last['debtor_days']:.0f} "
+                f"({first['period'][:4]} to {last['period'][:4]}) — receivables are "
+                f"growing faster than sales.")
+
+    # 4. Debt build.
+    bs = [b for b in (snap.get("balance_sheet") or [])
+          if b.get("period") != "TTM" and b.get("borrowings") is not None]
+    if len(bs) >= 2 and bs[0]["borrowings"] > 0:
+        g = bs[-1]["borrowings"] / bs[0]["borrowings"]
+        if g >= 2.0:
+            flags.append(
+                f"⚠️ Borrowings rose Rs {bs[0]['borrowings']:,.0f} cr -> "
+                f"Rs {bs[-1]['borrowings']:,.0f} cr ({g:.1f}x) over "
+                f"{bs[0]['period'][:4]}-{bs[-1]['period'][:4]}.")
+
+    # 5. Promoter selling down / pledge.
+    shp = snap.get("shareholding") or {}
+    pr = [p for p in (shp.get("promoters") or []) if p is not None]
+    if len(pr) >= 2 and pr[0] - pr[-1] >= 2.0:
+        flags.append(
+            f"⚠️ Promoter holding fell {pr[0]:.2f}% -> {pr[-1]:.2f}% over the last "
+            f"{len(pr)} disclosed quarters.")
+    pledge = [p for p in (shp.get("pledge_pct") or []) if p]
+    if pledge:
+        flags.append(f"🚨 PLEDGED promoter shares disclosed — latest {pledge[-1]:.2f}%.")
+    elif shp:
+        flags.append("ℹ️ No pledge row on Screener (it prints one only when pledging is "
+                     "non-zero) — treat as 'not disclosed here', not as a verified zero.")
+
+    # 6. Base effect — a tiny year-ago quarter flattering the YoY %.
+    d = snap.get("derived") or {}
+    qs = snap.get("quarterly") or []
+    if d.get("yoy_period") and qs:
+        cur = qs[-1].get("sales")
+        ago = next((q.get("sales") for q in qs if q.get("period") == d["yoy_period"]), None)
+        if cur and ago and ago > 0 and cur / ago >= 2.0:
+            flags.append(
+                f"⚠️ BASE EFFECT: the year-ago quarter ({d['yoy_period']}) had revenue of "
+                f"only Rs {ago:,.0f} cr vs Rs {cur:,.0f} cr now — the YoY % is flattered "
+                f"by a small base, so judge durability on the sequential trend.")
+    return flags
+
+
 def snapshot(ticker: str, expected_name: str = "") -> dict:
     """Everything we can prove about one company from screener, in one call.
     {} when the page is unusable — callers must treat that as 'unknown', never
@@ -429,6 +630,9 @@ def snapshot(ticker: str, expected_name: str = "") -> dict:
         "ratios": top_ratios(page),
         "quarterly": qs,
         "annual": annual(page),
+        "cash_flow": cash_flow(page),
+        "balance_sheet": balance_sheet(page),
+        "efficiency": efficiency(page),
         "shareholding": shareholding(page),
         "growth": growth_table(page),
         "derived": derive(qs),
@@ -436,6 +640,7 @@ def snapshot(ticker: str, expected_name: str = "") -> dict:
     r = snap["ratios"]
     if r.get("cmp") and r.get("book_value"):
         r["pb"] = round(r["cmp"] / r["book_value"], 2)
+    snap["quality_flags"] = quality_flags(snap)
     return snap
 
 

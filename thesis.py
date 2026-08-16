@@ -390,47 +390,73 @@ def research(pack: dict, reason: str = "", use_cache: bool = True) -> dict:
 # 3. scoring — model judges, Python arithmetics
 # ---------------------------------------------------------------------------
 
-RUBRIC = """Score each pillar 0, 1 or 2. Be strict: 2 means the evidence is strong AND \
-sourced, 1 means mixed or partly sourced, 0 means weak, absent or unverifiable. \
-"I could not find out" is a 0 or 1, never a 2 — an unverified positive is not a positive.
+RUBRIC = """Score each pillar 0, 1 or 2, using these definitions exactly.
 
-RQ — Results Quality
-  2 = latest quarter shows revenue AND operating profit growth YoY, with no one-off flattering it
-  1 = growth in one of the two, or growth that leans on an easy base or a one-off
-  0 = flat/declining, or the quarter is distorted by an exceptional item
+RQ  Results Quality      latest quarter: strong+clean 2 · strong+noisy 1 · weak/messy 0
+DU  Durability           structural (capacity/orders/guidance record) 2 ·
+                         partly cyclical/base-effect 1 · mostly base-effect/peak 0
+MG  Margin Direction     expanding WITH GUIDANCE 2 · expanding unguided or stable 1 ·
+                         compressing 0
+VA  Valuation vs
+    DELIVERED growth     cheap vs DELIVERED growth 2 · fair 1 · priced for perfection 0
+SM  Smart-Money          quality investors building 2 · discussed, mixed 1 ·
+                         no serious coverage 0
+GV  Governance           clean 2 · watch-items 1 · real flags 0
 
-DU — Durability
-  2 = a specific, sourced reason the growth continues (order book, guidance, dated capacity)
-  1 = plausible but thinly sourced, or a partly-consumed runway
-  0 = no visible driver beyond the last quarter, or growth is flattered by a weak base
+HOW THIS RUBRIC IS MEANT TO BITE — read these before scoring:
 
-MG — Margin Direction
-  2 = operating margin expanding YoY AND sequentially
-  1 = broadly stable, or expanding on one axis and slipping on the other
-  0 = compressing on both, with operating profit in RUPEES flat or falling
-  NOTE: a falling margin PERCENTAGE while operating profit in RUPEES grows strongly is
-  scaling dilution, NOT margin pressure. Score that 1, not 0. Read the bps deltas and
-  the rupee growth together before you judge this pillar.
+• "strong+NOISY" is the common RQ case, not the rare one. A quarter is noisy when an
+  acquisition, an ESOP charge, an exceptional item or a tiny year-ago base is doing part
+  of the work. Say which, and score 1. Reserve 2 for growth that is clean on its own legs.
+  Conversely, if REPORTED profit looks flat only because of a non-cash charge, say so and
+  score the ADJUSTED reality — a real 14th-consecutive-record quarter is a 2 even if the
+  headline PAT is flat.
 
-VA — Valuation
-  2 = re-rating room: multiple undemanding versus the growth and the sector
-  1 = fair — priced roughly for the growth being delivered
-  0 = the multiple already assumes the growth continues; price has run ahead of earnings
+• VA is valuation against growth ALREADY DELIVERED, never against guided or hoped-for
+  growth. A 2 needs a multiple that is cheap against what the company has actually done —
+  quote the P/E or P/B against the delivered CAGR. "Priced for perfection" (0) means the
+  multiple already assumes the growth continues.
 
-SM — Smart Money
-  2 = sourced informed buying (promoter open-market purchase, preferential issue, buyback, new institutional entry)
-  1 = stable promoter holding with some institutional interest, nothing decisive
-  0 = promoter selling, dilution at a discount, or nothing verifiable either way
+• MG 2 REQUIRES management guidance on margin. Expanding margins with no guided path is a
+  1, however good the bps look. And a falling margin PERCENTAGE while operating profit in
+  RUPEES grows strongly is scaling dilution, NOT compression — that is a 1, not a 0. Read
+  the bps deltas and the rupee growth together.
 
-GV — Governance
-  2 = clean: no pledge, no auditor issue, cash flow tracks profit, no adverse related-party findings
-  1 = minor or unresolved flags worth watching
-  0 = a serious red flag — auditor resignation or qualification, material pledging,
-      profit not backed by operating cash flow, or adverse related-party transactions
+• DU 0 is "mostly base-effect/peak". Commodity and cyclical businesses specialise in making
+  peak earnings look cheap. If the year-ago quarter was tiny, or the input cycle is doing
+  the work, say so plainly and score accordingly.
+
+• SM 0 is "no serious coverage" — nothing verifiable, not merely "no promoter buying".
+  A 2 needs quality money actually building: promoter open-market purchase, a preferential
+  issue (note the price vs CMP), a buyback, or a named institution entering.
+
+• GV: profits that do not become cash are a REAL FLAG, not a watch-item. The caller has
+  already computed the cash-flow, receivable, debt and pledge checks and hands them to you
+  under QUALITY FLAGS — a 🚨 there is a 0 or 1 on this pillar and you must reference it
+  explicitly. Do not score GV 2 while a 🚨 flag is outstanding.
+
+• Watch for narrative that the disclosed numbers do not support: if the reason the stock is
+  interesting is a theme (data centres, EVs, defence) and the company's own disclosed
+  segment revenue does not include it, name that gap. It is one of the most valuable things
+  this report can tell the reader.
 
 HARD RULE: if GV is 0, the verdict is capped at WATCHLIST no matter how high the total.
 The caller enforces this in code, so score GV on its own merits and do not soften it to
-protect the total."""
+protect the total.
+
+CALIBRATION — real scores from this reader's own past batch, to anchor the scale:
+  Windlas Biotech 11/14 (RQ2 DU2 MG1 VA1 SM2 GV2 TE1) — 14th consecutive record quarter;
+    reported PAT flat ONLY on a non-cash ESOP charge, adjusted PAT +37%; Plant-6 dated and
+    funded; buyback + dividend completed. MG only 1 because margin expansion was unguided.
+  GIPCL 11/14 (RQ2 DU2 MG2 VA2 SM1 GV1 TE1) — PAT +175% clean; 500MW commissioning dated
+    to a named quarter with EBITDA guided in rupees; ~13x P/E and 0.78x book vs peer 23x.
+    VA=2 is rare and earned by being cheap against DELIVERED numbers.
+  Mukka Proteins 7/14 (RQ2 DU1 MG1 VA1 SM0 GV1 TE1) — revenue +186% YoY but the year-ago
+    base was tiny and an acquisition adds inorganic lift, so DU is 1 not 2; SM 0 = no
+    serious coverage found.
+  Susan Electricals 3/14 (RQ1 DU0 MG1 VA1 SM0 GV0 TE0) — spectacular pre-IPO P&L, but
+    operating cash flow NEGATIVE three years running while receivables ballooned. GV=0
+    on cash alone. This is the case your QUALITY FLAGS section exists to catch."""
 
 SCORE_SYSTEM = """You are scoring an Indian smallcap for a seasoned private investor who \
 runs a concentrated smallcap book and enters in tranches at the 10-day and 21-day EMAs.
@@ -449,7 +475,15 @@ the unverified list. Never upgrade a score to be encouraging.
 - The bear case must be the strongest genuine argument against buying, written as though \
 you were short the stock. A weak bear case is a failure of this task.
 - The seasoned read is one paragraph of judgment for someone who has seen many of these: \
-what this really is, what would change your mind, and what most people will get wrong.
+what this really is, what would change your mind, and what most people will get wrong. \
+Pattern-match to how similar setups have historically resolved. Say plainly whether this \
+is an investment or a momentum trade — "own it with the chart, exit with the chart, and \
+never let a narrative convert a trade into a hold" is a legitimate and useful conclusion.
+- ACTION follows one principle: THE SCORECARD DECIDES IF, THE CHART DECIDES WHEN. Name the \
+rupee tranche levels you were given. STRONG SETUP = tranche 1 when the chart allows. \
+BUILD SLOWLY = tranche only at a DMA touch. WATCHLIST = re-score after the next quarterly \
+print, and say what would upgrade it. AVOID = say what specific evidence would justify a \
+re-look. Never tell the reader to chase a stock that has just run.
 - Write for someone who will risk real money on this. Be direct, be specific, and put the \
 uncomfortable fact first if there is one."""
 
@@ -481,7 +515,13 @@ THESIS_SCHEMA = {
         },
         "facts": {"type": "array",
                   "items": {"type": "string"},
-                  "description": "3-4 bullets: the facts that decide this case."},
+                  "description": "3-4 bullets: the facts that decide this case. Each "
+                                 "must carry specific figures with periods, in the style "
+                                 "'Q1 FY27 EBITDA margin +143bps YoY; mgmt guides 5% floor'."},
+        "watch_next_quarter": {
+            "type": "array", "items": {"type": "string"},
+            "description": "2-3 specific, checkable things the NEXT quarterly print must "
+                           "show for this thesis to hold — the reader re-scores on these."},
         "bear_case": {"type": "string",
                       "description": "The strongest genuine argument against buying."},
         "seasoned_read": {"type": "string",
@@ -502,8 +542,8 @@ THESIS_SCHEMA = {
             },
         },
     },
-    "required": ["pillars", "facts", "bear_case", "seasoned_read", "action",
-                 "confidence", "unverified", "sources"],
+    "required": ["pillars", "facts", "watch_next_quarter", "bear_case",
+                 "seasoned_read", "action", "confidence", "unverified", "sources"],
     "additionalProperties": False,
 }
 
@@ -511,8 +551,16 @@ THESIS_SCHEMA = {
 def score(pack: dict, notes: str) -> dict:
     client = _client()
     te = pack["technical_score"]
+    flags = (pack["fundamentals"].get("quality_flags") or [])
+    flag_block = ("\n".join(f"  {f}" for f in flags) if flags
+                  else "  (none — the computed cash-flow, receivable, debt, pledge and "
+                       "base-effect checks all came back clean)")
     prompt = (
         f"Company: {pack['company']} ({pack['ticker']})   As of: {pack['as_of']}\n\n"
+        f"=== QUALITY FLAGS — computed in code from the financials, already verified ===\n"
+        f"{flag_block}\n"
+        f"A 🚨 here is a REAL FLAG for the governance pillar and must be addressed\n"
+        f"explicitly in your GV reason and in the bear case.\n\n"
         f"=== VERIFIED FUNDAMENTALS (parsed by our pipeline — already correct) ===\n"
         f"```json\n{json.dumps(pack['fundamentals'], indent=1, default=str)}\n```\n\n"
         f"=== VERIFIED TECHNICALS (our own trend engine) ===\n"
@@ -572,6 +620,7 @@ def finalise(pack: dict, judged: dict) -> dict:
         "company": pack["company"],
         "ticker": pack["ticker"],
         "as_of": pack["as_of"],
+        "quality_flags": (pack["fundamentals"].get("quality_flags") or []),
         "levels": {k: pack["technical"].get(k)
                    for k in ("close", "dma5", "dma10", "dma21", "high_52w")},
         "support": pack["technical"].get("support") or {},
@@ -604,6 +653,13 @@ def render_markdown(t: dict) -> str:
     for k, label in PILLARS:
         p = t["pillars"][k]
         out.append(f"| {k} | {label} | {p['score']}/2 | {p['reason']} |")
+    if t.get("watch_next_quarter"):
+        out += ["", "## Watch in the next quarterly print"]
+        out += [f"- {w}" for w in t["watch_next_quarter"]]
+    if t.get("quality_flags"):
+        out += ["", "## Computed quality checks",
+                "*Calculated in code from the financials — not written by the model.*", ""]
+        out += [f"- {f}" for f in t["quality_flags"]]
     out += [
         "", "## The bear case", t["bear_case"],
         "", "## Seasoned read", t["seasoned_read"],
