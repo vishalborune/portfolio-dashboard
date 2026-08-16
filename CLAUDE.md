@@ -784,6 +784,24 @@ cost), so this uses the pipe we already own. Flagged, not silently substituted.
 **Test:** `python dryrun.py thesis "Krishival Foods (XNSE:KRISHIVAL)"` — prints the note,
 sends nothing, stores nothing.
 
+## Exchange rule: NSE unless the company is BSE-ONLY (Lakshmi 16-Aug-2026)
+*"Only add NSE since its updates are faster, unless a company is only listed in BSE."*
+This is a DATA-QUALITY rule, not a preference, and the codebase already proves it:
+NSE announcements come off the RSS feed **every 3 min**; BSE's own API is dead behind
+an Akamai challenge, so BSE-only names are scraped from Screener **hourly** (~1h
+latency). BSE live quotes are also what produced a bogus price and fired false stop
+alerts (Kwality, 22-Jul-2026), and BSE/SME names need bhavcopy + corporate-action
+adjustment that mainboard NSE doesn't.
+**When adding: check screener.in — if the page shows an NSE symbol, use it.** The
+"➕ Add to watchlist" form warns when BSE is selected. `alerts.BSE_TO_NSE` already
+routes dual-listed names' FILINGS to NSE (Kwality→KPL, Time Technoplast→TIMETECHNO).
+**Audit 16-Aug-2026:** watchlist is 100% NSE (13/13). Holdings carry 5 BSE entries —
+CWD, Hemant Surgical, True Colors are genuinely BSE-only (correct), but **Shukra
+Pharmaceuticals is dual-listed and trades on NSE as SHUKRAPHAR** while being held
+under XBOM by BOTH Lakshmi (`XBOM:SHUKRAPHAR`) and Vishal (`XBOM:524632`) — a
+candidate to move to NSE, though changing a holding's ticker also changes its price
+history source, so do it deliberately, not casually.
+
 ## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
 - **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,
   there's no point doing all this, we should just stop." This is WHY the

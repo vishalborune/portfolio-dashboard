@@ -1249,6 +1249,18 @@ def _form_add_watchlist():
             company = st.text_input("Company name", placeholder="e.g. Lincoln Pharmaceuticals")
         with c2:
             exchange = st.radio("Exchange", ["NSE", "BSE"], horizontal=True, key="wl_exch")
+        # Lakshmi 16-Aug-2026: NSE unless the company is BSE-ONLY. This isn't a
+        # preference, it's a data-quality rule — NSE announcements come off the
+        # RSS feed every 3 minutes, while BSE's own API is dead behind an Akamai
+        # challenge so BSE-only names have to be scraped from Screener hourly.
+        # BSE live quotes are also the ones that produced a bogus price and fired
+        # false stop alerts (Kwality, 22-Jul-2026).
+        if exchange == "BSE":
+            st.warning(
+                "**Use BSE only if the company is BSE-ONLY.** If it's on both, "
+                "add the NSE symbol: NSE filings arrive within ~3 minutes, BSE-only "
+                "names are scraped hourly and their live quotes are less reliable. "
+                "Check the company on screener.in — if it shows an NSE symbol, use that.")
         symbol = st.text_input("Symbol", placeholder="LINCOLN")
         c3, c4 = st.columns(2)
         with c3:
