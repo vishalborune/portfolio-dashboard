@@ -1165,9 +1165,24 @@ def tab_watchlist():
                 wl_view["Distance to Target %"] = (
                     (wl_view["CMP"] - wl_view["target_buy_price"]) / wl_view["target_buy_price"] * 100
                 )
+        # Stage-2 thesis scorecard (Lakshmi 16-Aug-2026): the score and the
+        # recommended status ride as two columns right next to the name, because
+        # the whole point is that he sees WHETHER to act before he sees the
+        # levels. Both stay blank ("—") until `python thesis.py <name>` has been
+        # run for that stock — a blank means "not yet researched", which is very
+        # different from a low score, so they must never render as 0/14.
+        if "thesis_score" in wl_view.columns:
+            wl_view["Score"] = wl_view["thesis_score"].apply(
+                lambda v: f"{int(v)}/14" if pd.notna(v) else "—")
+        if "thesis_verdict" in wl_view.columns:
+            _icon = {"STRONG SETUP": "🟢", "BUILD SLOWLY": "🟡",
+                     "WATCHLIST": "🔵", "AVOID": "🔴"}
+            wl_view["Verdict"] = wl_view["thesis_verdict"].apply(
+                lambda v: f"{_icon.get(v, '')} {v}".strip() if isinstance(v, str) and v else "—")
+
         # Lakshmi 22-Jul-2026: show the % DISTANCE to the DMAs, not the ₹ levels —
         # "how far am I from the entry zone" is the decision, the rupee value isn't.
-        cols = ["Short Name", "Ticker", "CMP", "Entry Advice",
+        cols = ["Short Name", "Score", "Verdict", "Ticker", "CMP", "Entry Advice",
                 "% vs 5DMA", "% vs 10DMA", "% vs 21DMA", "52W High", "% vs 52WH", "Day Change %",
                 "target_buy_price", "Distance to Target %", "notes", "added_by"]
         cols = [c for c in cols if c in wl_view.columns]

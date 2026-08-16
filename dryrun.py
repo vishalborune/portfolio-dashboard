@@ -13,6 +13,9 @@ dedup/state row (so it can never suppress a later real alert). Safe anytime.
     python dryrun.py filings-audit  # read-only coverage report
     python dryrun.py reconcile      # read-only: does the digest's valuation
                                     # still match an independent re-pricing?
+    python dryrun.py thesis "Krishival Foods (XNSE:KRISHIVAL)"
+                                    # Stage-2 scorecard for one stock — prints the
+                                    # note, sends nothing, stores nothing
 
 Creds are read from .streamlit/secrets.toml. ALERTS_DRY_RUN makes notify.py print
 instead of deliver, and makes alerts.sb() return a read-only client.
@@ -48,7 +51,16 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "dry-run")
 print(f"===== DRY-RUN: {mode} — nothing sent, nothing written =====\n")
 import alerts  # noqa: E402  (env must be set before import)
 
-if mode == "fast-poll":
+if mode == "thesis":
+    # Needs the stock name as the 2nd arg: python dryrun.py thesis "Name (XNSE:SYM)"
+    import thesis as _thesis
+    if len(sys.argv) < 3:
+        print('usage: python dryrun.py thesis "Company Name (XNSE:SYMBOL)" [reason]')
+        sys.exit(1)
+    _res = _thesis.generate(sys.argv[2], reason=(sys.argv[3] if len(sys.argv) > 3 else ""))
+    print(_res["markdown"] if _res.get("status") == "OK"
+          else f"INSUFFICIENT DATA — {_res.get('why')}")
+elif mode == "fast-poll":
     alerts.run_fast_poll(minutes=0.05, interval=2)   # ~one live cycle
 else:
     {

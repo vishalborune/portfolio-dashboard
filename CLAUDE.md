@@ -43,6 +43,8 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `exit_audit.py` | 30/60/90-day post-exit price checks |
 | `corporate_actions.py` | Split/bonus adjustment for bhavcopy prices + unadjusted-gap detector (see House Rule 10) |
 | `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
+| `screener_data.py` | Deterministic screener.in parser — quarterly table, annual P&L, ROCE/ROE, promoter/pledge trend. **Python computes every QoQ/YoY %.** `python screener_data.py HFCL` |
+| `thesis.py` | Stage-2 thesis scorecard (7 pillars /14 + verdict). Opus 5 + web search researches only DU/SM/GV; RQ/MG/VA come from screener_data, TE is scored in Python. `python thesis.py "<name>" [--reason ..] [--send]` |
 | `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours (weekdays) + NSE filings every 3 min + BSE filings every 2h **7 DAYS** (companies file board-meeting outcomes/results on Saturdays; the RSS feed is a ~1-day snapshot so a weekend filing ages off before Monday — `_within(..., weekends=True)` for filings, weekday-only for live/market checks; 01-Aug-2026, Vishal caught it). Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | ~~`*_schema.sql`~~ | (Historical — schema was applied to Supabase directly; no `.sql` files are committed in the repo.) |
@@ -668,6 +670,76 @@ break.
   and the second consumer of Yahoo dailies to need its own freshness guard (the guard
   doesn't port automatically — you must add it at each new consumer, cf. the `_sane_quotes`
   lesson). Self-heals: next states run sends "HFCL → MAINTAIN/ADD (was MOMENTUM FADING)".
+
+## Stage-2 thesis scorecard (`thesis.py`, Lakshmi 16-Aug-2026)
+**The problem in his words:** he *"is not able to spend time to get context on all these
+different companies — that's the reason he is not able to maximise success rate"* picking
+stage-2 names. So when a stock goes on the watchlist, this builds the context for him.
+
+**7 pillars, 0-2 each, /14** — RQ Results Quality · DU Durability · MG Margin Direction ·
+VA Valuation · SM Smart Money · GV Governance · TE Technical.
+Tiers: **12-14 STRONG SETUP / 9-11 BUILD SLOWLY / 6-8 WATCHLIST / 0-5 AVOID.**
+**HARD RULE: GV=0 caps the verdict at WATCHLIST** no matter the total (verified in test:
+12/14 with GV=0 → WATCHLIST). The cap only ever LOWERS a verdict.
+
+**THE DESIGN DECISION — the model does not touch the numbers.** The workshop prompt this
+came from has Claude research everything, including financials. We invert that:
+| Pillar | Source |
+|---|---|
+| RQ, MG, VA | `screener_data.py` — parsed quarterly table, OPM bps deltas, P/E, P/B, ROCE, ROE, CAGR |
+| TE | `signals.py` — **scored in Python** (`thesis.score_technical`), never asked of the model |
+| DU, SM, GV | Claude Opus 5 + `web_search_20260209`, must cite a primary source |
+Python also owns the pillar total, the tier lookup and the GV cap. **Rationale: every
+wrong-number bug this project has shipped came from a model transcribing or doing
+arithmetic it should have been handed** (Clean Max columns, Styrenix date, Advent
+exceptional item, Krishival's "margin pressure" verdict). Here the model does judgment
+only. Because TE comes from the same `signals` functions the alerts use, **a thesis and a
+5/21-DMA alert can never disagree about the same stock.**
+
+**FAIL-SAFE:** with no parseable quarterly financials it returns `INSUFFICIENT_DATA` and
+publishes NOTHING. Scoring RQ/MG/VA as 0 would read as "bad company" and drag a good one
+to AVOID — a blank beats a wrong number (House Rule #2).
+
+**API specifics (verified live 16-Aug-2026 — do not "fix" these from memory):**
+- Model `claude-opus-5`. **`temperature` is REJECTED with a 400 on Opus 5** — so this
+  cannot reuse `alerts._anthropic_pdf_call` (which correctly pins `temperature: 0` for
+  the Haiku *transcription* work). Different job, different call.
+- Web search tool type is **`web_search_20260209`** (not the `_20250305` variant).
+- Structured JSON via `output_config={"format": {"type":"json_schema","schema":…}}`;
+  effort rides the same object. Schema needs `additionalProperties: false` everywhere.
+- Uses the official `anthropic` SDK (added to requirements.txt), **streamed** — Opus 5
+  thinks by default and these calls are slow enough to trip a plain HTTP timeout.
+- **`pause_turn` must be resumed** (`thesis._final_message`): server-side web search runs
+  its own loop and stops mid-turn at the iteration cap. Not resuming returns a partial
+  answer that looks complete (House Rule #7).
+- **Research is cached to `.cache/thesis/<ticker>_<date>.research.txt` (gitignored).**
+  Learned the hard way on the first live run: research finished (17 tool calls, 18k chars)
+  and was thrown away when the next call failed, so a re-run paid for all of it again.
+- Cost ≈ **$0.35-0.50 per thesis** (web search is $10/1000 searches + Opus tokens).
+  Only runs when invoked manually — nothing schedules it.
+- Windows only: the CLI reconfigures stdout to UTF-8. The model writes `₹`, and cp1252
+  raises `UnicodeEncodeError` at the *print* step — after the API has been paid for.
+
+**NEEDS a one-time schema change** (schema isn't in the repo, per the Files-table note):
+```sql
+alter table watchlist
+  add column if not exists thesis_score   int,
+  add column if not exists thesis_verdict text,
+  add column if not exists thesis_pillars jsonb,
+  add column if not exists thesis_md      text,
+  add column if not exists thesis_at      date;
+```
+The dashboard watchlist shows **Score** and **Verdict** as two columns next to the name
+(`app.tab_watchlist`); both render **"—" until a thesis has been run** — a blank means
+"not researched yet", which must never look like 0/14.
+
+**Delivery:** Telegram — short verdict message + the full note as an attached `.md`
+(`notify.send_telegram_document`). Lakshmi asked for a WhatsApp PDF; WhatsApp needs the
+Business API (Meta business account, verified number, template approval, per-message
+cost), so this uses the pipe we already own. Flagged, not silently substituted.
+
+**Test:** `python dryrun.py thesis "Krishival Foods (XNSE:KRISHIVAL)"` — prints the note,
+sends nothing, stores nothing.
 
 ## Lakshmi's exact rules (verbatim intent — don't paraphrase away the specifics)
 - **Benchmark rule**: "If we are not beating [the index] by at least 2-5%,

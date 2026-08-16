@@ -87,6 +87,45 @@ def send_telegram(text: str, chat_id: str = None) -> bool:
     return ok_all
 
 
+TG_DOC_API = "https://api.telegram.org/bot{token}/sendDocument"
+
+
+def send_telegram_document(filename: str, content: str, caption: str = "",
+                           chat_id: str = None) -> bool:
+    """Attach a text/markdown file to the Telegram group.
+
+    Exists for the Stage-2 thesis note (16-Aug-2026): the full write-up is far
+    longer than Telegram's 4096-char message limit, and chunking a research note
+    across six messages makes it unreadable on a phone. As a document it arrives
+    as one tap-to-open file and stays in the chat to re-read later. The short
+    summary still goes as a normal message so the verdict is visible without
+    opening anything. Returns False on failure (never raises) — same contract as
+    send_telegram, so callers must check it."""
+    if _dry_run():
+        print(f"\n──[DRY-RUN telegram document → {filename}]──\n"
+              f"caption: {caption}\n({len(content)} chars suppressed)\n──[end]──")
+        return True
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        print("⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
+        return False
+    try:
+        r = requests.post(
+            TG_DOC_API.format(token=token),
+            data={"chat_id": chat_id, "caption": caption[:1024], "parse_mode": "HTML"},
+            files={"document": (filename, content.encode("utf-8"), "text/markdown")},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"⚠️ Telegram document failed: {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Telegram document error: {e}")
+        return False
+
+
 def send_email(subject: str, html: str) -> bool:
     """Send the digest email via Resend. Returns success."""
     if _dry_run():

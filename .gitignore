@@ -3,6 +3,9 @@
 .env
 *.key
 
+# Cached thesis web-research notes (regenerable, and can be large)
+.cache/
+
 # Python
 __pycache__/
 *.pyc
