@@ -715,8 +715,19 @@ to AVOID — a blank beats a wrong number (House Rule #2).
 - **Research is cached to `.cache/thesis/<ticker>_<date>.research.txt` (gitignored).**
   Learned the hard way on the first live run: research finished (17 tool calls, 18k chars)
   and was thrown away when the next call failed, so a re-run paid for all of it again.
-- Cost ≈ **$0.35-0.50 per thesis** (web search is $10/1000 searches + Opus tokens).
-  Only runs when invoked manually — nothing schedules it.
+- **COST — measured, not estimated (Vishal caught this 16-Aug-2026).** The first
+  live run cost **~$1.00 for ONE stock**, against an estimate of $0.35-0.50. The miss
+  was the INPUT side: every web-search round re-sends all results gathered so far, so
+  17 rounds compound input tokens far faster than the visible answer grows (~120k input
+  tokens). Fixed by (a) tuning defaults DOWN — research runs at **effort `medium`**
+  (it's search-and-summarise, not reasoning), **max 6 searches**, 6k max_tokens; scoring
+  keeps effort `high` because that's the actual judgement call; and (b) **every run now
+  PRINTS its real token count and dollar cost** per phase and in total, so a cost
+  surprise can't recur. Overridable: `THESIS_RESEARCH_EFFORT`, `THESIS_MAX_SEARCHES`,
+  `THESIS_RESEARCH_TOKENS`, `THESIS_SCORE_EFFORT`, `THESIS_SCORE_TOKENS`.
+  Re-running the same stock the same day is **$0.00** (research is cached).
+  Only runs when invoked manually — nothing schedules it. **Lesson: price the INPUT
+  growth of a tool-loop, not just the output length.**
 - Windows only: the CLI reconfigures stdout to UTF-8. The model writes `₹`, and cp1252
   raises `UnicodeEncodeError` at the *print* step — after the API has been paid for.
 

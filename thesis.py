@@ -55,6 +55,29 @@ import signals
 
 MODEL = "claude-opus-5"
 
+# --- cost controls ---------------------------------------------------------
+# Measured 16-Aug-2026: the FIRST live run cost ~$1 for ONE stock, against my
+# estimate of $0.35-0.50. The miss was the input side, not the output: each web
+# search round re-sends every result gathered so far, so 17 rounds compound the
+# input tokens far faster than the visible answer grows. Defaults are therefore
+# tuned DOWN and every run now prints what it actually spent (below) — a cost
+# surprise should never happen twice.
+#
+# Research is search-and-summarise, not deep reasoning, so it does not need
+# high effort. Scoring is the judgement call and keeps it.
+RESEARCH_EFFORT = os.environ.get("THESIS_RESEARCH_EFFORT", "medium")
+SCORE_EFFORT = os.environ.get("THESIS_SCORE_EFFORT", "high")
+MAX_SEARCHES = int(os.environ.get("THESIS_MAX_SEARCHES", "6"))
+RESEARCH_MAX_TOKENS = int(os.environ.get("THESIS_RESEARCH_TOKENS", "6000"))
+SCORE_MAX_TOKENS = int(os.environ.get("THESIS_SCORE_TOKENS", "8000"))
+
+# Opus 5 list prices, $ per token. Web search is $10 per 1,000 requests.
+_PRICE_IN = 5.0 / 1_000_000
+_PRICE_OUT = 25.0 / 1_000_000
+_PRICE_CACHE_READ = 0.50 / 1_000_000
+_PRICE_CACHE_WRITE = 6.25 / 1_000_000
+_PRICE_SEARCH = 10.0 / 1_000
+
 # --- scoring constants -----------------------------------------------------
 PILLARS = [
     ("RQ", "Results Quality"),
@@ -239,6 +262,34 @@ def _client():
     return anthropic.Anthropic()
 
 
+def _add_usage(tally: dict, usage) -> dict:
+    """Accumulate one request's usage. MUST be summed across pause_turn resumes:
+    each resume is a separate billed request, so reading only the final message's
+    usage under-reports a long research run — which is exactly how the first
+    cost estimate came out low."""
+    for attr, key in (("input_tokens", "in"), ("output_tokens", "out"),
+                      ("cache_read_input_tokens", "cache_read"),
+                      ("cache_creation_input_tokens", "cache_write")):
+        tally[key] = tally.get(key, 0) + int(getattr(usage, attr, 0) or 0)
+    stu = getattr(usage, "server_tool_use", None)
+    tally["searches"] = tally.get("searches", 0) + int(
+        getattr(stu, "web_search_requests", 0) or 0)
+    return tally
+
+
+def _cost(tally: dict) -> float:
+    return (tally.get("in", 0) * _PRICE_IN
+            + tally.get("out", 0) * _PRICE_OUT
+            + tally.get("cache_read", 0) * _PRICE_CACHE_READ
+            + tally.get("cache_write", 0) * _PRICE_CACHE_WRITE
+            + tally.get("searches", 0) * _PRICE_SEARCH)
+
+
+def _report_cost(label: str, tally: dict):
+    print(f"  [thesis] {label}: {tally.get('in', 0):,} in + {tally.get('out', 0):,} out "
+          f"+ {tally.get('searches', 0)} searches  ->  ~${_cost(tally):.2f}")
+
+
 def _final_message(client, **kw):
     """One streamed request, resuming across `pause_turn`.
 
@@ -249,16 +300,19 @@ def _final_message(client, **kw):
     is not automatically a usable one). Streaming because Opus 5 thinks by
     default, which makes these calls slow enough to trip HTTP timeouts."""
     messages = list(kw.pop("messages"))
+    tally = {}
     for attempt in range(6):
         with client.messages.stream(messages=messages, **kw) as stream:
             msg = stream.get_final_message()
+        _add_usage(tally, msg.usage)
         if msg.stop_reason != "pause_turn":
             if msg.stop_reason == "refusal":
                 raise RuntimeError("the model declined this request (stop_reason=refusal)")
-            return msg
+            return msg, tally
         # Resume: hand the paused turn straight back, no extra user message.
         messages = messages + [{"role": "assistant", "content": msg.content}]
-        print(f"  [thesis] server tools paused mid-turn — resuming ({attempt + 1})")
+        print(f"  [thesis] server tools paused mid-turn — resuming ({attempt + 1}, "
+              f"~${_cost(tally):.2f} so far)")
     raise RuntimeError("web research did not finish after 6 resumes")
 
 
@@ -290,8 +344,9 @@ def research(pack: dict, reason: str = "", use_cache: bool = True) -> dict:
             with open(path, encoding="utf-8") as fh:
                 notes = fh.read()
             if notes.strip():
-                print(f"  [thesis] reusing today's cached research ({len(notes)} chars)")
-                return {"notes": notes, "searches": 0, "cached": True}
+                print(f"  [thesis] reusing today's cached research ({len(notes)} chars) "
+                      f"— $0.00, no API call")
+                return {"notes": notes, "usage": {}, "cost": 0.0, "cached": True}
         except Exception as e:
             print(f"  [thesis] cache read failed ({type(e).__name__}) — researching fresh")
 
@@ -307,19 +362,20 @@ def research(pack: dict, reason: str = "", use_cache: bool = True) -> dict:
         f"```json\n{json.dumps(pack['technical'], indent=1, default=str)}\n```"
         f"{why}\n\nResearch durability, smart money and governance for this company now."
     )
-    print(f"[thesis] researching {pack['company']} (web search)…")
-    msg = _final_message(
+    print(f"[thesis] researching {pack['company']} "
+          f"(web search, max {MAX_SEARCHES}, effort {RESEARCH_EFFORT})…")
+    msg, tally = _final_message(
         client,
         model=MODEL,
-        max_tokens=12000,
+        max_tokens=RESEARCH_MAX_TOKENS,
         system=RESEARCH_SYSTEM,
-        tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 12}],
-        output_config={"effort": "high"},
+        tools=[{"type": "web_search_20260209", "name": "web_search",
+                "max_uses": MAX_SEARCHES}],
+        output_config={"effort": RESEARCH_EFFORT},
         messages=[{"role": "user", "content": prompt}],
     )
-    searches = sum(1 for b in msg.content if getattr(b, "type", "") == "server_tool_use")
     notes = _text_of(msg)
-    print(f"  [thesis] research done — {searches} tool calls, {len(notes)} chars")
+    _report_cost("research", tally)
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -327,7 +383,7 @@ def research(pack: dict, reason: str = "", use_cache: bool = True) -> dict:
     except Exception as e:
         print(f"  [thesis] could not cache research ({type(e).__name__}: {e}) — "
               f"a re-run today will pay for it again")
-    return {"notes": notes, "searches": searches, "cached": False}
+    return {"notes": notes, "usage": tally, "cost": _cost(tally), "cached": False}
 
 
 # ---------------------------------------------------------------------------
@@ -466,17 +522,21 @@ def score(pack: dict, notes: str) -> dict:
         f"=== WEB RESEARCH NOTES ===\n{notes or '(research produced nothing)'}\n\n"
         f"{RUBRIC}\n\nScore the six pillars and write the thesis."
     )
-    print(f"[thesis] scoring {pack['company']}…")
-    msg = _final_message(
+    print(f"[thesis] scoring {pack['company']} (effort {SCORE_EFFORT})…")
+    msg, tally = _final_message(
         client,
         model=MODEL,
-        max_tokens=10000,
+        max_tokens=SCORE_MAX_TOKENS,
         system=SCORE_SYSTEM,
-        output_config={"effort": "high",
+        output_config={"effort": SCORE_EFFORT,
                        "format": {"type": "json_schema", "schema": THESIS_SCHEMA}},
         messages=[{"role": "user", "content": prompt}],
     )
-    return json.loads(_text_of(msg))
+    _report_cost("scoring ", tally)
+    out = json.loads(_text_of(msg))
+    out["_usage"] = tally
+    out["_cost"] = _cost(tally)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -620,10 +680,12 @@ def generate(stock_name: str, ticker: str = None, reason: str = "") -> dict:
                        "(check the screener slug — see screener_data.SLUG_OVERRIDES). "
                        "Refusing to score rather than publish an unfounded verdict."}
 
-    notes = research(pack, reason).get("notes", "")
-    judged = score(pack, notes)
+    res = research(pack, reason)
+    judged = score(pack, res.get("notes", ""))
     t = finalise(pack, judged)
     t["status"] = "OK"
+    t["cost_usd"] = round(res.get("cost", 0.0) + judged.get("_cost", 0.0), 3)
+    print(f"[thesis] TOTAL for {pack['company']}: ~${t['cost_usd']:.2f}")
     t["reason_given"] = reason
     t["markdown"] = render_markdown(t)
     return t
