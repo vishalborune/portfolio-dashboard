@@ -3,8 +3,9 @@ name: Portfolio Alerts
 on:
   schedule:
     # Times are UTC. IST = UTC+5:30. Market hours: 09:15-15:30 IST Mon-Fri.
-    - cron: "42 3,4,5,6,7,8,9 * * 1-5"   # states: hourly, ~09:12 IST first (off-peak minute to dodge GitHub scheduler lag)
-    - cron: "12 4 * * 1-5"               # states: extra morning shot ~09:42 IST, so state alerts have TWO chances before 10am even if GitHub drops one
+    - cron: "17 15 * * 1-5"              # states + risk stops: ONCE daily ~20:47 IST (Lakshmi 15-Aug-2026).
+                                         # After bhavcopy 20:00 so SME/BSE price off official files, and after eod-entries 20:20.
+                                         # Settled closes only: every false EXIT we have fixed came from intraday/stale bars.
     - cron: "40 4,6,8,10,12,14,16 * * *"    # filings (full, incl BSE): every 2h, ~10:10-22:10 IST — 7 DAYS (weekend board-meeting/results filings, 01-Aug-2026)
     - cron: "8,23,38,53 3-16 * * *"         # filings-nse: NSE announcements ~every 15 min, 08:38-22:23 IST — 7 DAYS (companies file Sat/Sun; feed ages off before Monday)
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
@@ -53,7 +54,7 @@ on:
 
 jobs:
   states:
-    if: github.event.schedule == '42 3,4,5,6,7,8,9 * * 1-5' || github.event.schedule == '12 4 * * 1-5' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '17 15 * * 1-5' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

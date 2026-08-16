@@ -504,6 +504,88 @@ JUMP_MIN = 0.01   # 5-EMA touch: CMP must close >=1% above the 5-EMA to count as
                   # more alerts, higher for only the strongest bounces.
 
 
+SUPPORT_NEAR_PCT = 2.0   # alert when CMP is within this % of a support level
+
+
+def check_support_touch(client, prices: dict):
+    """WATCHLIST support alerts (Lakshmi 15-Aug-2026): ping when a watched stock
+    trades within SUPPORT_NEAR_PCT of its MINOR or MAJOR support — the levels he
+    actually buys at. `prices` = {ticker: (cmp, minor, major)}; LIVE from the fast
+    poller, and off EOD closes in the evening pass (so SME watchlist is covered).
+
+      MINOR (kind SUPMIN) — lowest daily low of the last ~5 weeks: the near-term
+        shelf. Fires more often; a bounce candidate, not a floor.
+      MAJOR (kind SUPMAJ) — the weekly swing-pivot support the flowchart already
+        computes: the structural level. Rarer and more meaningful.
+
+    Both are reported when both are in range, because "sitting on the weekly
+    floor" and "sitting on last month's low" are different decisions. PROXIMITY
+    is the signal here (unlike the 5-EMA touch, which needs a dip-and-jump):
+    he wants to place a limit order as price APPROACHES support, not after it
+    has already bounced. Separate dedup kinds so one can't suppress the other."""
+    rows = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    if not rows:
+        return
+    today_iso = date.today().isoformat()
+    try:
+        logged = client.table("entry_alert_log").select("ticker, grp, kind") \
+            .eq("alert_date", today_iso).execute().data or []
+        already = {(r["ticker"], r["grp"], r["kind"]) for r in logged}
+    except Exception:
+        already = set()
+
+    by_ticker = {}
+    for r in rows:
+        m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(r.get("stock_name") or ""))
+        if not m:
+            continue
+        exch, sym = m.group(1), m.group(2).strip()
+        ticker = f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+        grp = PF_GROUP.get(int(r.get("portfolio_id", 1)), "vishal")
+        e = by_ticker.setdefault(ticker, {"name": short_name(r["stock_name"]), "groups": {}})
+        e["groups"].setdefault(grp, []).append(int(r.get("portfolio_id", 1)))
+
+    msgs_by_group, to_log = {}, []
+    for ticker, e in by_ticker.items():
+        cmp_, minor, major = prices.get(ticker, (None, None, None))
+        if cmp_ is None:
+            continue
+        for label, level, kind in (("major", major, "SUPMAJ"), ("minor", minor, "SUPMIN")):
+            if not level:
+                continue
+            dist = (cmp_ / level - 1) * 100
+            if abs(dist) > SUPPORT_NEAR_PCT:
+                continue
+            for grp, pfs in e["groups"].items():
+                if (ticker, grp, kind) in already:
+                    continue
+                where = "at" if abs(dist) < 0.3 else ("above" if dist > 0 else "BELOW")
+                icon = "🛡" if kind == "SUPMAJ" else "🔹"
+                msgs_by_group.setdefault(grp, []).append(
+                    f"{icon} {_grp_tag(grp, pfs)}<b>{e['name']}</b> — {where} {label} support\n"
+                    f"CMP ₹{cmp_:,.2f} vs {label} support ₹{level:,.2f} ({dist:+.1f}%)")
+                to_log.append((ticker, grp, kind))
+
+    sent = 0
+    for grp, msgs in msgs_by_group.items():
+        if grp not in TELEGRAM_ALERT_GROUPS:
+            print(f"({len(msgs)} support alert(s) for '{grp}' — Telegram off)")
+            continue
+        chat = chat_id_for_group(grp)
+        if not chat:
+            continue
+        send_telegram("🛡 <b>Support levels · watchlist</b>\n\n" + "\n\n".join(msgs), chat_id=chat)
+        sent += len(msgs)
+    for ticker, grp, kind in to_log:
+        try:
+            client.table("entry_alert_log").upsert({
+                "ticker": ticker, "grp": grp, "alert_date": today_iso, "kind": kind}).execute()
+        except Exception as ex:
+            print(f"⚠️ entry_alert_log write failed for {ticker}: {ex}")
+    if sent:
+        print(f"Sent {sent} support-level alert(s).")
+
+
 def check_ema5_touch(client, prices: dict):
     """5-DAY EMA touch alert for WATCHLIST stocks (Lakshmi 02-Aug-2026). A fast-
     momentum timing signal — a watchlist name in an UPTREND pulls back to its
@@ -736,6 +818,23 @@ def run_eod_entries():
         check_ema5_touch(client, ema5_prices)
     except Exception as e:
         print(f"⚠️ eod 5EMA touch failed: {e}")
+    # Support levels on the WATCHLIST off EOD closes — the only pass for SME
+    # watchlist names, and a settled-close backstop for mainboard.
+    try:
+        wl = client.table("watchlist").select("stock_name").execute().data or []
+        sup_prices, seen_s = {}, set()
+        for r in wl:
+            t = extract_yf_ticker(r.get("stock_name"))
+            if not t or t in seen_s:
+                continue
+            seen_s.add(t)
+            lv = signals.daily_entry_levels(t)
+            sup = signals.support_levels(t) or {}
+            if lv and sup:
+                sup_prices[t] = (lv["ref_close"], sup.get("minor"), sup.get("major"))
+        check_support_touch(client, sup_prices)
+    except Exception as e:
+        print(f"⚠️ eod support levels failed: {e}")
     # Risk stops on EOD closes — the ONLY risk pass for SME (no live feed) and a
     # daily backstop for mainboard. Levels/peak come from the same daily fetch.
     try:
@@ -770,6 +869,9 @@ def compute_fast_levels(client):
     for t in mainboard:
         lv = signals.daily_entry_levels(t)
         if lv:
+            sup = signals.support_levels(t) or {}
+            lv["support_minor"] = sup.get("minor")
+            lv["support_major"] = sup.get("major")
             levels[t] = lv
         else:
             skipped.append(t)
@@ -794,9 +896,15 @@ def fast_cycle(client, levels: dict, wema: dict) -> int:
     fn = _make_live_price_fn(levels, quotes)
     check_holding_adds(client, price_fn=fn)
     check_watchlist_entries(client, price_fn=fn)
-    risk_prices = {t: (quotes.get(t, (None,))[0], lv.get("peak"))
-                   for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
-    check_risk_stops(client, risk_prices)
+    # Risk stops moved OFF the per-minute loop (Lakshmi 15-Aug-2026: state changes
+    # and stop-losses once a day, evening). They now run only in run_eod_entries,
+    # off SETTLED closes — which is also the methodologically right basis, since
+    # `peak` is a max of CLOSES. Intraday evaluation was the source of noise, not
+    # of edge.
+    sup_prices = {t: (quotes.get(t, (None,))[0], lv.get("support_minor"),
+                      lv.get("support_major"))
+                  for t, lv in levels.items() if quotes.get(t, (None,))[0] is not None}
+    check_support_touch(client, sup_prices)
     wema_prices = {t: (quotes[t][0], quotes[t][1], w, levels.get(t, {}).get("prev_close"))
                    for t, w in wema.items() if quotes.get(t, (None,))[0] is not None}
     check_wema_touch(client, wema_prices)

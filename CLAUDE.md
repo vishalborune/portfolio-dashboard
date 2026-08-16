@@ -208,6 +208,32 @@ switch sources without disclosure.
   **watchlist dashboard also shows a `% vs 5DMA` column** (02-Aug-2026) next to
   10/21 — `signals.daily_entry_state`/`entry_states_for_watchlist` carry it (the
   alert is Telegram; this is the on-screen view Lakshmi expected to see).
+- **States + risk stops moved to ONCE DAILY, evening (Lakshmi 15-Aug-2026)**: he
+  wants state changes and stop-losses once a day, not hourly/per-minute. `states`
+  cron is now a single **~20:47 IST weekday** run (was hourly 09:12–15:12 plus a
+  09:42 second shot) and `check_risk_stops` was REMOVED from `fast_cycle` — it now
+  runs only in `run_eod_entries` (20:20). **Why evening:** after bhavcopy (20:00)
+  so SME/BSE names price off official exchange files; on SETTLED closes, which is
+  also methodologically right since `peak` is a max of CLOSES; and every false EXIT
+  we have fixed (HFCL, CWD, Time Technoplast) came from intraday or stale bars, so
+  removing intraday evaluation removes a whole class of false signal. The rhythm is
+  **evening = decide, morning = execute** — the 08:45 levels digest gives the prices
+  to act on next morning. NOTE: when changing a cron, the job's `if:
+  github.event.schedule == '...'` MUST be updated to match or the job silently never
+  runs (nearly shipped exactly that here).
+- **Watchlist SUPPORT alerts (`alerts.check_support_touch`, Lakshmi 15-Aug-2026)**:
+  fires when a WATCHLIST name trades within `SUPPORT_NEAR_PCT`=2% of either level
+  from `signals.support_levels`: **minor** (lowest daily low of the last
+  `MINOR_SUPPORT_DAYS`=25 bars — the near-term shelf, kind SUPMIN) or **major** (the
+  WEEKLY swing-pivot `support` the flowchart already computes — the structural
+  floor, kind SUPMAJ). Both reported when both are in range; separate dedup kinds so
+  neither suppresses the other. Unlike `check_ema5_touch` this is deliberately
+  PROXIMITY, not a dip-and-jump event — he wants to place a limit order as price
+  APPROACHES support, not after the bounce. Rides the live poller + the evening EOD
+  pass (the only pass for SME watchlist names). **Expect these to be QUIET in a
+  rising market by design** — measured 15-Aug-2026, all 6 watchlist names sat
+  13–55% above support. Shallow pullbacks are already covered by the 10/21-DMA ZONE
+  alerts; these are the DEEP-support ones.
 - **Morning 5/10-DMA order levels (`alerts.run_morning_levels`, Lakshmi 11-Aug-2026)**:
   ~08:45 IST **weekdays** (it exists to place orders — pointless Sat/Sun), ONE Telegram
   message listing Lakshmi+Abinaya HOLDINGS (📌) and WATCHLIST (👀) names that are

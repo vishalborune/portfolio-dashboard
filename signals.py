@@ -468,6 +468,43 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+MINOR_SUPPORT_DAYS = 25    # ~5 weeks of daily bars = the near-term shelf
+
+
+def support_levels(ticker: str) -> dict | None:
+    """MINOR and MAJOR support for one ticker (Lakshmi 15-Aug-2026 — he buys at
+    support, so he wants pinging as price approaches one).
+
+      minor = lowest LOW over the last MINOR_SUPPORT_DAYS daily bars — the
+              near-term shelf price has recently bounced off.
+      major = the WEEKLY swing-pivot support the flowchart already computes
+              (compute_indicators' 'support', a 5-week CENTERED pivot low) —
+              the structural level, far more meaningful than a daily wiggle.
+
+    Deliberately two different timeframes: a daily low and a weekly pivot answer
+    different questions ("did it just bounce here?" vs "is this the floor?").
+    Returns None when neither is computable — a missing level must never be
+    silently treated as 0 (rule #2)."""
+    out = {}
+    try:
+        d = _fetch_daily(ticker)
+        if d is not None and not d.empty and "low" in d.columns and len(d) >= 10:
+            lo = float(d["low"].tail(MINOR_SUPPORT_DAYS).min())
+            if lo > 0:
+                out["minor"] = lo
+    except Exception:
+        pass
+    try:
+        wk = fetch_weekly(ticker)
+        if wk is not None and not wk.empty and len(wk) >= MIN_WEEKS_REQUIRED:
+            sup = compute_indicators(wk)["support"].iloc[-1]
+            if pd.notna(sup) and float(sup) > 0:
+                out["major"] = float(sup)
+    except Exception:
+        pass
+    return out or None
+
+
 def daily_entry_levels(ticker: str) -> dict | None:
     """The 10/21-day EMA LEVELS off daily bars (bhavcopy-first). None if data
     unavailable. These levels only change once a day (built on completed daily
