@@ -311,6 +311,15 @@ switch sources without disclosure.
   now(), unique (ticker, event_date, event_type));`
 - Dashboard shows **% distance** to the DMAs/10wEMA, never the ₹ level (Lakshmi
   22-Jul-2026: "how far from the zone" is the decision; the rupee value isn't).
+- **TRAILING STOP PAUSED (Lakshmi 16-Aug-2026)** — *"pause these alerts for the time
+  being"*. `alerts.TRAILING_STOP_ENABLED = False` switches OFF only the 15%-off-peak
+  alert (kind PEAK17). **The 10%-below-COST loss stop is untouched and still fires.**
+  Set the flag back to True to resume — threshold, message and dedup key are all
+  still in place, so it returns byte-identical (verified: same forced prices give
+  0 trailing / 55 loss with the flag off, 55 / 55 with it on). `check_risk_stops`
+  PRINTS one line every run saying the trailing half is paused — a stop-loss that
+  silently stops working is the most dangerous kind of dead alert, so "why didn't I
+  get a trailing stop?" must always have a visible answer in the log.
 - **Risk / stop alerts (`alerts.check_risk_stops`, Lakshmi 21-Jul-2026)**: fires
   when a HOLDING is ≥10% below cost (loss stop, per each holder's own cost) OR
   ≥15% off its ~6-month peak (trailing stop, tightened from 17% 23-Jul-2026; peak = `signals.daily_entry_levels`

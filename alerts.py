@@ -373,6 +373,20 @@ STOP_FROM_COST = 0.10   # alert if a holding is >=10% below average cost (loss s
 STOP_FROM_PEAK = 0.15   # ...or >=15% off its ~6-month peak (trailing stop; Lakshmi
                         # tightened 17%->15% on 23-Jul-2026 to exit pullbacks sooner)
 
+# TRAILING STOP IS PAUSED (Lakshmi, 16-Aug-2026) — "pause these alerts for the
+# time being". Only the 15%-off-peak alert is off; the 10%-below-COST loss stop
+# is UNTOUCHED and still fires.
+#
+# To resume: set this back to True. Nothing else needs changing — the threshold,
+# the message and the dedup key are all still here, so it comes back exactly as
+# it was.
+#
+# Note it is paused, NOT deleted, and deliberately not made silent-by-accident:
+# a stop-loss that quietly stops working is the most dangerous kind of dead
+# alert, so run_eod_entries logs one line every evening saying it's off. That
+# way "why didn't I get a trailing stop?" always has a visible answer.
+TRAILING_STOP_ENABLED = False
+
 
 def _grp_tag(grp, pfs):
     """'[Both] ' / '[Name] ' prefix for the lakshmi group; '' otherwise."""
@@ -387,7 +401,13 @@ def check_risk_stops(client, prices: dict):
     OWN cost) or >=15% off its ~6-month peak (trailing stop). `prices` =
     {ticker: (cmp, peak)} — caller passes LIVE prices (fast poller, ~1 min) or
     EOD closes (evening). Dedup once/stock/group/day/kind via entry_alert_log
-    (kinds STOP10 / PEAK17). Complements the flowchart EXIT, doesn't replace it."""
+    (kinds STOP10 / PEAK17). Complements the flowchart EXIT, doesn't replace it.
+
+    NOTE: the trailing (off-peak) half is currently PAUSED — see
+    TRAILING_STOP_ENABLED above. The loss stop still runs."""
+    if not TRAILING_STOP_ENABLED:
+        print(f"[stops] trailing stop ({int(STOP_FROM_PEAK*100)}% off peak) is PAUSED "
+              f"— loss stop ({int(STOP_FROM_COST*100)}% below cost) still active")
     holdings = get_holdings(client)
     if holdings.empty:
         return
@@ -433,7 +453,9 @@ def check_risk_stops(client, prices: dict):
             # Trailing stop — off the recent peak (price-based, same for all holders)
             # dedup key "PEAK17" is a STABLE historical string, independent of the
             # threshold value — don't rename it when the % changes (avoids re-alerts).
-            if peak and cmp_ <= peak * (1 - STOP_FROM_PEAK) and (ticker, grp, "PEAK17") not in already:
+            if (TRAILING_STOP_ENABLED and peak
+                    and cmp_ <= peak * (1 - STOP_FROM_PEAK)
+                    and (ticker, grp, "PEAK17") not in already):
                 dd = (cmp_ / peak - 1) * 100
                 msgs_by_group.setdefault(grp, []).append(
                     f"⛔ {_grp_tag(grp, [pf for pf, _ in holders])}<b>{e['name']}</b> — trailing stop\n"
