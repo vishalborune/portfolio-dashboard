@@ -3588,6 +3588,58 @@ def run_reconcile():
     print(f"[digest-reconcile] {'OK — all portfolios agree' if not bad else f'{bad} portfolio(s) MISMATCHED'}")
 
 
+# When set, digest snapshots are stamped with THIS date instead of today.
+# Used by run_snapshot_refresh to re-stamp Friday's row after a late update.
+SNAPSHOT_DATE_OVERRIDE = None
+
+
+def _snapshot_date(today):
+    return SNAPSHOT_DATE_OVERRIDE or today
+
+
+def last_friday(d: date = None) -> date:
+    """The most recent Friday, i.e. this week's market close. Friday itself
+    returns Friday."""
+    d = d or date.today()
+    return d - timedelta(days=(d.weekday() - 4) % 7)
+
+
+def run_snapshot_refresh():
+    """Re-stamp THIS WEEK'S Friday snapshot using the CURRENT book, then exit.
+    Sends nothing.
+
+    WHY (Vishal, 22-Aug-2026): he enters the week's trades late on Friday night,
+    AFTER the 21:00 digest has already run and stored its snapshot. That snapshot
+    then becomes next Friday's comparison baseline — so the whole week gets
+    measured against a book that was already out of date when it was saved. His
+    words: "That is the close of the week, Friday. If I am doing it late, then it
+    needs to be updated so that that number can be used to compare next Friday's
+    close."
+
+    So this runs early SATURDAY, overwrites the row with snap_date = FRIDAY (the
+    upsert's conflict key is (portfolio_id, snap_date), so it replaces rather than
+    adds), and the Friday-to-Friday cadence is preserved exactly — 7 days, every
+    week, with the values he actually finished the week holding.
+
+    Deliberately reuses run_digest's own computation rather than re-deriving the
+    numbers here: two code paths answering the same money question is how the
+    digest and dashboard drifted apart twice already (08-Aug-2026)."""
+    global SNAPSHOT_DATE_OVERRIDE, send_email, send_telegram
+    target = last_friday()
+    keep_mail, keep_tg = send_email, send_telegram
+    SNAPSHOT_DATE_OVERRIDE = target
+    send_email = lambda *a, **k: True          # noqa: E731 — snapshot only, no send
+    send_telegram = lambda *a, **k: True       # noqa: E731
+    try:
+        print(f"[snapshot-refresh] re-stamping the {target} (Friday) snapshot "
+              f"with the current book — nothing will be sent")
+        run_digest()
+        print(f"[snapshot-refresh] done — next Friday compares against {target}")
+    finally:
+        SNAPSHOT_DATE_OVERRIDE = None
+        send_email, send_telegram = keep_mail, keep_tg
+
+
 def run_digest():
     """Weekly digest — TWO separate emails (Vishal 07-Aug-2026): his OWN book in
     one email, the Lakshmi+Abinaya book in another, so neither email carries the
@@ -3869,7 +3921,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
             # store this week's snapshot (upsert -> reruns safe)
             try:
                 client.table("digest_history").upsert({
-                    "portfolio_id": int(pf), "snap_date": today.isoformat(),
+                    "portfolio_id": int(pf), "snap_date": _snapshot_date(today).isoformat(),
                     "invested": float(round(inv, 2)),
                     "current_value": float(round(val, 2)),
                     "unrealised": float(round(unreal, 2)),
@@ -4055,4 +4107,5 @@ if __name__ == "__main__":
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
          "morning-levels": run_morning_levels,
+         "snapshot-refresh": run_snapshot_refresh,
          "eod-entries": run_eod_entries}.get(mode, run_states)()

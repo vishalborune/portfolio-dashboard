@@ -9,6 +9,10 @@ on:
     - cron: "40 4,6,8,10,12,14,16 * * *"    # filings (full, incl BSE): every 2h, ~10:10-22:10 IST — 7 DAYS (weekend board-meeting/results filings, 01-Aug-2026)
     - cron: "8,23,38,53 3-16 * * *"         # filings-nse: NSE announcements ~every 15 min, 08:38-22:23 IST — 7 DAYS (companies file Sat/Sun; feed ages off before Monday)
     - cron: "30 3 * * 1"                  # calendar: Monday morning IST
+    - cron: "0 1 * * 6"                   # snapshot-refresh: Saturday 06:30 IST --
+                                          # re-stamps FRIDAY's snapshot with the book
+                                          # as finally updated late Friday night, so
+                                          # next Friday compares against real numbers
     - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
                                           # 20:00/20:30 data jobs, so it computes on
                                           # tonight's closes; Lakshmi plans Saturdays
@@ -25,6 +29,10 @@ on:
         default: false
       run_delivery_backfill:
         description: "Also run the one-time delivery % backfill (~6 weeks)?"
+        type: boolean
+        default: false
+      refresh_snapshot_now:
+        description: "Re-stamp this Friday's snapshot with the current book?"
         type: boolean
         default: false
       send_digest_now:
@@ -191,6 +199,26 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
+
+  snapshot-refresh:
+    # Saturday 06:30 IST. Vishal enters the week's trades late on Friday night,
+    # AFTER the 21:00 digest has stored its snapshot -- which then becomes next
+    # Friday's comparison baseline. This re-stamps the SAME Friday row (upsert on
+    # (portfolio_id, snap_date)) with the finished book, so the Friday-to-Friday
+    # cadence stays exactly 7 days and the numbers are the ones he actually ended
+    # the week holding. Sends nothing.
+    if: github.event.schedule == '0 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.refresh_snapshot_now == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python alerts.py snapshot-refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
   digest:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the

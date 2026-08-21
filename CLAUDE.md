@@ -867,6 +867,23 @@ history source, so do it deliberately, not casually.
   (to date)"). Data hygiene: Vishal's portfolio has 4 FUTURE-dated realised rows
   (ids 9–12, sale_date Sep/Dec 2026) — entry typos; the "to date" cap excludes
   them, but they should be corrected in the realised table.
+- **FRIDAY SNAPSHOT IS RE-STAMPED SATURDAY 06:30 IST (`alerts.run_snapshot_refresh`,
+  Vishal 22-Aug-2026).** He enters the week's trades LATE on Friday night — after the
+  21:00 digest has already run and stored its snapshot. That stale snapshot then became
+  next Friday's comparison baseline, so a whole week got measured against a book that
+  was already out of date when saved. His words: *"That is the close of the week,
+  Friday. If I am doing it late, then it needs to be updated so that that number can be
+  used to compare next Friday's close."*
+  The Saturday job re-computes and upserts the row with **snap_date = FRIDAY** (conflict
+  key is (portfolio_id, snap_date), so it REPLACES rather than adds) — the
+  Friday-to-Friday cadence stays exactly 7 days and never becomes Sat→Fri. Verified
+  22-Aug-2026: pf1's Friday row went ₹22,44,755/27 holdings → ₹23,53,794/30 holdings,
+  and next Friday still reads 7 days. Manual tick-box: `refresh_snapshot_now`.
+  **It reuses `run_digest`'s own computation with `SNAPSHOT_DATE_OVERRIDE` set, rather
+  than re-deriving the money numbers** — two code paths answering the same money
+  question is exactly how the digest and dashboard drifted apart twice.
+  **Do NOT "fix" this by storing a Saturday-dated snapshot** — that yields a 6-day
+  Sat→Fri window, which is the bug this replaced.
 - **Weekly review habit**: reviews the portfolio Saturday mornings — this
   is WHY the digest moved from Sunday 10am to Friday 9pm (after Friday's
   close, so Saturday's review uses fresh data, not day-old).
