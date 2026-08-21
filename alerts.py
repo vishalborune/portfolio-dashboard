@@ -3416,14 +3416,72 @@ RECONCILE_PRICE_TOL_PCT = 2.0   # per-holding price gap that counts as a mismatc
 RECONCILE_VALUE_TOL_PCT = 0.5   # portfolio-total gap that blocks the send
 
 
-def _independent_price(ticker: str):
-    """Latest market close from the DAILY path (bhavcopy-first, Yahoo for
-    mainboard names) — deliberately NOT `current_state`'s weekly bars, so this is
-    a genuinely independent second opinion rather than the same source re-read.
-    Both paths settle to the same Friday close on healthy data, and the digest
-    only runs after the close, so a real gap means one side is stale/wrong.
-    None when the ticker has no daily data at all (can't judge -> not a finding)."""
+# One NSE bhavcopy per digest run, reused for every ticker. {} means "not
+# available"; None means "not fetched yet".
+_BHAV_REF = None
+_BHAV_REF_DATE = None
+
+
+def _bhav_reference(max_back: int = 6):
+    """{SYMBOL: close} from NSE's OWN daily file for the most recent trading day.
+
+    This is the reconciliation's primary reference because it is the most
+    authoritative price that exists — the exchange's published file, not a
+    third-party redistribution (House Rules #1 and #5). One request covers every
+    NSE symbol, so checking 50 holdings costs one download, not 50 quote calls.
+
+    WHY IT REPLACED THE YAHOO DAILY PATH (22-Aug-2026): the guard blocked BOTH
+    digests over a 15% gap on Welspun. Checked against this very file, the
+    DIGEST was right (Rs 2,311.90, matching NSE exactly) and the independent
+    Yahoo daily series was the stale one — it was missing Friday entirely while
+    the weekly series had it. Same "Yahoo drops the latest session" gremlin that
+    caused the false HFCL EXIT and the wrong Today's P&L, just landing on a new
+    consumer. A guard that blocks the real digest because its OWN reference is
+    stale is worse than no guard: it would have silently cost Lakshmi his email."""
+    global _BHAV_REF, _BHAV_REF_DATE
+    if _BHAV_REF is not None:
+        return _BHAV_REF
+    _BHAV_REF = {}
     try:
+        import bhavcopy as _bc
+        for back in range(max_back):
+            d = date.today() - timedelta(days=back)
+            if d.weekday() >= 5:
+                continue
+            df = _bc.fetch_nse_bhavcopy(d)
+            if df is None or df.empty:
+                continue
+            df = df.copy()
+            df["SYMBOL"] = df["SYMBOL"].astype(str).str.strip()
+            df["SERIES"] = df["SERIES"].astype(str).str.strip()
+            eq = df[df["SERIES"].isin(("EQ", "BE", "ST"))]
+            _BHAV_REF = {r.SYMBOL: float(r.CLOSE) for r in eq.itertuples()}
+            _BHAV_REF_DATE = d
+            print(f"[digest-reconcile] reference = NSE bhavcopy {d} "
+                  f"({len(_BHAV_REF)} symbols)")
+            break
+        else:
+            print("⚠️ [digest-reconcile] no NSE bhavcopy in the last "
+                  f"{max_back} days — falling back to the daily price path")
+    except Exception as e:
+        print(f"⚠️ [digest-reconcile] bhavcopy reference unavailable "
+              f"({type(e).__name__}: {e}) — falling back to the daily price path")
+    return _BHAV_REF
+
+
+def _independent_price(ticker: str):
+    """Latest market close from a source INDEPENDENT of the digest's weekly bars,
+    so this is a genuine second opinion rather than the same series re-read.
+
+    Order: NSE's own bhavcopy file (authoritative) -> the daily path
+    (our sme_daily_prices table for SME/BSE names, Yahoo for anything left).
+    None when nothing can price it — that is 'can't judge', never a finding."""
+    try:
+        if str(ticker).upper().endswith(".NS"):
+            ref = _bhav_reference()
+            close = ref.get(str(ticker)[:-3].upper())
+            if close and close > 0:
+                return float(close)
         d = signals._fetch_daily(ticker)
         if d is None or d.empty or "close" not in d.columns:
             return None

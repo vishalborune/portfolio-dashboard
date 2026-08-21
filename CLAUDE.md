@@ -659,6 +659,20 @@ break.
   `DIGEST_RECONCILE_MODE`: **block** (default — refuse to send, log why),
   `warn` (send with a red ⚠️ MISMATCH banner listing the offending holdings), `off`.
   Both historical bugs were replayed against it and are CAUGHT with the stock named.
+  **REFERENCE IS NOW NSE'S OWN BHAVCOPY FILE (22-Aug-2026), not the Yahoo daily path.**
+  The guard BLOCKED both digests over a 15% gap on Welspun — and the digest was RIGHT:
+  NSE's file said Rs 2,311.90, exactly what the digest used, while the independent
+  Yahoo *daily* series was missing Friday entirely (it ended Thursday) even though the
+  *weekly* series had it. Same "Yahoo drops the latest session" gremlin as the false
+  HFCL EXIT and the wrong Today's P&L, landing on a third consumer. `_independent_price`
+  now resolves NSE names from `_bhav_reference()` — ONE bhavcopy download per run covers
+  every symbol (~3.5k), it is the exchange's published file rather than a redistribution
+  (House Rules #1 + #5), and it costs one request instead of N quote calls. Falls back to
+  the daily path for SME/BSE names and if the file is unavailable. After the change the
+  same run reconciles to **Rs 0 gap for Vishal and Abinaya, Rs 8,793 (0.03%) for Lakshmi**
+  (the residual is BSE/SME names not in the NSE file). **Lesson: a guard whose own
+  reference can go stale will eventually block the real thing — and a digest silently not
+  sent is worse than the mismatch it was protecting against.**
   Spot-check anytime, read-only: **`python alerts.py reconcile`** (or
   `python dryrun.py reconcile`) — prints per-portfolio digest-vs-independent totals.
   Both paths settle to the same Friday close on healthy data and the digest only runs
