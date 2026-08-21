@@ -846,6 +846,15 @@ history source, so do it deliberately, not casually.
   **independent of entry dates**, so it's the honest read. Keep BOTH; XIRR stays
   for the long view. Caveat: it compares snapshot-to-snapshot, so if a holding
   was unpriced in one week and priced the next, that shows up in the delta.
+- **WoW picks the newest snapshot that is ≥`MIN_WOW_DAYS`(4) old — it does NOT just
+  take the latest one (22-Aug-2026).** The 08-Aug sub-week guard originally NULLED a
+  too-recent snapshot, which broke every off-cadence run: regenerating the digest the
+  morning after it had already run showed "baseline set this week" on every metric even
+  though the previous week's snapshot sat one row below in the table (Vishal: *"you have
+  the snapshot of last week, why can't you compare?"* — he was right). The query now
+  pulls the last 8 snapshots and walks back to the first real week, logging which one it
+  chose. Friday's scheduled run is unaffected (its newest prior IS ~7 days old); ad-hoc
+  re-runs now compare properly instead of silently degrading to a baseline.
 - **Profit booking framework**: tiers at +50% / +100% / +150% — digest
   flags when a stock CROSSES a tier this week (not just "is above").
 - **YTD realised P&L on the Indian FY (Lakshmi 23-Jul-2026)**: the dashboard's

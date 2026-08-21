@@ -3071,6 +3071,12 @@ def _realised_between(client, pf: int, start_d, end_d) -> float:
         return 0.0
 
 
+# A week-over-week comparison needs a real week between snapshots. Anything
+# closer is dominated by the live-vs-settled price basis rather than by actual
+# performance. Used to pick WHICH prior snapshot to compare against.
+MIN_WOW_DAYS = 4
+
+
 def _weekly_vs_index(client, pf, prev, val, unreal, today):
     """Lakshmi's weekly scorecard (23-Jul-2026): how the WEEK went for us vs the
     Nifty Smallcap index — deliberately independent of XIRR, which depends on the
@@ -3087,7 +3093,7 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
         # day or two old — comparing over 1 day and calling it "this week" is nonsense
         # (and the live-vs-settled price basis between the two makes the % garbage). A
         # real week is ~7 days; require at least 4 before showing the comparison.
-        if (today - prev_d).days < 4:
+        if (today - prev_d).days < MIN_WOW_DAYS:
             return ("<p style='color:#888'>Weekly vs index: last snapshot is only "
                     f"{(today - prev_d).days} day(s) old — the weekly comparison needs a "
                     "full week between digests (resumes next Friday).</p>", None)
@@ -3715,27 +3721,39 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
             bench = _benchmark_xirr(raw_cfs)
             detail_by_pf[pf] = detail
 
-            # previous snapshot for trend
+            # Previous snapshot for the week-over-week trend.
+            #
+            # Take the newest snapshot that is at least MIN_WOW_DAYS old, NOT simply
+            # the newest one. A weekly digest is a Friday-to-Friday measure, and
+            # adjacent-day snapshots differ mostly by the live-vs-settled price
+            # basis, so a 1-day "WoW" is nonsense (it once printed a bogus "-4.35%
+            # behind the index", 08-Aug-2026).
+            #
+            # The first version of that guard just NULLED a too-recent snapshot,
+            # which was wrong: re-running the digest the morning after it had
+            # already run showed "baseline set this week" on every metric, even
+            # though a perfectly good snapshot from the previous week was sitting
+            # in the table one row further down (Vishal, 22-Aug-2026 — "you have
+            # the snapshot of last week, why can't you compare?"). Fair. Walking
+            # back finds the real week instead of giving up.
             prev = None
             try:
                 r = (client.table("digest_history").select("*")
                      .eq("portfolio_id", pf).lt("snap_date", today.isoformat())
-                     .order("snap_date", desc=True).limit(1).execute())
-                prev = (r.data or [None])[0]
-            except Exception:
-                pass
-            # A weekly digest is a Friday-to-Friday measure. If run OFF-CADENCE the
-            # newest prior snapshot can be only a day or two old — treat that as NO
-            # prior (baseline) so NO metric (money deltas OR the weekly-vs-index box)
-            # shows a garbage sub-week "WoW": adjacent-day snapshots differ mostly by
-            # the live-vs-settled price basis, which makes any 1-day % nonsense
-            # (surfaced as a bogus "-4.35% behind the index" mid-week, 08-Aug-2026).
-            if prev and prev.get("snap_date"):
-                try:
-                    if (today - date.fromisoformat(str(prev["snap_date"])[:10])).days < 4:
-                        prev = None
-                except (ValueError, TypeError):
-                    pass
+                     .order("snap_date", desc=True).limit(8).execute())
+                for row in (r.data or []):
+                    try:
+                        d0 = date.fromisoformat(str(row.get("snap_date"))[:10])
+                    except (ValueError, TypeError):
+                        continue
+                    if (today - d0).days >= MIN_WOW_DAYS:
+                        prev = row
+                        if row is not (r.data or [None])[0]:
+                            print(f"(digest: pf {pf} — skipped snapshot(s) newer than "
+                                  f"{MIN_WOW_DAYS}d; comparing against {d0})")
+                        break
+            except Exception as e:
+                print(f"(digest: prior-snapshot lookup failed for pf {pf}: {e})")
 
             def _delta(cur, prev_v, pct=False, pts=False):
                 if prev_v is None or cur is None:
