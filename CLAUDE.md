@@ -807,6 +807,36 @@ cost), so this uses the pipe we already own. Flagged, not silently substituted.
 **Test:** `python dryrun.py thesis "Krishival Foods (XNSE:KRISHIVAL)"` — prints the note,
 sends nothing, stores nothing.
 
+## Trading scorecard (`metrics.py` + `app.tab_scorecard`, Vishal 22-Aug-2026)
+*"If you can't measure, you can't improve"* — scores DECISIONS, not the market, from
+CLOSED trades only. Lives in its own module so the dashboard and the digest can never
+disagree (the two-code-paths problem that split the digest and dashboard twice).
+
+**Headline pairing is win rate + payoff ratio; neither means anything alone.** Measured
+22-Aug-2026: Lakshmi wins only **29%** of trades yet compounds, because winners average
+**+49.3%** and losers **−7.4%** (payoff **4.31:1**), and he holds winners **136 days vs
+56** for losers. That is textbook trend-following and the opposite of the retail norm —
+without measuring it he would call himself a poor stock-picker; he is actually a good
+loss-cutter. Vishal 53% / 1.73:1, Abinaya 47% / 1.77:1.
+
+**DATA GOTCHA: `realised.pct_gain_loss` is stored as a FRACTION** (0.090 = 9.05%). The
+dashboard's `"{:+.2%}"` format multiplies by 100 so it renders right there, but ANY plain
+arithmetic on that column is 100x out. `metrics._clean` therefore recomputes the % from
+`gain_loss / amount_invested` and never trusts the stored column.
+Synthetic rows (the FY "Opening balance" entry) are excluded from every trade statistic —
+otherwise a ₹9.1L non-trade shows up as the best trade ever made.
+
+**Drawdown caveat:** computed from weekly `digest_history` value snapshots, so deposits,
+withdrawals AND data corrections move it. Lakshmi's early 20-Jul snapshot (₹3.76 Cr vs
+₹3.30 Cr now) makes the current −12% read look like a loss it isn't. Labelled on screen
+as lived experience, not a pure return series; it gets more trustworthy as clean weeks
+accumulate.
+
+**XIRR is PRE-CHARGES.** No brokerage/STT is stored anywhere (`realised` and
+`transactions` have no charges column), so an after-charges XIRR is NOT possible from our
+data and must not be faked. To do it properly, import the broker P&L/tradebook export
+(Kite Console, Upstox, INDmoney) which carries the charges breakdown.
+
 ## Exchange rule: NSE unless the company is BSE-ONLY (Lakshmi 16-Aug-2026)
 *"Only add NSE since its updates are faster, unless a company is only listed in BSE."*
 This is a DATA-QUALITY rule, not a preference, and the codebase already proves it:

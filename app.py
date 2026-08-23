@@ -24,6 +24,7 @@ import streamlit as st
 import yfinance as yf
 
 import db
+import metrics
 import signals
 import xirr
 
@@ -1566,6 +1567,107 @@ def tab_realised(realised: pd.DataFrame):
 # TAB: HISTORY
 # ---------------------------------------------------------------------------
 
+def tab_scorecard(realised: pd.DataFrame):
+    """Trading scorecard — "if you can't measure, you can't improve".
+
+    Everything here is computed from CLOSED trades, so it scores DECISIONS, not
+    the market. The headline pairing is win rate + payoff ratio: neither means
+    anything alone. A 29% win rate looks alarming until you see winners run 4x
+    the size of losers, which is exactly what a trend-following book should look
+    like."""
+    stats = metrics.trade_stats(realised)
+    if not stats:
+        st.info("No closed trades yet — the scorecard fills in as positions are sold.")
+        return
+
+    st.subheader("Edge")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Win rate", f"{stats['win_rate']:.0f}%",
+              f"{stats['n_wins']}W / {stats['n_losses']}L",
+              delta_color="off",
+              help="Share of closed trades that made money. LOW is fine if the "
+                   "payoff ratio is high — that is what trend-following looks like.")
+    payoff = stats.get("payoff")
+    c2.metric("Payoff ratio", f"{payoff:.2f} : 1" if payoff else "—",
+              help="Average WIN vs average LOSS in rupees. Above 2:1 means you can "
+                   "be wrong more often than right and still compound.")
+    pf = stats.get("profit_factor")
+    c3.metric("Profit factor", f"{pf:.2f}" if pf else "—",
+              help="Gross profit ÷ gross loss. Above 1.0 is profitable; above 1.5 "
+                   "is a real edge.")
+    c4.metric("Expectancy / trade", fmt_inr(stats["expectancy_rs"]),
+              help="Average rupees earned per closed trade. This is what one more "
+                   "decision is worth.")
+
+    st.caption(f"Across **{stats['n_trades']} closed trades** · gross profit "
+               f"{fmt_inr(stats['gross_profit'])} vs gross loss "
+               f"{fmt_inr(stats['gross_loss'])} · net {fmt_inr(stats['net_rs'])}")
+
+    st.divider()
+    st.subheader("Discipline")
+    d1, d2, d3 = st.columns(3)
+    aw, al = stats.get("avg_win_pct"), stats.get("avg_loss_pct")
+    d1.metric("Avg win", f"{aw:+.1f}%" if aw is not None else "—",
+              fmt_inr(stats["avg_win_rs"]), delta_color="off")
+    d2.metric("Avg loss", f"{al:+.1f}%" if al is not None else "—",
+              fmt_inr(stats["avg_loss_rs"]), delta_color="off")
+    hw, hl = stats.get("avg_hold_win"), stats.get("avg_hold_loss")
+    d3.metric("Hold: winners vs losers",
+              f"{hw:.0f}d vs {hl:.0f}d" if hw and hl else "—",
+              help="The single most revealing behavioural number. Winners should be "
+                   "held LONGER than losers.")
+    note = metrics.discipline_note(stats)
+    if note:
+        (st.warning if note.startswith("⚠️") else st.success)(note)
+
+    b1, b2 = st.columns(2)
+    bp, wp = stats.get("best_pct"), stats.get("worst_pct")
+    b1.metric("Biggest win", fmt_inr(stats["best_rs"]),
+              f"{bp:+.0f}%" if bp is not None else None, delta_color="off")
+    b2.metric("Biggest loss", fmt_inr(stats["worst_rs"]),
+              f"{wp:+.0f}%" if wp is not None else None, delta_color="off")
+
+    st.divider()
+    st.subheader("Was selling the right call?")
+    st.caption("From the 30/60/90-day post-exit audit — a sale counts as *saved* "
+               "when the stock was LOWER afterwards.")
+    try:
+        journal = db.get_trade_journal()
+    except Exception:
+        journal = pd.DataFrame()
+    eq = metrics.exit_quality(journal)
+    if not eq:
+        st.info("No audited exits yet — `exit_audit.py` checks each sale at 30, 60 "
+                "and 90 days, so this fills in about a month after the first exit.")
+    else:
+        rows = [{"Window": f"{w}d", "Exits audited": v["n"],
+                 "Sale looked right": v["saved"], "Sold too early": v["cost"],
+                 "Avg move after exit": f"{v['avg_move_pct']:+.1f}%"}
+                for w, v in sorted(eq.items())]
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    st.divider()
+    st.subheader("Drawdown")
+    st.caption("How far the book has fallen from its own highest point. Measured on "
+               "weekly snapshots of portfolio VALUE, so deposits and withdrawals "
+               "move it too — read it as a lived experience, not a pure return.")
+    try:
+        snaps = db.get_digest_history()
+    except Exception:
+        snaps = pd.DataFrame()
+    dd = metrics.drawdown(snaps)
+    if not dd or dd.get("n_points", 0) < 2:
+        st.info("Building — needs at least two weekly snapshots. One is stored "
+                "every Friday, so this becomes meaningful over the coming weeks.")
+    else:
+        x1, x2, x3 = st.columns(3)
+        x1.metric("Currently off peak", f"{dd['current_dd_pct']:+.1f}%")
+        x2.metric("Worst drawdown so far", f"{dd['max_dd_pct']:+.1f}%",
+                  str(dd["max_dd_date"]), delta_color="off")
+        x3.metric("Peak value", fmt_inr(dd["peak_value"]))
+        st.caption(f"From {dd['n_points']} weekly snapshots since {dd['from_date']}.")
+
+
 def tab_history(k: dict):
     snaps = db.get_snapshots()
     if is_owner():
@@ -1930,16 +2032,17 @@ def main():
 
     tab_names = [
         "📊 Holdings", "🥧 Allocation", "👀 Watchlist",
-        "💰 Realised P&L", "📈 History", "📜 Transactions", "📝 Notes",
+        "💰 Realised P&L", "🎯 Scorecard", "📈 History", "📜 Transactions", "📝 Notes",
     ]
     tabs = st.tabs(tab_names)
     with tabs[0]: tab_holdings(enriched)
     with tabs[1]: tab_allocation(enriched, k)
     with tabs[2]: tab_watchlist()
     with tabs[3]: tab_realised(realised)
-    with tabs[4]: tab_history(k)
-    with tabs[5]: tab_transactions()
-    with tabs[6]: tab_notes()
+    with tabs[4]: tab_scorecard(realised)
+    with tabs[5]: tab_history(k)
+    with tabs[6]: tab_transactions()
+    with tabs[7]: tab_notes()
 
 
 if __name__ == "__main__":

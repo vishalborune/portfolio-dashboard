@@ -331,6 +331,21 @@ def get_trade_journal() -> pd.DataFrame:
     return _get_journal_cached(_active_pf())
 
 
+@st.cache_data(ttl=300)
+def _get_digest_history_cached(pf: int) -> pd.DataFrame:
+    """Weekly digest snapshots for the drawdown curve. ORDERED DESC per House
+    Rule #1 — Supabase silently caps a query at 1,000 rows, so descending order
+    means the cap would trim the OLDEST weeks, never the most recent ones. The
+    caller sorts back into chronological order."""
+    res = (_client().table("digest_history").select("*")
+           .eq("portfolio_id", pf).order("snap_date", desc=True).execute())
+    return pd.DataFrame(res.data or [])
+
+
+def get_digest_history() -> pd.DataFrame:
+    return _get_digest_history_cached(_active_pf())
+
+
 # ===============================================================
 # DELIVERY % (Sprint 3 fast-follow — displayed, never gates signals)
 # ===============================================================
