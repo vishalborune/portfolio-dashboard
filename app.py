@@ -1316,35 +1316,51 @@ def _editor_watchlist_levels(wl: pd.DataFrame):
     number gets into the system (House Rule #2). Blank means "no alert for that
     level", which is a real and useful state, so clearing a cell must work as
     well as setting one."""
-    st.caption(f"✏️ **Set your levels** — type directly below, then Save. "
-               f"Support alerts fire within {signals.SUPPORT_NEAR_PCT:g}% of the "
-               f"level you enter; leave blank for no alert.")
+    st.caption(f"✏️ **Set your levels** — click a cell, type the number, press Enter, "
+               f"then Save. Empty = no alert. Support alerts fire within "
+               f"{signals.SUPPORT_NEAR_PCT:g}% of whatever you enter.")
 
     base = wl[["id", "stock_name"]].copy()
     base["Stock"] = base["stock_name"].apply(short_name)
+    # CMP alongside the inputs (read-only). You set a support level RELATIVE to
+    # where the stock is now, so having to look it up in the table above and then
+    # scroll back down is the slow part of this job.
+    base["Ticker"] = base["stock_name"].apply(extract_yf_ticker)
+    cmp_map = {}
+    if "CMP" in wl.columns and "Ticker" in wl.columns:
+        cmp_map = dict(zip(wl["Ticker"], pd.to_numeric(wl["CMP"], errors="coerce")))
+    base["CMP"] = base["Ticker"].map(cmp_map)
     for col, label in (("target_buy_price", "Target Buy"),
                        ("support_minor", "Minor Support"),
                        ("support_major", "Major Support")):
         base[label] = pd.to_numeric(wl[col], errors="coerce") if col in wl.columns else np.nan
 
-    grid = base[["Stock", "Target Buy", "Minor Support", "Major Support"]]
+    grid = base[["Stock", "CMP", "Target Buy", "Minor Support", "Major Support"]]
     edited = st.data_editor(
         grid,
         hide_index=True,
         width="stretch",
-        disabled=["Stock"],
+        disabled=["Stock", "CMP"],
         key="wl_levels_editor",
         column_config={
             "Stock": st.column_config.TextColumn("Stock", width="medium"),
+            "CMP": st.column_config.NumberColumn(
+                "CMP ₹", format="%.2f",
+                help="Current price, for reference while you set levels. Read-only."),
+            # No forced decimals on the INPUT columns: "%.2f" makes an empty cell
+            # render as 0.00 and a typed 400 jump to 400.00, so every edit starts
+            # with select-all-and-delete. Plain numbers type naturally and blanks
+            # stay blank.
             "Target Buy": st.column_config.NumberColumn(
-                "Target Buy ₹", format="%.2f", min_value=0.0,
-                help="Personal target price — alerts when CMP reaches it."),
+                "Target Buy ₹", min_value=0.0, step=1.0,
+                help="Your buy price. Alerts when CMP falls to it. Leave empty for none."),
             "Minor Support": st.column_config.NumberColumn(
-                "Minor Support ₹", format="%.2f", min_value=0.0,
-                help="The near-term shelf you expect a bounce from."),
+                "Minor Support ₹", min_value=0.0, step=1.0,
+                help="Near-term shelf you expect a bounce from. Empty = no alert."),
             "Major Support": st.column_config.NumberColumn(
-                "Major Support ₹", format="%.2f", min_value=0.0,
-                help="The structural floor — where the trend would actually break."),
+                "Major Support ₹", min_value=0.0, step=1.0,
+                help="Structural floor — where the trend would really break. "
+                     "Empty = no alert."),
         },
     )
 
@@ -1378,8 +1394,11 @@ def _editor_watchlist_levels(wl: pd.DataFrame):
 
 
 def _form_edit_watchlist(wl: pd.DataFrame):
-    """Edit an existing watchlist item: fix a mistyped symbol/company, switch
-    exchange, or update the target price / thesis. The item picker sits OUTSIDE
+    """Edit an existing watchlist item's IDENTITY: a mistyped company/symbol, the
+    exchange, or the notes. Numbers (target, support levels) are deliberately NOT
+    here — they live in the levels grid under the table, so there is exactly one
+    place to set them and no chance of this form's stale copy clobbering it.
+    The item picker sits OUTSIDE
     the form so changing the selection re-fills the fields; the form key is
     keyed to the row id so Streamlit re-applies the defaults on each switch."""
     if wl.empty:
@@ -1391,25 +1410,7 @@ def _form_edit_watchlist(wl: pd.DataFrame):
     row = options[options["label"] == pick].iloc[0]
     rid = int(row["id"])
     company0, exch0, sym0 = parse_stock_name(row["stock_name"])
-    target0 = float(row["target_buy_price"]) if pd.notna(row.get("target_buy_price")) else 0.0
     notes0 = row.get("notes") or ""
-    minor0 = float(row["support_minor"]) if pd.notna(row.get("support_minor")) else 0.0
-    major0 = float(row["support_major"]) if pd.notna(row.get("support_major")) else 0.0
-
-    # Offer the computed levels as a STARTING POINT only — he can accept, adjust
-    # or ignore them. Deliberately not pre-filled into the boxes: an auto value
-    # sitting in an input box gets saved by accident and then looks like a level
-    # he chose. Only what he actually types ever fires an alert.
-    suggestion = ""
-    try:
-        _tk = extract_yf_ticker(row["stock_name"])
-        _auto = signals.support_levels(_tk) if _tk else None
-        if _auto:
-            suggestion = " · ".join(
-                f"{k} ₹{v:,.2f}" for k, v in (("minor", _auto.get("minor")),
-                                              ("major", _auto.get("major"))) if v)
-    except Exception:
-        suggestion = ""
 
     with st.form(f"edit_wl_form_{rid}"):
         c1, c2 = st.columns([2, 1])
@@ -1420,28 +1421,8 @@ def _form_edit_watchlist(wl: pd.DataFrame):
                                 index=0 if exch0 == "NSE" else 1, horizontal=True)
         symbol = st.text_input("Symbol", value=sym0,
                                help="No spaces — e.g. JITFINFRA, not 'JITF INFRA'")
-        target = st.number_input("Target buy price (0 = clear it)", min_value=0.0,
-                                 step=0.01, format="%.2f", value=target0)
-
-        # Support levels are TYPED IN, not derived (Lakshmi 16-Aug-2026): the
-        # automatic rules didn't generalise across charts, so he sets them.
-        # Blank = no support alert for that level; we stay silent rather than
-        # fall back to a level he doesn't believe.
-        st.caption("**Support levels** — alerts fire within "
-                   f"{signals.SUPPORT_NEAR_PCT:g}% of these. Leave blank for no alert.")
-        s1, s2 = st.columns(2)
-        with s1:
-            sup_minor = st.number_input("Minor support (0 = clear it)", min_value=0.0,
-                                        step=0.01, format="%.2f", value=minor0,
-                                        help="The near-term shelf you expect a bounce from.")
-        with s2:
-            sup_major = st.number_input("Major support (0 = clear it)", min_value=0.0,
-                                        step=0.01, format="%.2f", value=major0,
-                                        help="The structural floor — where the trend "
-                                             "would actually break.")
-        if suggestion:
-            st.caption(f"↳ for reference, computed from price history: {suggestion} "
-                       "(a suggestion only — nothing alerts on these)")
+        st.caption("💡 Target and support levels are set in the **Set your levels** "
+                   "grid under the watchlist table — one place for all stocks.")
 
         note = st.text_area("Notes / thesis", value=notes0, height=80)
         submitted = st.form_submit_button("💾 Save changes", type="primary")
@@ -1458,11 +1439,9 @@ def _form_edit_watchlist(wl: pd.DataFrame):
             return
         try:
             new_name = build_stock_name(company, exchange, symbol)
-            db.update_watchlist(rid, stock_name=new_name,
-                                target_buy_price=target if target > 0 else None,
-                                support_minor=sup_minor if sup_minor > 0 else None,
-                                support_major=sup_major if sup_major > 0 else None,
-                                notes=note or None)
+            # Numbers are NOT written here — they live in the levels grid. Passing
+            # them would clobber whatever is set there with this form's stale copy.
+            db.update_watchlist(rid, stock_name=new_name, notes=note or None)
             st.success("✅ Watchlist item updated")
             st.rerun()
         except Exception as e:
