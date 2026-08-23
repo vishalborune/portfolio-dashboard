@@ -23,6 +23,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+import charges
 import db
 import metrics
 import signals
@@ -1567,6 +1568,28 @@ def tab_realised(realised: pd.DataFrame):
 # TAB: HISTORY
 # ---------------------------------------------------------------------------
 
+def xirr_after_charges(tx: pd.DataFrame, current_value: float):
+    """XIRR net of ESTIMATED transaction costs, or None if it can't be computed.
+
+    Buys cost more than the ticket, sells return less — so the cashflows are
+    adjusted in opposite directions rather than a flat % being shaved off the
+    answer. Falls back to None (caller shows gross) rather than erroring."""
+    try:
+        d = charges.apply_to_transactions(tx, db._active_pf())
+        if d is None or d.empty or "charges" not in d.columns:
+            return None
+        adj = d.copy()
+        adj["amount"] = [
+            float(r["amount"]) + float(r["charges"])
+            if str(r["transaction_type"]).lower() == "buy"
+            else float(r["amount"]) - float(r["charges"])
+            for _, r in d.iterrows()
+        ]
+        return xirr.compute_xirr(adj, current_value).get("xirr")
+    except Exception:
+        return None
+
+
 def tab_scorecard(realised: pd.DataFrame):
     """Trading scorecard — "if you can't measure, you can't improve".
 
@@ -1647,10 +1670,50 @@ def tab_scorecard(realised: pd.DataFrame):
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     st.divider()
+    st.subheader("Cost of trading")
+    st.caption("Estimated from the broker's **published rate card** — brokerage, STT, "
+               "stamp duty, exchange, SEBI and GST — not from contract notes. "
+               "Pre-tax. Import the broker P&L export to make this exact.")
+    try:
+        csum = charges.summary(db.get_transactions(), db._active_pf())
+    except Exception:
+        csum = {}
+    if csum:
+        g1, g2, g3 = st.columns(3)
+        g1.metric("Est. charges paid", fmt_inr(csum["total_charges"]),
+                  csum["broker"], delta_color="off")
+        g2.metric("As % of turnover",
+                  f"{csum['pct_of_turnover']:.3f}%" if csum.get("pct_of_turnover") else "—",
+                  help="Total charges ÷ total value bought and sold.")
+        g3.metric("Transactions", f"{csum['n_transactions']:,}",
+                  help="Every buy and sell costs something — this is why "
+                       "over-trading quietly erodes returns.")
+
+    st.divider()
     st.subheader("Drawdown")
-    st.caption("How far the book has fallen from its own highest point. Measured on "
-               "weekly snapshots of portfolio VALUE, so deposits and withdrawals "
-               "move it too — read it as a lived experience, not a pure return.")
+    with st.expander("How to read this", expanded=False):
+        st.markdown("""
+**Drawdown = how far the portfolio has fallen from its own highest point.**
+If it peaks at ₹35 L and drops to ₹31.5 L, that is a 10% drawdown. Reaching a
+new high resets it to zero.
+
+**Why it matters more than returns.** Two portfolios can both make 20% a year,
+but one that fell 15% along the way is a completely different experience from
+one that fell 45%. This is the number that tells you whether you could actually
+*hold on* through the next bad patch — most people sell at the bottom of a
+drawdown they never expected.
+
+**How to read the two figures.** *Currently off peak* is where you are today;
+0% means you are at an all-time high. *Worst drawdown* is the deepest fall on
+record — treat it as roughly what a bad stretch feels like for this portfolio.
+
+**⚠️ Read it as lived experience, not pure performance.** It is measured on
+weekly snapshots of portfolio VALUE, so adding money can look like a recovery
+and withdrawing money like a fall — neither is a gain or a loss. Early snapshots
+may also reflect data corrections rather than real moves, so it becomes more
+trustworthy as clean weeks accumulate. It is **not** comparable to a fund's
+published max drawdown, which is cashflow-adjusted.
+""")
     try:
         snaps = db.get_digest_history()
     except Exception:
@@ -2021,8 +2084,20 @@ def main():
         tx = db.get_transactions()
         xr = xirr.compute_xirr(tx, k["current"])
         if xr.get("xirr") is not None:
-            c6.metric("XIRR (annualised)", f"{xr['xirr']*100:.2f}%",
-                       help=f"Computed from {xr['n_flows']} cash flows since {xr['first_date']}")
+            # Headline XIRR is NET OF ESTIMATED CHARGES — that is the return that
+            # actually reached the bank. Gross sits in the tooltip so the cost of
+            # trading is visible rather than quietly absorbed. Pre-TAX either way.
+            net = xirr_after_charges(tx, k["current"])
+            shown = net if net is not None else xr["xirr"]
+            drag = ((xr["xirr"] - net) * 100) if net is not None else None
+            c6.metric("XIRR (annualised)", f"{shown*100:.2f}%",
+                      (f"−{drag:.2f} pts costs" if drag else None),
+                      delta_color="off",
+                      help=(f"Net of ESTIMATED brokerage, STT, stamp duty, exchange, "
+                            f"SEBI and GST — pre-tax. Gross: {xr['xirr']*100:.2f}%. "
+                            f"From {xr['n_flows']} cash flows since {xr['first_date']}. "
+                            f"Charges are estimated from the broker's published rate "
+                            f"card, not from contract notes."))
         else:
             c6.metric("XIRR", "—", help=xr.get("reason", ""))
     except Exception:

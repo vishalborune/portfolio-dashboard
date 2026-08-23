@@ -832,10 +832,21 @@ withdrawals AND data corrections move it. Lakshmi's early 20-Jul snapshot (₹3.
 as lived experience, not a pure return series; it gets more trustworthy as clean weeks
 accumulate.
 
-**XIRR is PRE-CHARGES.** No brokerage/STT is stored anywhere (`realised` and
-`transactions` have no charges column), so an after-charges XIRR is NOT possible from our
-data and must not be faked. To do it properly, import the broker P&L/tradebook export
-(Kite Console, Upstox, INDmoney) which carries the charges breakdown.
+**XIRR IS NOW NET OF ESTIMATED CHARGES (`charges.py`, 22-Aug-2026), pre-tax.** We store
+no charges, and the broker accounts are behind a login — but the RATE CARDS are public,
+and for delivery equity the cost is almost entirely statutory (STT, stamp duty, exchange,
+SEBI, GST are identical at every broker; only brokerage and DP fees differ). So each
+transaction's cost is reconstructed from its amount, side and the broker's published
+schedule. Buys are grossed UP and sells netted DOWN before the XIRR solve — not a flat %
+shaved off the answer.
+Rates verified 22-Aug-2026 from zerodha.com/charges, upstox.com/brokerage-charges and the
+INDmoney card. Broker per portfolio: **pf1 INDmoney · pf2 Zerodha/Kite · pf3 Upstox**
+(`charges.PF_BROKER`). Measured impact — **~0.12% of turnover, ~1 point of XIRR**:
+Vishal 37.31→36.26, Lakshmi 45.03→43.85, Abinaya 53.24→52.43.
+The dashboard shows the NET figure with gross in the tooltip. **It is an ESTIMATE and is
+labelled as one everywhere** — current rates applied to past trades (statutory rates do
+change), and it assumes delivery. To make it EXACT, import the broker P&L/tradebook
+export, which itemises real charges.
 
 ## Exchange rule: NSE unless the company is BSE-ONLY (Lakshmi 16-Aug-2026)
 *"Only add NSE since its updates are faster, unless a company is only listed in BSE."*
