@@ -14,3 +14,6 @@ venv/
 
 # Scratch output (generated PDFs/notes)
 output/
+
+# Local scratch (bhavcopy downloads, ad-hoc scripts)
+tmp/
