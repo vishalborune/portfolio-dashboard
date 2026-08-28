@@ -341,6 +341,19 @@ switch sources without disclosure.
   natively — handles scanned docs; capped at 10 summaries/run, 20MB/PDF)
 - Daily 20:00 IST: bhavcopy + delivery + fundamentals
 - Daily 20:30 IST: exit audit (30/60/90-day post-sale price checks)
+- **WEEKLY DIGEST NOW RUNS ON THE RENDER WORKER (28-Aug-2026).** GitHub's scheduler
+  dropped the Friday digest outright — Vishal got no email, and there was no
+  `digest_history` row for 28-Aug at all, i.e. the job never started (the digest itself
+  was healthy: a dry-run reconciled to Rs 0 / 0.04% and produced both emails). Same
+  best-effort behaviour that moved the live alerts onto the worker in July.
+  `worker.py` now runs it **Friday 21:00–23:30 IST, retrying every 30 min** until it
+  succeeds (so a transient failure, or a reconciliation block that gets fixed, still
+  lands). GitHub keeps a **BACKSTOP at 22:30 IST** (`0 17 * * 5`, was `30 15 * * 5`).
+  **Double-send is impossible:** both call `alerts.run_digest_if_due()`, which skips when
+  a `digest_history` snapshot already exists for today for every portfolio — the same
+  dedup principle as `filings_seen`. Because the snapshot is written only on a SUCCESSFUL
+  digest, a blocked run correctly leaves the guard open so the next attempt retries.
+  CLI: `python alerts.py digest-if-due` (the raw `digest` mode still force-sends).
 - **Friday 21:00 IST**: weekly digest (moved from Sunday per Lakshmi's
   request — he plans portfolio strategy on Saturdays)
 - Manual tick-boxes on `workflow_dispatch`: bhavcopy-backfill,

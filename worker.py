@@ -78,6 +78,9 @@ BRIEF_OPEN = (8, 30)        # morning 'today's agenda' brief window (once/day)
 BRIEF_CLOSE = (9, 15)
 LEVELS_OPEN = (8, 45)       # morning 5/10-DMA order levels (once/day, WEEKDAYS:
 LEVELS_CLOSE = (9, 12)      # it exists to place orders, so no point Sat/Sun)
+DIGEST_OPEN = (21, 0)       # weekly digest — FRIDAY 21:00 IST, after the 20:00/20:30
+DIGEST_CLOSE = (23, 30)     # data jobs. Retried inside this window until it succeeds.
+DIGEST_RETRY = 1800         # 30 min between attempts
 
 
 def _now():
@@ -117,6 +120,7 @@ def main():
     # this digest's `!= today` guard was already satisfied by 08:45 and it never
     # fired once (11-Aug-2026, Lakshmi got no alert).
     morning_levels_day = None   # morning 5/10-DMA order levels — once per day
+    last_digest_try = 0.0       # weekly digest attempt throttle (Friday evening)
 
     while True:
         try:
@@ -158,6 +162,25 @@ def main():
                     alerts.run_morning_levels()
                 except Exception as e:
                     print(f"⚠️ [worker] morning levels failed: {type(e).__name__}: {e}")
+
+            # ---- weekly digest (FRIDAY evening) ----------------------------
+            # Moved here 28-Aug-2026: GitHub Actions' scheduler dropped the Friday
+            # digest entirely and Vishal got no email. Same best-effort behaviour
+            # that moved the live alerts onto this worker — a process that is
+            # ALREADY RUNNING doesn't need anyone to launch it.
+            # Retries every 30 min inside the window rather than firing once, so a
+            # transient failure (or a reconciliation block that gets fixed) still
+            # lands. alerts.run_digest_if_due() checks whether today's snapshot is
+            # already stored, so the GitHub backstop can never double-send.
+            if (now.weekday() == 4 and _within(now, DIGEST_OPEN, DIGEST_CLOSE)
+                    and time.time() - last_digest_try >= DIGEST_RETRY):
+                last_digest_try = time.time()
+                try:
+                    alerts.run_digest_if_due()
+                except Exception as e:
+                    print(f"⚠️ [worker] weekly digest failed: {type(e).__name__}: {e}")
+                    traceback.print_exc()
+                _reclaim_memory()      # digest builds big HTML + a full price sweep
 
             # ---- NSE filings (7 days — companies file on weekends too) ------
             if (_within(now, FILINGS_OPEN, FILINGS_CLOSE, weekends=True)

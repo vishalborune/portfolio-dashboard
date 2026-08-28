@@ -3604,6 +3604,38 @@ def last_friday(d: date = None) -> date:
     return d - timedelta(days=(d.weekday() - 4) % 7)
 
 
+def digest_already_stored(client, day: date = None) -> bool:
+    """Has this Friday's digest already completed? True when a digest_history
+    snapshot exists for `day` for EVERY portfolio we report on.
+
+    The snapshot is written at the end of a successful digest, so its presence is
+    the honest 'this already went out' marker — and it makes the worker and the
+    GitHub backstop safe to run side by side, exactly like filings_seen does for
+    filings. If the reconciliation guard BLOCKED the digest, no snapshot was
+    stored, so this correctly returns False and the next attempt retries."""
+    day = day or date.today()
+    try:
+        rows = (client.table("digest_history").select("portfolio_id")
+                .eq("snap_date", day.isoformat()).execute().data or [])
+    except Exception as e:
+        print(f"⚠️ [digest] could not check today's snapshots ({e}) — assuming not sent")
+        return False
+    return {int(r["portfolio_id"]) for r in rows} >= set(PF_NAME)
+
+
+def run_digest_if_due() -> bool:
+    """Send the weekly digest unless it already went out today. Returns True if
+    it ran. This is what the always-on worker calls — GitHub Actions' scheduler
+    has now dropped the Friday digest outright (28-Aug-2026, Vishal got nothing),
+    the same best-effort behaviour that moved the live alerts onto the worker."""
+    client = sb()
+    if digest_already_stored(client):
+        print("[digest] already sent and stored today — skipping (no double send)")
+        return False
+    run_digest()
+    return True
+
+
 def run_snapshot_refresh():
     """Re-stamp THIS WEEK'S Friday snapshot using the CURRENT book, then exit.
     Sends nothing.
@@ -4104,6 +4136,7 @@ if __name__ == "__main__":
          "deals": run_deals,
          "calendar": run_calendar,
          "digest": run_digest,
+         "digest-if-due": run_digest_if_due,
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
          "morning-levels": run_morning_levels,

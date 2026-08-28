@@ -13,7 +13,12 @@ on:
                                           # re-stamps FRIDAY's snapshot with the book
                                           # as finally updated late Friday night, so
                                           # next Friday compares against real numbers
-    - cron: "30 15 * * 5"                 # digest: Friday 21:00 IST -- after the
+    - cron: "0 17 * * 5"                  # digest BACKSTOP: Friday 22:30 IST. The
+                                          # Render worker now sends it at 21:00; this
+                                          # only fires if the worker missed it, and
+                                          # run_digest_if_due() skips when today's
+                                          # snapshot already exists, so no double send.
+                                          # (was "30 15 * * 5" -- Friday 21:00 IST -- after the
                                           # 20:00/20:30 data jobs, so it computes on
                                           # tonight's closes; Lakshmi plans Saturdays
     - cron: "30 14 * * 1-5"               # bhavcopy: 20:00 IST, after NSE/BSE publish EOD files
@@ -224,7 +229,7 @@ jobs:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
     # "Send the Sunday digest right now?" tick-box (GitHub sometimes drops
     # scheduled runs entirely -- this is the recovery button for that).
-    if: github.event.schedule == '30 15 * * 5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
+    if: github.event.schedule == '0 17 * * 5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -232,7 +237,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: python alerts.py digest
+      - run: python alerts.py digest-if-due
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
