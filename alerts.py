@@ -3649,8 +3649,7 @@ def run_digest_if_due() -> bool:
     if digest_already_sent(client):
         print("[digest] email already delivered today — skipping (no double send)")
         return False
-    if run_digest():
-        _mark_digest_sent(client)
+    if run_digest():          # marks delivery itself
         return True
     print("[digest] not marked as delivered — a later attempt will retry")
     return False
@@ -3718,7 +3717,15 @@ def run_digest():
                                    label="Vishal", telegram=False))
     # True only when every email we tried actually left the building. A digest the
     # reconciliation guard blocked returns None, which correctly counts as not-sent.
-    return bool(results) and all(r is True for r in results)
+    ok = bool(results) and all(r is True for r in results)
+    # Record delivery HERE, not in the caller. The manual force-send path calls
+    # run_digest directly, so marking in run_digest_if_due only meant a hand-
+    # triggered rescue delivered the email and left no trace of it — which would
+    # have had the backstop send a duplicate 30 minutes later (28-Aug-2026).
+    # Whoever sends it, the send is what gets recorded.
+    if ok:
+        _mark_digest_sent(client)
+    return ok
 
 
 def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
