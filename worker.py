@@ -28,6 +28,9 @@ reused for every 60s cycle — the loop only fetches a cheap live quote.
 
 ENV: SUPABASE_URL, SUPABASE_SERVICE_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
      ANTHROPIC_API_KEY (optional — filing summaries)
+     RESEND_API_KEY + DIGEST_EMAILS — REQUIRED since the weekly digest moved here
+       (28-Aug-2026). Without them the digest builds, posts its Telegram teaser and
+       sends NO EMAIL: exactly what happened the first Friday it ran here.
      ALERTS_DRY_RUN=1  -> print what WOULD be sent, write nothing (safe first run)
 """
 from __future__ import annotations

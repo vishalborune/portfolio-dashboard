@@ -3604,23 +3604,40 @@ def last_friday(d: date = None) -> date:
     return d - timedelta(days=(d.weekday() - 4) % 7)
 
 
-def digest_already_stored(client, day: date = None) -> bool:
-    """Has this Friday's digest already completed? True when a digest_history
-    snapshot exists for `day` for EVERY portfolio we report on.
+DIGEST_MARKER = "__digest_email__"
 
-    The snapshot is written at the end of a successful digest, so its presence is
-    the honest 'this already went out' marker — and it makes the worker and the
-    GitHub backstop safe to run side by side, exactly like filings_seen does for
-    filings. If the reconciliation guard BLOCKED the digest, no snapshot was
-    stored, so this correctly returns False and the next attempt retries."""
+
+def digest_already_sent(client, day: date = None) -> bool:
+    """Did the digest EMAIL actually go out today?
+
+    Deliberately NOT based on the digest_history snapshot. On 28-Aug-2026 the
+    worker built the digest, sent the Telegram teaser, stored the snapshot — and
+    delivered no email, because RESEND_API_KEY is absent from the worker's env.
+    The snapshot's presence therefore proves the digest was COMPUTED, not that
+    anyone received it, and using it as the dedup key silently suppressed the
+    backstop that would have rescued the send.
+
+    So the marker is written only after send_email returns True, in
+    entry_alert_log — the same dedup table the morning digests use."""
     day = day or date.today()
     try:
-        rows = (client.table("digest_history").select("portfolio_id")
-                .eq("snap_date", day.isoformat()).execute().data or [])
+        rows = (client.table("entry_alert_log").select("ticker")
+                .eq("alert_date", day.isoformat())
+                .eq("ticker", DIGEST_MARKER).execute().data or [])
+        return bool(rows)
     except Exception as e:
-        print(f"⚠️ [digest] could not check today's snapshots ({e}) — assuming not sent")
+        print(f"⚠️ [digest] could not check today's delivery marker ({e}) — "
+              f"assuming NOT sent (a duplicate beats a missing digest)")
         return False
-    return {int(r["portfolio_id"]) for r in rows} >= set(PF_NAME)
+
+
+def _mark_digest_sent(client):
+    try:
+        client.table("entry_alert_log").upsert({
+            "ticker": DIGEST_MARKER, "grp": "all",
+            "alert_date": date.today().isoformat(), "kind": "DIGEST"}).execute()
+    except Exception as e:
+        print(f"⚠️ [digest] could not write the delivery marker: {e}")
 
 
 def run_digest_if_due() -> bool:
@@ -3629,11 +3646,14 @@ def run_digest_if_due() -> bool:
     has now dropped the Friday digest outright (28-Aug-2026, Vishal got nothing),
     the same best-effort behaviour that moved the live alerts onto the worker."""
     client = sb()
-    if digest_already_stored(client):
-        print("[digest] already sent and stored today — skipping (no double send)")
+    if digest_already_sent(client):
+        print("[digest] email already delivered today — skipping (no double send)")
         return False
-    run_digest()
-    return True
+    if run_digest():
+        _mark_digest_sent(client)
+        return True
+    print("[digest] not marked as delivered — a later attempt will retry")
+    return False
 
 
 def run_snapshot_refresh():
@@ -3677,7 +3697,10 @@ def run_digest():
     one email, the Lakshmi+Abinaya book in another, so neither email carries the
     other's (long) all-holdings states table. Both go to DIGEST_EMAILS. The
     Telegram TEASER rides ONLY the Lakshmi/Abinaya email (Vishal opted out of
-    Telegram). Each call stores its portfolios' weekly digest_history snapshots."""
+    Telegram). Each call stores its portfolios' weekly digest_history snapshots.
+
+    Returns True only if EVERY email was actually delivered — the caller uses that
+    to decide whether to mark this week as done."""
     client = sb()
     all_holdings = get_holdings(client)
     if all_holdings.empty:
@@ -3686,10 +3709,16 @@ def run_digest():
     vis = [p for p, g in PF_GROUP.items() if g == "vishal"]
     hl = all_holdings[all_holdings["portfolio_id"].isin(lak)]
     hv = all_holdings[all_holdings["portfolio_id"].isin(vis)]
+    results = []
     if not hl.empty:
-        _digest_for(client, hl, tg_pf_ids=lak, label="Lakshmi & Abinaya", telegram=True)
+        results.append(_digest_for(client, hl, tg_pf_ids=lak,
+                                   label="Lakshmi & Abinaya", telegram=True))
     if not hv.empty:
-        _digest_for(client, hv, tg_pf_ids=[], label="Vishal", telegram=False)
+        results.append(_digest_for(client, hv, tg_pf_ids=[],
+                                   label="Vishal", telegram=False))
+    # True only when every email we tried actually left the building. A digest the
+    # reconciliation guard blocked returns None, which correctly counts as not-sent.
+    return bool(results) and all(r is True for r in results)
 
 
 def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
@@ -4071,8 +4100,19 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
         trends vs last week's snapshot</div>
     </div>"""
 
-    send_email(f"Weekly Portfolio Digest{f' ({label})' if label else ''} — "
-               f"{today.strftime('%d %b')}", html)
+    # send_email returns False on failure (it never raises) — CHECK it. The
+    # worker sent the Telegram teaser fine on 28-Aug-2026 and silently delivered
+    # no email at all, because RESEND_API_KEY is not in the worker's env. The
+    # digest then stored its snapshot and the dedup guard concluded "already
+    # sent", which would have suppressed the backstop too. A success marker must
+    # never be written on a failure.
+    email_ok = send_email(
+        f"Weekly Portfolio Digest{f' ({label})' if label else ''} — "
+        f"{today.strftime('%d %b')}", html)
+    if not email_ok:
+        print(f"⚠️ [digest] EMAIL NOT SENT for '{label or 'all'}' — check "
+              f"RESEND_API_KEY / DIGEST_EMAILS in this environment. The digest "
+              f"will be retried; nothing is marked as delivered.")
 
     # compact Telegram version of the same review
     try:
@@ -4120,6 +4160,9 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
 
 
 # ---------------------------------------------------------------------------
+
+    return email_ok
+
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "states"

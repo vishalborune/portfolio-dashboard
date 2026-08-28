@@ -237,7 +237,16 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: python alerts.py digest-if-due
+      # Scheduled run = backstop, so it defers if the worker already delivered.
+      # The manual tick-box FORCES a send: a human pressing the button means
+      # "send it now", and on 28-Aug-2026 the guard would otherwise have refused
+      # the very rescue that was needed.
+      - run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python alerts.py digest
+          else
+            python alerts.py digest-if-due
+          fi
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

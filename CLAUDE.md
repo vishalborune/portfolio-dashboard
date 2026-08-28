@@ -354,6 +354,18 @@ switch sources without disclosure.
   dedup principle as `filings_seen`. Because the snapshot is written only on a SUCCESSFUL
   digest, a blocked run correctly leaves the guard open so the next attempt retries.
   CLI: `python alerts.py digest-if-due` (the raw `digest` mode still force-sends).
+  **THE WORKER NEEDS `RESEND_API_KEY` + `DIGEST_EMAILS` IN ITS RENDER ENV.** Its original
+  env had only SUPABASE/TELEGRAM/ANTHROPIC, so on the first Friday it ran the digest it
+  posted the Telegram teaser and delivered NO EMAIL. Worse, it stored the snapshot anyway
+  and the dedup guard concluded "already sent", which would have suppressed the 22:30
+  backstop too.
+  **Dedup is therefore keyed on DELIVERY, not on the snapshot** — `entry_alert_log`
+  ticker `__digest_email__`, written only after `send_email` returns True. The snapshot
+  proves the digest was COMPUTED; only the marker proves someone received it.
+  `send_email` returns False and never raises, so its result MUST be checked — this is the
+  same class of bug as `send_telegram`'s documented return-False contract.
+  The manual `send_digest_now` tick-box FORCE-sends (bypasses the guard): a human pressing
+  the button means "send it now", and the guard would otherwise refuse the rescue.
 - **Friday 21:00 IST**: weekly digest (moved from Sunday per Lakshmi's
   request — he plans portfolio strategy on Saturdays)
 - Manual tick-boxes on `workflow_dispatch`: bhavcopy-backfill,
