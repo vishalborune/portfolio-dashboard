@@ -29,9 +29,37 @@ def _client() -> Client:
     return create_client(url, key)
 
 
+# Caches holding data the USER edits. Only these are dropped after a write.
+_USER_EDITED_CACHES = (
+    "_get_realised_cached", "_get_watchlist_cached", "_get_notes_cached",
+    "_get_transactions_cached", "_get_journal_cached",
+)
+
+
 def _bust():
-    """Invalidate all cached reads after a write."""
-    st.cache_data.clear()
+    """Invalidate the cached reads a write could have changed — and ONLY those.
+
+    This used to be st.cache_data.clear(), which wipes EVERY cache in the app,
+    including the expensive market-data ones: signals.fetch_weekly (4h),
+    states_for_holdings (4h), fetch_entry_zones (20m), fetch_live_prices,
+    fundamentals and delivery %. So saving a single watchlist support level threw
+    away three years of weekly bars for all 73 tickers and the next render
+    refetched the lot from Yahoo — which is what made bulk editing unusable
+    (Vishal, 01-Sep-2026: "everytime a stock is amended it takes so much time to
+    load again").
+
+    Those caches depend on MARKET data, not on what the user just typed. A price
+    does not change because a target was edited. Fundamentals and delivery % are
+    refreshed by the nightly jobs, and snapshots by the Friday digest, so none of
+    them belong in a post-write invalidation either."""
+    for name in _USER_EDITED_CACHES:
+        fn = globals().get(name)
+        if fn is None:
+            continue
+        try:
+            fn.clear()
+        except Exception:
+            pass          # a cache that won't clear must never block a save
 
 
 def _iso(d):

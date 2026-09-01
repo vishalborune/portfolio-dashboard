@@ -108,6 +108,21 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    OLD unadjusted split/bonus — the detector will flag it on the next daily run,
    so act on that flag (don't let it recur silently every run).
 
+## Dashboard performance: `db._bust()` must NOT clear market caches (01-Sep-2026)
+It used to call `st.cache_data.clear()`, which drops EVERY cache in the app — including
+`signals.fetch_weekly` (4h), `states_for_holdings` (4h), `fetch_entry_zones` (20m),
+`fetch_live_prices`, fundamentals and delivery %. So saving ONE watchlist support level
+threw away 3 years of weekly bars for all 73 tickers and the next render refetched the
+lot from Yahoo. Vishal: *"everytime a stock is amended it takes so much time to load
+again"* — bulk editing was effectively impossible.
+Now it clears only `_USER_EDITED_CACHES` (realised, watchlist, notes, transactions,
+journal). Market data doesn't change because a target price was typed; fundamentals and
+delivery % are refreshed by the nightly jobs and snapshots by the Friday digest, so none
+of them belong in a post-write invalidation. **When adding a new cached DB reader that
+the USER edits, add its name to that tuple** — and never reintroduce a blanket clear.
+Note this also compounded the Yahoo-blocked outage: every edit triggered a fresh
+~73-ticker history storm from the 512 MB web service.
+
 ## Architecture: portfolio-scoping
 Every table has `portfolio_id`. Alerts aggregate per (group, ticker) so a
 stock BOTH Lakshmi and Abinaya hold gets ONE Telegram message tagged
