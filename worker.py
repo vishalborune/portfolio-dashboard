@@ -113,6 +113,20 @@ def main():
           f"{FILINGS_OPEN}-{FILINGS_CLOSE} IST")
     print("=" * 68)
 
+    # Startup credential check. The worker ran the digest for the first time on
+    # 28-Aug-2026, posted its Telegram teaser, and delivered NO EMAIL because
+    # RESEND_API_KEY was not in its env — and nobody could have known until the
+    # email failed to arrive. So say it plainly at boot, where the Render log
+    # shows it immediately, instead of discovering it once a week at 21:00.
+    import os as _os
+    _mail = bool(_os.environ.get("RESEND_API_KEY")) and bool(_os.environ.get("DIGEST_EMAILS"))
+    print(f"[worker] telegram: {'configured' if _os.environ.get('TELEGRAM_BOT_TOKEN') else 'MISSING'}"
+          f" | email (weekly digest): {'configured' if _mail else 'NOT CONFIGURED'}")
+    if not _mail:
+        print("⚠️ [worker] RESEND_API_KEY / DIGEST_EMAILS missing — the Friday digest "
+              "will post its Telegram teaser and send NO EMAIL. Add both in the "
+              "Render service's Environment.")
+
     client = alerts.sb()
     levels, wema, levels_day = {}, {}, None
     last_live = last_nse = last_bse = 0.0
