@@ -628,6 +628,46 @@ def quality_flags(snap: dict) -> list:
     return flags
 
 
+def ttm_metrics(snap: dict) -> dict:
+    """Trailing-twelve-month revenue, EBITDA and operating margin.
+
+    Prefers screener's own **TTM** column on the annual P&L — it is already the
+    right 12 months and, crucially, it is correct for HALF-YEARLY reporters (most
+    BSE SME names) where naively summing "the last 4 quarters" would actually sum
+    two years. Falls back to summing the trailing quarters only when there is no
+    TTM column, and only when those quarters really do span ~12 months.
+
+    'Operating Profit' on screener is Sales minus Expenses — EBITDA before other
+    income, which is the number Lakshmi reads and the one the results alerts
+    already use. Returns {} rather than a guess when it cannot be established."""
+    ann = snap.get("annual") or []
+    ttm = next((a for a in ann if str(a.get("period")).strip().upper() == "TTM"), None)
+    if ttm and ttm.get("op_profit") is not None:
+        rev, eb = ttm.get("sales"), ttm.get("op_profit")
+        return {"revenue_ttm_cr": rev, "ebitda_ttm_cr": eb,
+                "opm_ttm_pct": (round(eb / rev * 100, 2) if rev else ttm.get("opm")),
+                "ttm_basis": "screener TTM column"}
+
+    qs = [q for q in (snap.get("quarterly") or [])
+          if q.get("sales") is not None and q.get("op_profit") is not None]
+    if len(qs) < 2:
+        return {}
+    # How many periods make a year here? Quarterly -> 4, half-yearly -> 2.
+    gap = _months_apart(qs[-2].get("period"), qs[-1].get("period"))
+    n = 4 if gap == 3 else (2 if gap == 6 else None)
+    if not n or len(qs) < n:
+        return {}
+    window = qs[-n:]
+    span = _months_apart(window[0].get("period"), window[-1].get("period"))
+    if span != 12 - gap:          # the window must really cover ~12 months
+        return {}
+    rev = sum(q["sales"] for q in window)
+    eb = sum(q["op_profit"] for q in window)
+    return {"revenue_ttm_cr": round(rev, 2), "ebitda_ttm_cr": round(eb, 2),
+            "opm_ttm_pct": (round(eb / rev * 100, 2) if rev else None),
+            "ttm_basis": f"sum of last {n} periods"}
+
+
 def snapshot(ticker: str, expected_name: str = "") -> dict:
     """Everything we can prove about one company from screener, in one call.
     {} when the page is unusable — callers must treat that as 'unknown', never

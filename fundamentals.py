@@ -35,6 +35,8 @@ import time
 import requests
 from supabase import create_client
 
+import screener_data
+
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -83,68 +85,46 @@ def tracked_tickers(client) -> dict:
 
 
 def fetch_one(symbol: str, expected_name: str = "") -> dict:
-    """Market Cap / PE / Book Value / Sector for one company. Tries
-    consolidated first, falls back to standalone. Returns {} on failure.
+    """Market Cap / PE / Book Value / Sector — PLUS ROCE, ROE, the screener CMP
+    and TTM revenue/EBITDA/OPM. {} on failure.
 
-    IDENTITY CHECK (v3, 15-Jul-2026): slugs can collide -- /company/TCL/
-    might be a different company than Thaai Castings. If expected_name is
-    given, the page's <h1> company name must share at least one
-    significant word with it, else the fetch is REJECTED and logged.
-    Storing another company's numbers against our stock is the
-    wrong-instrument bug all over again; a blank beats a lie."""
-    for view in ("consolidated", ""):
-        url = BASE.format(sym=symbol, view=view).replace("//", "/").replace("https:/", "https://")
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-            if r.status_code != 200:
-                continue
-            text = r.text
-            # The top-ratios block is a <li> list: "<span class="name">Market Cap</span> ... <span class="number">41,599</span>"
-            def grab(label):
-                # Tempered pattern: the number must appear BEFORE the next
-                # </li>. Without this, a stock whose P/E is blank on screener
-                # made the regex run into the NEXT ratio and grab its number
-                # (caught live 15-Jul-2026: Cockerill "PE 0.07" was actually
-                # the following ratio's value). Wrong number > missing number
-                # is the worst failure mode for financial data.
-                pat = rf'"name"[^>]*>\s*{re.escape(label)}\s*</span>(?:(?!</li>).)*?"number"[^>]*>\s*([\d,\.]+)'
-                m = re.search(pat, text, re.DOTALL)
-                return float(m.group(1).replace(",", "")) if m else None
+    Delegates to screener_data, which parses the same page far more thoroughly
+    and carries the identity gate (whole-word company-name match, so a colliding
+    slug can never store another company's numbers). One parser, one set of
+    rules — the alternative is two scrapers of the same page drifting apart,
+    which is the failure this project keeps re-learning.
 
-            # Identity gate BEFORE trusting any numbers
-            if expected_name:
-                hm = re.search(r"<h1[^>]*>([^<]+)</h1>", text)
-                page_name = (hm.group(1) if hm else "").upper()
-                stop = {"LIMITED", "LTD", "INDIA", "INDUSTRIES", "THE", "AND", "&"}
-                want = {w for w in re.split(r"[^A-Z0-9]+", expected_name.upper())
-                        if len(w) >= 3 and w not in stop}
-                if want and not any(w in page_name for w in want):
-                    print(f"  [fundamentals] identity MISMATCH for slug '{symbol}': "
-                          f"page is '{page_name.title().strip()}', expected ~'{expected_name}'. "
-                          f"Rejected -- add correct slug to SLUG_OVERRIDES.")
-                    return {}
-            mcap = grab("Market Cap")
-            pe = grab("Stock P/E")
-            bv = grab("Book Value")
-            if mcap is None and pe is None and bv is None:
-                continue  # this view had nothing usable, try the other
-            # Sector: screener shows it as a breadcrumb link near "Peer comparison"
-            sector = None
-            sm = re.search(r'"Broad Sector"[^>]*>([^<]+)<', text)
-            if sm:
-                sector = sm.group(1).strip()
-            return {"market_cap_cr": mcap, "pe": pe, "book_value": bv, "sector": sector}
-        except Exception:
-            continue
-    return {}
+    NOTE it returns `cmp` straight off the page. That is what makes P/B possible
+    without Yahoo — see store()."""
+    snap = screener_data.snapshot(symbol, expected_name)
+    if not snap:
+        return {}
+    r = snap.get("ratios") or {}
+    out = {
+        "market_cap_cr": r.get("market_cap_cr"),
+        "pe": r.get("pe"),
+        "book_value": r.get("book_value"),
+        "sector": r.get("sector") or r.get("industry"),
+        "roce": r.get("roce"),
+        "roe": r.get("roe"),
+        "cmp": r.get("cmp"),
+    }
+    out.update(screener_data.ttm_metrics(snap))
+    return out
 
 
 def store(client, ticker: str, data: dict, cmp_price: float = None):
+    # P/B needs a price. It used to come from Yahoo's fast_info, which House Rule
+    # #1 says is exactly what gets blocked from datacenter IPs — so on Render it
+    # returned nothing and `pb` was stored NULL for EVERY ticker (0 of 112 when
+    # audited 01-Sep-2026). screener's own page carries the Current Price, so we
+    # take it from the page we have already fetched and drop the Yahoo call.
+    price = data.get("cmp") or cmp_price
     pb = None
-    if data.get("book_value") and cmp_price:
+    if data.get("book_value") and price:
         try:
-            pb = round(cmp_price / data["book_value"], 2)
-        except (ZeroDivisionError, TypeError):
+            pb = round(float(price) / float(data["book_value"]), 2)
+        except (ZeroDivisionError, TypeError, ValueError):
             pb = None
     payload = {
         "ticker": ticker,
@@ -153,6 +133,11 @@ def store(client, ticker: str, data: dict, cmp_price: float = None):
         "book_value": data.get("book_value"),
         "pb": pb,
         "sector": data.get("sector"),
+        "roce": data.get("roce"),
+        "roe": data.get("roe"),
+        "revenue_ttm_cr": data.get("revenue_ttm_cr"),
+        "ebitda_ttm_cr": data.get("ebitda_ttm_cr"),
+        "opm_ttm_pct": data.get("opm_ttm_pct"),
     }
     try:
         client.table("fundamentals_daily").upsert(payload, on_conflict="ticker").execute()
@@ -166,11 +151,9 @@ def update_all(client):
         print("[fundamentals] no non-SME holdings found — nothing to fetch")
         return
 
-    # Need live CMP to derive P/B — reuse whatever's already in sme_daily_prices
-    # is irrelevant here (these are non-SME); pull a quick Yahoo quote per
-    # ticker just for the price used in the P/B division. Best-effort: if it
-    # fails, P/B is simply left null rather than guessed.
-    import yfinance as yf
+    # No Yahoo call here any more: the price used for P/B comes off the same
+    # screener page we already fetch (see store()). That removes the one
+    # datacenter-IP-blocked dependency this job had.
     ok, failed = 0, []
     for ticker, meta in tracked.items():
         data = fetch_one(meta["slug"], expected_name=meta["display"])
@@ -180,13 +163,7 @@ def update_all(client):
             failed.append(ticker)
             time.sleep(0.5)
             continue
-        cmp_price = None
-        try:
-            fi = yf.Ticker(ticker).fast_info
-            cmp_price = fi.get("last_price") if hasattr(fi, "get") else getattr(fi, "last_price", None)
-        except Exception:
-            pass
-        store(client, ticker, data, cmp_price)
+        store(client, ticker, data)
         ok += 1
         time.sleep(0.5)   # polite pacing on screener.in
     print(f"[fundamentals] stored {ok}/{len(tracked)} tickers"

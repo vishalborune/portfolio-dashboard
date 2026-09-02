@@ -492,13 +492,17 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
     daily by fundamentals.py (scrapes screener.in, a source that answers
     India-based requests fine). Instant, no live dependency, no crash risk.
 
-    EV/EBITDA isn't in this table (unreliable on screener's free page
-    across companies) -- shows as "--" same as before, now honestly
-    rather than silently. Industry isn't tracked either (only Sector).
+    EBITDA is now REAL (01-Sep-2026): screener_data parses the annual P&L's TTM
+    column, so "EBITDA (TTM)" and "OPM %" are actual figures rather than the
+    permanent "--" they used to be. EV/EBITDA is still not shown — that needs
+    enterprise value (debt + cash), which is a balance-sheet join we don't do yet;
+    a blank beats a wrong multiple.
     """
     row_defaults = {"Sector": "Unknown", "Industry": "Unknown",
                     "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
-                    "P/B": np.nan, "EV/EBITDA": np.nan, "Book Value": np.nan}
+                    "P/B": np.nan, "Book Value": np.nan,
+                    "Revenue (TTM Cr)": np.nan, "EBITDA (TTM Cr)": np.nan,
+                    "OPM %": np.nan, "ROCE %": np.nan, "ROE %": np.nan}
     if not tickers:
         return pd.DataFrame(columns=["Ticker", *row_defaults])
     try:
@@ -521,6 +525,12 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
                     row["P/B"] = r["pb"]
                 if pd.notna(r.get("book_value")):
                     row["Book Value"] = r["book_value"]
+                for col, key in (("Revenue (TTM Cr)", "revenue_ttm_cr"),
+                                 ("EBITDA (TTM Cr)", "ebitda_ttm_cr"),
+                                 ("OPM %", "opm_ttm_pct"),
+                                 ("ROCE %", "roce"), ("ROE %", "roe")):
+                    if pd.notna(r.get(key)):
+                        row[col] = r[key]
                 if r.get("sector"):
                     row["Sector"] = r["sector"]
         rows.append(row)
@@ -753,7 +763,8 @@ def tab_holdings(enriched: pd.DataFrame):
             ],
             "🔬 Fundamentals view": [
                 "Short Name", "Ticker", "CMP", "Sector", "Market Cap (Cr)",
-                "PE (live)", "P/B", "EV/EBITDA", "Allocation %",
+                "PE (live)", "P/B", "Revenue (TTM Cr)", "EBITDA (TTM Cr)",
+                "OPM %", "ROCE %", "ROE %", "Allocation %",
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA",
@@ -761,7 +772,8 @@ def tab_holdings(enriched: pd.DataFrame):
                 "Deliv % (last)", "Deliv % (4wk)",
                 "quantity", "purchase_cost", "Invested", "CMP",
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
-                "Sector", "Market Cap (Cr)", "PE (live)", "P/B", "EV/EBITDA",
+                "Sector", "Market Cap (Cr)", "PE (live)", "P/B",
+                "Revenue (TTM Cr)", "EBITDA (TTM Cr)", "OPM %", "ROCE %", "ROE %",
             ],
         }
 
@@ -839,7 +851,9 @@ def tab_holdings(enriched: pd.DataFrame):
             "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
             "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
-            "PE (live)": "{:.2f}", "P/B": "{:.2f}", "EV/EBITDA": "{:.2f}",
+            "PE (live)": "{:.2f}", "P/B": "{:.2f}",
+            "Revenue (TTM Cr)": "{:,.0f}", "EBITDA (TTM Cr)": "{:,.0f}",
+            "OPM %": "{:.1f}%", "ROCE %": "{:.1f}%", "ROE %": "{:.1f}%",
         }, na_rep="—")
         if pnl_cols:
             styled = styled.map(color_pnl, subset=pnl_cols)

@@ -397,8 +397,27 @@ long-run self-scoring mechanism — treat it as sacred, don't let it silently
 break.
 
 ## Known issues / backlog (as of 21-Jul-2026)
-- EV/EBITDA not available (screener.in free page doesn't reliably expose it
-  — would need a balance-sheet parser)
+- **EBITDA IS NOW REAL (01-Sep-2026)** — was permanently blank because
+  `fundamentals_daily` had no such column. `fundamentals.fetch_one` now delegates to
+  `screener_data.snapshot` (one parser for that page, not two drifting ones) and stores
+  **ROCE, ROE, Revenue/EBITDA TTM and OPM%**. `screener_data.ttm_metrics` prefers
+  screener's own TTM column and falls back to summing trailing periods — using the
+  ACTUAL reporting gap, so a half-yearly SME sums 2 periods, not 4 (verified: CWD).
+  Needs a one-time migration:
+  ```sql
+  alter table fundamentals_daily
+    add column if not exists roce numeric, add column if not exists roe numeric,
+    add column if not exists revenue_ttm_cr numeric,
+    add column if not exists ebitda_ttm_cr numeric,
+    add column if not exists opm_ttm_pct numeric;
+  ```
+- **P/B was NULL for all 112 tickers** — `fundamentals.update_all` took the price from
+  Yahoo `fast_info`, the exact call House Rule #1 says is blocked from datacenter IPs, so
+  on Render it returned None and P/B was never stored. It now uses screener's own
+  "Current Price" off the page already fetched; the Yahoo call is gone entirely. (The
+  dashboard had been masking this by computing CMP/BookValue at render time.)
+- EV/EBITDA still not shown: it needs enterprise value (debt + cash), a balance-sheet
+  join we don't do. A blank beats a wrong multiple.
 - Young listings show "INSUFFICIENT DATA" state until 45+ weeks of price
   history exist — self-heals, no action needed
 - Render free-tier stability under real load — watch for exit-139 crashes;
