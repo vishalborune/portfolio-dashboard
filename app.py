@@ -1970,7 +1970,15 @@ def main():
 
     portfolio_switcher()
 
-    if st.sidebar.button("🔄 Refresh prices"):
+    # Clears EVERY cache, not just prices — including the 4-hour weekly-bar and
+    # state caches. That matters because a fetch failure gets CACHED: if Yahoo is
+    # unreachable when a state is computed, the resulting blank sticks for four
+    # hours even after the source recovers. This button is the escape hatch, so
+    # it is named for what it actually does.
+    if st.sidebar.button("🔄 Refresh all data",
+                         help="Reloads prices, states and EMAs from source. Use this "
+                              "if a stock shows NO DATA or a blank EMA — a failed "
+                              "fetch stays cached for up to 4 hours otherwise."):
         st.cache_data.clear()
         st.rerun()
 
@@ -2044,7 +2052,7 @@ def main():
             f"⚠️ **Yahoo is serving outdated prices for {len(stale_names)} stock"
             f"{'s' if len(stale_names) > 1 else ''}:** {', '.join(stale_names)}. "
             f"Portfolio totals will differ from INDmoney by these stocks' last-day moves. "
-            f"Usually self-corrects within a few hours; try 🔄 Refresh prices later."
+            f"Usually self-corrects within a few hours; try 🔄 Refresh all data."
         )
 
     # Per-stock price provenance — hidden by default; enable from the sidebar
