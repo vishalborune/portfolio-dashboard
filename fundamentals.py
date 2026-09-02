@@ -161,11 +161,11 @@ def update_all(client):
             print(f"  [fundamentals] no data for {ticker} via slug '{meta['slug']}' — "
                   f"empty, unreachable, or identity mismatch (see above)")
             failed.append(ticker)
-            time.sleep(0.5)
+            time.sleep(1.5)
             continue
         store(client, ticker, data)
         ok += 1
-        time.sleep(0.5)   # polite pacing on screener.in
+        time.sleep(1.5)   # polite pacing on screener.in (429s at 0.5s)
     print(f"[fundamentals] stored {ok}/{len(tracked)} tickers"
           + (f" — failed: {failed}" if failed else ""))
 

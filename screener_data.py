@@ -232,6 +232,14 @@ def fetch_page(slug: str, expected_name: str = "") -> tuple:
                   f"trying the other view")
             continue
         candidates.append((latest, basis, r.text))
+        # SHORT-CIRCUIT on a fresh first view. Fetching both views for every
+        # ticker doubled our request rate and screener started answering 429 on
+        # a 66-ticker run (01-Sep-2026). The staleness guard exists to catch a
+        # DEAD view (GIPCL's consolidated stub ends in 2019) — once a view is
+        # demonstrably current there is nothing for the second fetch to improve,
+        # so stop. Politeness is part of owning this source.
+        if (_date.today() - latest).days <= MAX_STALE_DAYS:
+            return r.text, basis
 
     if not candidates:
         print(f"  [screener] no usable page for slug '{slug}' (no view had a "
