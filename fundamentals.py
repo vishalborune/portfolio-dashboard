@@ -54,6 +54,7 @@ SLUG_OVERRIDES = {
     "TRUECOLORS.BO": "544531",   # True Colors
     "LEHAR.BO": "532829",        # Lehar Footwears — BSE-only, slug = scrip code
     "SGRL.BO": "540737",         # Shree Ganesh Remedies — BSE-only, slug = scrip code
+    "PARMESHWAR.BO": "544330",   # Parmeshwar Metal — screener 404s on the symbol
 }
 
 
@@ -110,6 +111,35 @@ def fetch_one(symbol: str, expected_name: str = "") -> dict:
         "cmp": r.get("cmp"),
     }
     out.update(screener_data.ttm_metrics(snap))
+
+    # A company that STARTED consolidated reporting recently (E2E, caught
+    # 02-Sep-2026) can have a consolidated page whose quarterly table is live
+    # but whose ratio strip is still BLANK — screener hasn't computed the
+    # consolidated ratios yet. The standalone strip has real values, so when
+    # the winning view gives us NONE of BV/ROCE/ROE, spend one extra request
+    # on the standalone strip and fill only the missing keys. Basis stays
+    # honest: only ratio-strip fields (point-in-time) are merged, never the
+    # quarterly/TTM tables.
+    if (snap.get("basis") == "consolidated"
+            and out["book_value"] is None and out["roce"] is None
+            and out["roe"] is None):
+        try:
+            import requests as _rq
+            slug = screener_data.slug_for(symbol)
+            resp = _rq.get(f"https://www.screener.in/company/{slug}/",
+                           headers=screener_data.HEADERS, timeout=20)
+            if resp.status_code == 200 and screener_data._identity_ok(
+                    resp.text, expected_name):
+                alt = screener_data.top_ratios(resp.text)
+                for k in ("book_value", "roce", "roe"):
+                    if out[k] is None and alt.get(k) is not None:
+                        out[k] = alt[k]
+                if any(alt.get(k) is not None for k in ("book_value", "roce", "roe")):
+                    print(f"  [fundamentals] {symbol}: consolidated ratio strip "
+                          f"blank — BV/ROCE/ROE taken from standalone view")
+        except Exception as e:
+            print(f"  [fundamentals] {symbol}: standalone ratio fallback failed "
+                  f"({type(e).__name__}: {e}) — leaving blanks")
     return out
 
 

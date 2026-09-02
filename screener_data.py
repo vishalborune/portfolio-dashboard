@@ -58,6 +58,9 @@ SLUG_OVERRIDES = {
     # a separate TECHNOCRAF symbol, which is a DIFFERENT company — adding that
     # one would have quietly watched the wrong stock.)
     "TIIL.NS": "532804",
+    # Parmeshwar Metal: screener 404s on the symbol slug; BSE code verified in
+    # the bhavcopy (close 285.20 on 02-Sep-2026 matched our stored price).
+    "PARMESHWAR.BO": "544330",
 }
 
 _STOPWORDS = {"LIMITED", "LTD", "INDIA", "INDIAN", "THE", "AND", "&", "COMPANY"}
@@ -382,8 +385,11 @@ def top_ratios(page: str) -> dict:
     15-Jul-2026)."""
     out = {}
     for label, key in _TOP_LABELS.items():
+        # -? : a loss-maker's ROCE/ROE is NEGATIVE ('-0.51') and the old
+        # digits-only pattern silently read it as blank (caught on E2E,
+        # 02-Sep-2026) — a None where the truth is "capital is being burned".
         pat = (rf'"name"[^>]*>\s*{re.escape(label)}\s*</span>'
-               rf'(?:(?!</li>).)*?"number"[^>]*>\s*([\d,\.]+)')
+               rf'(?:(?!</li>).)*?"number"[^>]*>\s*(-?[\d,\.]+)')
         m = re.search(pat, page, re.DOTALL)
         out[key] = _num(m.group(1)) if m else None
     m = re.search(r'"Broad Sector"[^>]*>([^<]+)<', page)

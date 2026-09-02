@@ -63,6 +63,10 @@ BSE_SCRIP_OVERRIDES = {
     "TRUECOLORS": "544531", # True Colors (Abinaya) — BSE SME, scrip 544531
     "LEHAR": "532829",      # Lehar Footwears (Abinaya) — BSE mainboard
     "SGRL": "540737",       # Shree Ganesh Remedies (Abinaya) — BSE mainboard
+    # Alphabetic BSE tickers found silently skipped 02-Sep-2026 (same class
+    # of gap as bhavcopy's): codes read from the actual BSE bhavcopy file.
+    "PARMESHWAR": "544330",  # Parmeshwar Metal (Abinaya)
+    "SHUKRAPHAR": "524632",  # Shukra Pharma (Lakshmi; Vishal holds 524632)
 }
 
 
@@ -78,7 +82,7 @@ def _client():
 def tracked_symbols(client):
     """Two maps from the holdings table:
     nse: {'ADFFOODS': 'ADFFOODS.NS', ...}
-    bse: {'539997': '539997.BO', '543378': 'CWD-MS.BO', ...}  (scrip code -> dashboard ticker)
+    bse: {'539997': ['539997.BO'], ...}  (scrip code -> ALL dashboard tickers using it)
     """
     res = client.table("holdings").select("stock_name").execute()
     nse, bse = {}, {}
@@ -92,10 +96,15 @@ def tracked_symbols(client):
         m = re.search(r"\(XBOM:([^)]+)\)", name)
         if m:
             sym = m.group(1).strip()
+            # One scrip can back SEVERAL dashboard tickers — Shukra is held as
+            # XBOM:524632 by Vishal and XBOM:SHUKRAPHAR by Lakshmi. A plain
+            # {scrip: ticker} dict kept only the first, so the other person's
+            # row NEVER got delivery data (caught 03-Sep-2026). Fan out: every
+            # ticker sharing the scrip gets its own delivery_daily row.
             if sym.isdigit():
-                bse[sym] = f"{sym}.BO"
+                bse.setdefault(sym, []).append(f"{sym}.BO")
             elif sym in BSE_SCRIP_OVERRIDES:
-                bse[BSE_SCRIP_OVERRIDES[sym]] = f"{sym}.BO"
+                bse.setdefault(BSE_SCRIP_OVERRIDES[sym], []).append(f"{sym}.BO")
             else:
                 print(f"[delivery] BSE symbol '{sym}' has no scrip-code mapping — "
                       f"skipped. Add it to BSE_SCRIP_OVERRIDES to track it.")
@@ -138,7 +147,21 @@ def extract_nse_rows(df: pd.DataFrame, symbols: dict, d: date) -> list:
         try:
             deliv_pct = float(r.get("DELIV_PER"))
         except (TypeError, ValueError):
-            continue  # '-' = no delivery reporting for this series
+            # '-' in the delivery columns. For series BE/BT (Trade-for-Trade)
+            # that is NOT missing data: every T2T trade settles as delivery by
+            # SEBI rule, so a delivery RATIO doesn't apply and NSE prints '-'.
+            # Store the factual 100% rather than skipping — the permanent flat
+            # 100% IS the tell that a stock sits in the surveillance segment.
+            # (Menon, Sterlite, Bliss GVS and Venus Remedies all sat blank for
+            # this reason; Venus "stopped" 12-Jun-2026 — the day it MOVED to BE.)
+            series = str(r.get("SERIES", "")).strip().upper()
+            if series in ("BE", "BT"):
+                qty = _num(r.get("TTL_TRD_QNTY"))
+                rows.append({"ticker": symbols[r["SYMBOL"]],
+                             "price_date": d.isoformat(),
+                             "deliv_pct": 100.0, "deliv_qty": qty,
+                             "traded_qty": qty})
+            continue
         rows.append({"ticker": symbols[r["SYMBOL"]], "price_date": d.isoformat(),
                      "deliv_pct": deliv_pct, "deliv_qty": _num(r.get("DELIV_QTY")),
                      "traded_qty": _num(r.get("TTL_TRD_QNTY"))})
@@ -196,10 +219,14 @@ def extract_bse_rows(df: pd.DataFrame, scrips: dict, d: date) -> list:
         deliv_pct = _num(r[c_pct])
         if deliv_pct is None:
             continue
-        rows.append({"ticker": scrips[code], "price_date": d.isoformat(),
-                     "deliv_pct": deliv_pct,
-                     "deliv_qty": _num(r[c_dqty]) if c_dqty else None,
-                     "traded_qty": _num(r[c_vol]) if c_vol else None})
+        tickers = scrips[code]
+        if isinstance(tickers, str):   # tolerate old-style single mapping
+            tickers = [tickers]
+        for t in tickers:
+            rows.append({"ticker": t, "price_date": d.isoformat(),
+                         "deliv_pct": deliv_pct,
+                         "deliv_qty": _num(r[c_dqty]) if c_dqty else None,
+                         "traded_qty": _num(r[c_vol]) if c_vol else None})
     return rows
 
 

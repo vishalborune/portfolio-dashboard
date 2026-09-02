@@ -882,7 +882,9 @@ def tab_holdings(enriched: pd.DataFrame):
         if deliv_cols:
             st.caption("Deliv % = share of traded quantity actually taken as delivery "
                        "(4wk = rolling average). High = genuine accumulation, low = intraday "
-                       "churn. Context only — it never changes any state or alert. "
+                       "churn. A flat 100% = NSE's T2T/BE surveillance segment, where every "
+                       "trade is compulsory delivery (Menon, Sterlite, Bliss GVS, Venus are "
+                       "there now). Context only — it never changes any state or alert. "
                        "Sourced from NSE/BSE official EOD files; — means no data yet for that stock.")
 
         # --- State detail expander: why is each stock in its state? ---
