@@ -148,6 +148,17 @@ WHY: Yahoo has blanked the dashboard repeatedly (states, EMAs and CMP all empty 
 DB-sourced columns rendered fine) and has dropped the latest session three times —
 false HFCL EXIT, wrong Today's P&L, and the digest reconcile false-block.
 
+**BACKFILL DONE (01-Sep-2026): 523/523 trading days, 39,048 rows, 8.8 min.**
+80/81 tickers now have >=`MIN_BHAV_DAILY_ROWS`(60) so bhavcopy WINS as the daily source
+the moment the read path flips; 73/81 have >=315 rows (enough for the 45-week state).
+The 8 below that are genuine recent listings (Indo-Mim 25 rows, Clean Max 133,
+Shadowfax 156, Advent 210) — they have all the history that exists.
+`store_prices` is BATCHED (one upsert per day, 0.10s for 80 rows); unbatched this
+backfill would have been ~39,000 sequential requests, ~78 min of pure latency.
+**Verifying it, I hit House Rule #1 myself:** `.limit(60000)` does NOT beat Supabase's
+silent 1,000-row cap, so a check showed "12 rows per ticker" and looked like total
+failure. Use `select(..., count='exact')` to count, never len() of a capped select.
+
 **PHASE 1 ONLY — the read path is NOT switched yet.** bhavcopy and Yahoo run in
 PARALLEL so the new data can be proven before anything depends on it (the project's own
 rule: prove a new source with a fast diagnostic first). Switching
