@@ -133,12 +133,18 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
         return bhav
     if not bhav.empty:
         print(f"  [signals] {ticker}: only {len(bhav)} bhavcopy week(s) "
-              f"(<{MIN_BHAV_WEEKS}) — using Yahoo until the backfill fills in")
+              f"(<{MIN_BHAV_WEEKS}) — trying Yahoo for deeper history")
     try:
         df = yf.download(ticker, period=period, interval="1wk",
                          progress=False, auto_adjust=False)
         if df.empty:
-            return pd.DataFrame()
+            # Yahoo gave nothing. Return whatever bhavcopy has rather than an
+            # empty frame: SOME real history beats none, and the caller labels a
+            # short series honestly as "BUILDING n/45w" instead of the misleading
+            # "NO PRICE DATA — fetch failed" this used to produce. Indo-Mim
+            # (listed 30-Jul-2026, 6 weeks) read as a fetch failure on Render
+            # purely because Yahoo is refused there (Vishal, 02-Sep-2026).
+            return bhav
         # yfinance returns MultiIndex columns for single ticker sometimes
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -445,6 +451,7 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
     FIRST (authoritative + now split/bonus-adjusted on read), Yahoo only for
     mainboard names it doesn't track. Empty df on failure. Returns a plain
     3-column frame {close, high, low}."""
+    _bhav_fallback = pd.DataFrame()      # short bhavcopy history, used if Yahoo has none
     # 1) bhavcopy (SME / Emerge / BSE-only). Was the silent gap: the old
     #    Yahoo-only path returned nothing for these, so their watchlist/holding
     #    entry zones never computed at all.
@@ -465,7 +472,14 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
                                      "low": d["low"].astype(float).to_numpy()},
                                     index=pd.to_datetime(d["price_date"]))
             print(f"  [signals] {ticker}: only {len(d)} bhavcopy day(s) "
-                  f"(<{MIN_BHAV_DAILY_ROWS}) — using Yahoo until the backfill fills in")
+                  f"(<{MIN_BHAV_DAILY_ROWS}) — trying Yahoo for deeper history")
+            _short = d.sort_values("price_date").tail(lookback)
+            _hi = _short["high"] if "high" in _short.columns else _short["close"]
+            _bhav_fallback = pd.DataFrame(
+                {"close": _short["close"].astype(float).to_numpy(),
+                 "high": _hi.astype(float).to_numpy(),
+                 "low": _short["low"].astype(float).to_numpy()},
+                index=pd.to_datetime(_short["price_date"]))
     except Exception:
         pass
     # 2) Yahoo (mainboard NSE names)
@@ -475,7 +489,8 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
         df = yf.download(ticker, period="2y", interval="1d",
                          progress=False, auto_adjust=False)
         if df is None or df.empty:
-            return pd.DataFrame()
+            # Prefer our own short history over nothing — see fetch_weekly.
+            return _bhav_fallback
 
         def _col(name):
             s = df[name]

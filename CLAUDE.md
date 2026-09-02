@@ -173,6 +173,23 @@ backfill would have been ~39,000 sequential requests, ~78 min of pure latency.
 silent 1,000-row cap, so a check showed "12 rows per ticker" and looked like total
 failure. Use `select(..., count='exact')` to count, never len() of a capped select.
 
+**PHASE 2 TURNED OUT TO BE DONE BY THE BACKFILL (02-Sep-2026).** `fetch_weekly` and
+`_fetch_daily` were ALREADY bhavcopy-first — they just required
+`MIN_BHAV_WEEKS`(20) / `MIN_BHAV_DAILY_ROWS`(60) before our data could win, and before
+the backfill nothing met that bar. Now every backfilled ticker carries ~100 weeks /
+~500 days, so our own data wins automatically. **Verified by monkeypatching
+`yf.download` to return empty (i.e. Render's blocked conditions): HFCL still resolves
+105 weekly + 260 daily bars and states MAINTAIN/ADD.** No code switch was needed.
+Yahoo now only supplies the intraday LIVE quote, which already falls back to the
+bhavcopy EOD close.
+
+**Empty-Yahoo no longer discards our own history.** Both fetchers used to `return
+pd.DataFrame()` when Yahoo came back empty — throwing away a short bhavcopy series they
+had already loaded. On Render that turned Indo-Mim (listed 30-Jul-2026, 6 weeks) into
+"⚠️ NO PRICE DATA — fetch failed" when the honest answer was "BUILDING 6/45w". Both now
+fall back to the short series: some real history beats none, and the BUILDING label
+states the shortfall honestly.
+
 **PHASE 1 ONLY — the read path is NOT switched yet.** bhavcopy and Yahoo run in
 PARALLEL so the new data can be proven before anything depends on it (the project's own
 rule: prove a new source with a fast diagnostic first). Switching
