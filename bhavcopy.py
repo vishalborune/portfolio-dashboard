@@ -64,6 +64,16 @@ SME_STOCKS = {
     # Shree Ganesh Remedies -> bseindia.com/.../sgrl/540737 (also directly
     # confirmed BSE volume nonzero / NSE volume zero on a 3rd-party quote page).
     "LEHAR.BO":  {"exchange": "BSE", "name_hint": "LEHAR", "scrip_code": "532829"},
+    # Alphabetic BSE tickers (02-Sep-2026). These were SILENTLY skipped by
+    # tracked_universe, which could only resolve BSE names whose symbol IS the
+    # scrip code — so they had no stored price at all and their CMP showed None
+    # on the dashboard while everything else worked. Codes read straight out of
+    # the BSE bhavcopy (House Rule #5), not from a search:
+    #   PARMESHWAR -> 544330 (close 285.20 on 02-Sep, matches signals exactly)
+    #   SHUKRAPHAR -> 524632 (same company Vishal holds as XBOM:524632; Lakshmi
+    #                 holds it under the alphabetic symbol, so BOTH map here)
+    "PARMESHWAR.BO": {"exchange": "BSE", "name_hint": "PARMESHWAR", "scrip_code": "544330"},
+    "SHUKRAPHAR.BO": {"exchange": "BSE", "name_hint": "SHUKRAPHAR", "scrip_code": "524632"},
     "SGRL.BO":   {"exchange": "BSE", "name_hint": "SGRL", "scrip_code": "540737"},
     # Benchmark ETF proxies (20-Jul-2026): NSE discontinued the legacy
     # index CSV (their all-reports page: old formats dead w.e.f. 08-Jul-2024),
@@ -228,7 +238,7 @@ def tracked_universe(client) -> dict:
     merged over SME_STOCKS. SME entries WIN — their hand-written matching rules
     are more specific than anything derived from a ticker string."""
     import re as _re
-    out = {}
+    out, unresolved = {}, set()
     for table in ("holdings", "watchlist"):
         try:
             rows = client.table(table).select("stock_name").execute().data or []
@@ -251,7 +261,20 @@ def tracked_universe(client) -> dict:
                 if sym.isdigit():
                     out[ticker] = {"exchange": "BSE", "name_hint": sym,
                                    "scrip_code": sym}
+                elif ticker not in SME_STOCKS:
+                    # An alphabetic BSE symbol can't be matched to the bhavcopy,
+                    # which keys on scrip code. Say so LOUDLY: silently dropping
+                    # it is how Parmeshwar and Shukra ended up with no stored
+                    # price and a blank CMP, with nothing anywhere saying why
+                    # (02-Sep-2026). Fix = add a SME_STOCKS entry with the code
+                    # read from the BSE file.
+                    unresolved.add(ticker)
     out.update(SME_STOCKS)          # curated entries always win
+    unresolved -= set(out)
+    if unresolved:
+        print(f"⚠️ [bhavcopy] {len(unresolved)} BSE ticker(s) cannot be matched to "
+              f"the bhavcopy and will have NO stored price: {sorted(unresolved)}. "
+              f"Add each to SME_STOCKS with its scrip_code from the BSE file.")
     return out
 
 

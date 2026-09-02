@@ -139,6 +139,20 @@ was the 23-Jul filings bug: Vishal's holdings row processed first → Lakshmi
 silently got nothing). Every alert path aggregates per (group, ticker); run_filings
 was the one that regressed and is now fixed.
 
+**ALPHABETIC BSE TICKERS WERE SILENTLY SKIPPED (fixed 02-Sep-2026).**
+`tracked_universe` could only resolve a BSE name when its symbol IS the scrip code
+(`524632.BO`), because the BSE bhavcopy is matched by code. `XBOM:PARMESHWAR` and
+`XBOM:SHUKRAPHAR` therefore got NO stored price and showed **CMP = None** on the
+dashboard while their state and DMAs worked — because those come from Yahoo history,
+which does carry them. Vishal spotted it on Abinaya's book.
+Fixed by registering both in `SME_STOCKS` with codes read from the real BSE file
+(House Rule #5): **PARMESHWAR -> 544330**, **SHUKRAPHAR -> 524632** (the same company
+Vishal holds as `XBOM:524632` — both identifiers now map to one code). Backfilled
+523/523 days; CMP now resolves from bhavcopy for both.
+**The silent skip was the real bug** — `tracked_universe` now WARNS loudly, naming any
+BSE ticker it cannot match and telling you to add a `scrip_code`. A ticker that
+disappears without a message is exactly the failure mode this project keeps paying for.
+
 ## Price data: bhavcopy now covers EVERY tracked ticker (01-Sep-2026)
 `bhavcopy.tracked_universe(client)` reads holdings + watchlist live and merges over
 `SME_STOCKS` (curated entries WIN — their BSE scrip-code / series-ST rules are more
