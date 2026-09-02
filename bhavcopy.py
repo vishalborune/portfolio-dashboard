@@ -364,19 +364,50 @@ def extract_prices_for_date(d: date, universe: dict = None) -> dict:
 
 
 def store_prices(client, d: date, prices: dict):
-    """Upsert into the sme_daily_prices table. One row per (ticker, date).
-    `prices` maps ticker -> dict with open/high/low/close/volume."""
+    """Upsert into sme_daily_prices. One row per (ticker, date).
+    `prices` maps ticker -> dict with open/high/low/close/volume.
+
+    BATCHED into a single upsert per day. It used to be one HTTP round trip per
+    ticker, which was fine at 12 tickers but is 80 round trips a day now — and a
+    2-year backfill would have been ~39,000 sequential requests (hours of pure
+    latency). Supabase upserts a list in one call, so a day costs one request.
+    Falls back to per-row on failure so one bad value can't lose the whole day."""
+    rows = []
     for ticker, ohlcv in prices.items():
+        rows.append({
+            "ticker": ticker,
+            "price_date": d.isoformat(),
+            # float() at the write boundary — numpy scalars from pandas silently
+            # fail Supabase's JSON serialization (House Rule #6).
+            "open": _f(ohlcv.get("open")), "high": _f(ohlcv.get("high")),
+            "low": _f(ohlcv.get("low")), "close": _f(ohlcv.get("close")),
+            "volume": _f(ohlcv.get("volume")),
+        })
+    if not rows:
+        return
+    try:
+        client.table("sme_daily_prices").upsert(
+            rows, on_conflict="ticker,price_date").execute()
+        return
+    except Exception as e:
+        print(f"  [bhavcopy] batch store failed for {d} ({e}) — retrying row by row")
+    for row in rows:
         try:
-            client.table("sme_daily_prices").upsert({
-                "ticker": ticker,
-                "price_date": d.isoformat(),
-                "open": ohlcv["open"], "high": ohlcv["high"],
-                "low": ohlcv["low"], "close": ohlcv["close"],
-                "volume": ohlcv["volume"],
-            }, on_conflict="ticker,price_date").execute()
+            client.table("sme_daily_prices").upsert(
+                row, on_conflict="ticker,price_date").execute()
         except Exception as e:
-            print(f"  [bhavcopy] store failed for {ticker} on {d}: {e}")
+            print(f"  [bhavcopy] store failed for {row['ticker']} on {d}: {e}")
+
+
+def _f(v):
+    """numpy/pandas scalar -> plain float (or None). House Rule #6."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f          # NaN -> None, never 0.0
 
 
 def index_backfill(client, days: int = 760):
