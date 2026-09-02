@@ -139,6 +139,39 @@ was the 23-Jul filings bug: Vishal's holdings row processed first → Lakshmi
 silently got nothing). Every alert path aggregates per (group, ticker); run_filings
 was the one that regressed and is now fixed.
 
+## Price data: bhavcopy now covers EVERY tracked ticker (01-Sep-2026)
+`bhavcopy.tracked_universe(client)` reads holdings + watchlist live and merges over
+`SME_STOCKS` (curated entries WIN — their BSE scrip-code / series-ST rules are more
+specific). Universe went **16 -> 80** at no extra request cost: we already download
+NSE's whole ~3,500-symbol file, we simply keep more rows. First run extracted **80/80**.
+WHY: Yahoo has blanked the dashboard repeatedly (states, EMAs and CMP all empty while
+DB-sourced columns rendered fine) and has dropped the latest session three times —
+false HFCL EXIT, wrong Today's P&L, and the digest reconcile false-block.
+
+**PHASE 1 ONLY — the read path is NOT switched yet.** bhavcopy and Yahoo run in
+PARALLEL so the new data can be proven before anything depends on it (the project's own
+rule: prove a new source with a fast diagnostic first). Switching
+`signals._fetch_daily` to prefer bhavcopy for mainboard names is Phase 2, and needs a
+~2-year backfill first.
+
+**HEALTH MONITORING — Vishal's condition for depending on this data was "I need to know
+if something is wrong asap".** `bhavcopy.report_health(client)` runs at the end of the
+daily job and TELEGRAMS any finding:
+  1. COVERAGE — any tracked ticker with no stored price at all
+  2. STALENESS — any ticker whose newest row is >5 days old
+  3. AGREEMENT — stored close vs Yahoo for the same date, >1% is reported with BOTH
+     numbers. This also double-nets the corporate-action watchdog, since an unadjusted
+     split shows up as a huge divergence (Yahoo adjusts history, bhavcopy stores RAW —
+     House Rule #10).
+Run read-only anytime: **`python bhavcopy.py health`**. Verified 01-Sep-2026: coverage
+and freshness pass, **68 tickers agree with Yahoo**.
+**The sample size is always reported, never just the verdict** — the first version used
+`history(start=d0, end=d0)`, and Yahoo's `end` is EXCLUSIVE, so it compared ZERO tickers
+while printing "Yahoo agreement passes". A check that silently checks nothing is worse
+than no check; "0 compared" is now itself a finding.
+`bhavcopy.py` also reconfigures stdout to UTF-8 (same cp1252 crash already fixed in
+alerts.py — its findings carry emoji and exist to explain failures).
+
 ## Known SME/BSE-only tickers requiring bhavcopy (not Yahoo)
 `bhavcopy.py`'s `SME_STOCKS` dict is the single source of truth. Currently
 tracks: OBSCP, TCL, UTSSAV, VIESL (NSE Emerge), SSEGL (NSE Emerge, series ST),

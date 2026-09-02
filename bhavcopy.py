@@ -25,6 +25,17 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import requests
 
+# Health findings carry emoji, and most exist to explain a FAILURE. Under Windows
+# cp1252 the print() inside the reporting path raises UnicodeEncodeError and kills
+# the run, losing the diagnostic it was written to give (House Rule #3) — the same
+# bug already fixed in alerts.py. Render is UTF-8, so this only bites local runs,
+# which is exactly where the `check` and `health` diagnostics are used.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # The 6 SME stocks Yahoo doesn't cover. NSE ones are matched by exact SYMBOL
 # (confident — bhavcopy's SYMBOL column is authoritative). The 2 BSE ones
@@ -199,13 +210,60 @@ def fetch_index_closes(d: date) -> dict:
     return out
 
 
-def extract_prices_for_date(d: date) -> dict:
-    """Returns {ticker: close_price} for whichever of the 6 stocks were
-    found in that day's bhavcopy files. Missing ones are simply absent
-    from the dict — never a crash, never a fabricated price."""
+# ---------------------------------------------------------------------------
+# TRACKED UNIVERSE (01-Sep-2026)
+# ---------------------------------------------------------------------------
+# We already download NSE's ENTIRE daily file (~3,500 symbols) and used to keep
+# 12 rows from it. Storing every ticker we actually track costs no extra request
+# — same file, more rows extracted — and it is what lets the dashboard stop
+# asking Yahoo for history, which has now blanked it three times.
+#
+# SME_STOCKS stays the hand-curated list: those names have quirks (BSE scrip-code
+# matching, series ST, Yahoo blind spots) and their entries encode that knowledge.
+# This function ADDS the ordinary NSE names on top, read live from the DB so a
+# stock added to a watchlist is covered from the next run with nothing to edit.
+
+def tracked_universe(client) -> dict:
+    """{ticker: {"exchange","symbol"}} for every holding + watchlist name,
+    merged over SME_STOCKS. SME entries WIN — their hand-written matching rules
+    are more specific than anything derived from a ticker string."""
+    import re as _re
+    out = {}
+    for table in ("holdings", "watchlist"):
+        try:
+            rows = client.table(table).select("stock_name").execute().data or []
+        except Exception as e:
+            print(f"  [bhavcopy] could not read {table} for the universe: {e}")
+            continue
+        for r in rows:
+            name = str(r.get("stock_name") or "")
+            m = _re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", name)
+            if not m:
+                continue
+            exch, sym = m.group(1), m.group(2).strip()
+            ticker = f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+            if exch == "XNSE":
+                out[ticker] = {"exchange": "NSE", "symbol": sym}
+            else:
+                # BSE rows are matched by SCRIP CODE, and a numeric ticker IS the
+                # code. Anything else we cannot resolve here — leave it to
+                # SME_STOCKS, which carries verified codes.
+                if sym.isdigit():
+                    out[ticker] = {"exchange": "BSE", "name_hint": sym,
+                                   "scrip_code": sym}
+    out.update(SME_STOCKS)          # curated entries always win
+    return out
+
+
+def extract_prices_for_date(d: date, universe: dict = None) -> dict:
+    """Returns {ticker: ohlcv} for whichever tracked stocks appear in that day's
+    bhavcopy files. Missing ones are simply absent — never a crash, never a
+    fabricated price. `universe` defaults to the curated SME list; the daily job
+    passes the full tracked set (see tracked_universe)."""
+    universe = universe or SME_STOCKS
     out = {}
 
-    nse_needed = {v["symbol"]: k for k, v in SME_STOCKS.items()
+    nse_needed = {v["symbol"]: k for k, v in universe.items()
                   if v["exchange"] == "NSE"}
     if nse_needed:
         nse_df = fetch_nse_bhavcopy(d)
@@ -241,7 +299,8 @@ def extract_prices_for_date(d: date) -> dict:
                     print(f"  [bhavcopy] Matched NSE row for {ticker} on {d} but "
                           f"couldn't parse price fields: {e}")
 
-    bse_needed = {k: v for k, v in SME_STOCKS.items() if v["exchange"] == "BSE"}
+    bse_needed = {k: v for k, v in universe.items()
+                  if v.get("exchange") == "BSE" and v.get("scrip_code")}
     if bse_needed:
         bse_df = fetch_bse_bhavcopy(d)
         if bse_df.empty:
@@ -346,12 +405,15 @@ def index_backfill(client, days: int = 760):
 def update_today(client):
     """Called by the daily scheduled job, after market close."""
     d = date.today()
-    prices = extract_prices_for_date(d)
+    universe = tracked_universe(client)
+    prices = extract_prices_for_date(d, universe)
     prices.update(fetch_index_closes(d))   # benchmark index: daily only
     if prices:
         store_prices(client, d, prices)
-        print(f"[bhavcopy] {d}: stored {len(prices)}/{len(SME_STOCKS)} prices "
-              f"({', '.join(prices.keys())})")
+        print(f"[bhavcopy] {d}: stored {len(prices)}/{len(universe)} prices")
+        missing = sorted(set(universe) - set(prices))
+        if missing:
+            print(f"[bhavcopy] {d}: NO PRICE for {len(missing)}: {missing}")
     else:
         print(f"[bhavcopy] {d}: no data found (holiday, weekend, or not yet published)")
 
@@ -366,6 +428,147 @@ def update_today(client):
         corporate_actions.report(findings)
     except Exception as e:
         print(f"  [bhavcopy] corporate-action scan skipped: {type(e).__name__}: {e}")
+
+    # HEALTH CHECK (01-Sep-2026). Now that the dashboard is moving onto this data,
+    # a silent gap here becomes a wrong reading on screen. So every run proves
+    # coverage, freshness and agreement with an independent source, and Telegrams
+    # anything that fails. Vishal's condition for depending on it: "I need to know
+    # if something is wrong asap so that there is no wrong reading of data."
+    try:
+        report_health(client)
+    except Exception as e:
+        print(f"  [bhavcopy] health check skipped: {type(e).__name__}: {e}")
+
+
+def health_check(client, universe: dict = None, max_age_days: int = 5) -> list:
+    """Is our stored price data COMPLETE, CURRENT and CONSISTENT? Returns a list
+    of finding strings — empty means healthy.
+
+    Exists because Vishal's condition for depending on this data was: "I need to
+    know if something is wrong asap so that there is no wrong reading of data or
+    alerts." Silence is not evidence of correctness, so every run answers three
+    questions explicitly:
+
+      1. COVERAGE  — is any tracked ticker missing from the table entirely?
+      2. STALENESS — is any ticker's newest row older than max_age_days?
+      3. AGREEMENT — does our stored close match an INDEPENDENT source (Yahoo)?
+                     A disagreement means one side is wrong and neither should
+                     be trusted silently. This is the same principle as the
+                     digest's valuation reconciler.
+
+    (3) is the important one while we run bhavcopy and Yahoo in parallel: it is
+    what proves the new data is right BEFORE anything starts depending on it."""
+    universe = universe or tracked_universe(client)
+    findings = []
+
+    try:
+        rows = (client.table("sme_daily_prices")
+                .select("ticker, price_date, close")
+                .order("price_date", desc=True).limit(20000).execute().data or [])
+    except Exception as e:
+        return [f"🚨 cannot read sme_daily_prices: {type(e).__name__}: {e}"]
+
+    latest = {}
+    for r in rows:
+        t = r["ticker"]
+        if t not in latest:      # rows arrive newest-first
+            latest[t] = r
+
+    missing = sorted(set(universe) - set(latest))
+    if missing:
+        findings.append(f"🚨 NO stored price at all for {len(missing)} tracked "
+                        f"ticker(s): {missing[:12]}"
+                        + (" …" if len(missing) > 12 else ""))
+
+    today = date.today()
+    stale = []
+    for t, r in latest.items():
+        if t not in universe:
+            continue
+        try:
+            age = (today - date.fromisoformat(str(r["price_date"])[:10])).days
+        except (ValueError, TypeError):
+            continue
+        if age > max_age_days:
+            stale.append(f"{t} ({age}d)")
+    if stale:
+        findings.append(f"⚠️ stored price is STALE for {len(stale)}: "
+                        f"{sorted(stale)[:12]}" + (" …" if len(stale) > 12 else ""))
+
+    return findings
+
+
+def cross_check(client, universe: dict = None, tol_pct: float = 1.0,
+                limit: int = None) -> tuple:
+    """Compare our stored close against Yahoo's for the same date.
+
+    Runs while both sources are live, so a divergence is caught BEFORE the
+    dashboard depends on bhavcopy. Anything over tol_pct is reported with both
+    numbers, because 'they disagree' is only actionable if you can see by how
+    much and in which direction.
+
+    A split/bonus shows up here as a huge divergence — Yahoo adjusts history,
+    bhavcopy stores raw (House Rule #10) — so this doubles as a second net under
+    the corporate-action watchdog."""
+    import yfinance as yf
+    universe = universe or tracked_universe(client)
+    out, checked = [], 0
+    for ticker in sorted(universe):
+        if limit and checked >= limit:
+            break
+        try:
+            rows = (client.table("sme_daily_prices").select("price_date, close")
+                    .eq("ticker", ticker).order("price_date", desc=True)
+                    .limit(1).execute().data or [])
+            if not rows:
+                continue
+            ours = float(rows[0]["close"])
+            d0 = str(rows[0]["price_date"])[:10]
+            # end is EXCLUSIVE in Yahoo's history(): start==end returns an
+            # empty frame, so every comparison silently skipped and the run
+            # still reported "Yahoo agreement passes". A check that quietly
+            # checks nothing is worse than no check at all.
+            nxt = (date.fromisoformat(d0) + timedelta(days=1)).isoformat()
+            h = yf.Ticker(ticker).history(start=d0, end=nxt, auto_adjust=False)
+            if h is None or h.empty:
+                continue
+            theirs = float(h["Close"].iloc[0])
+            checked += 1
+            if theirs > 0 and abs(ours / theirs - 1) * 100 > tol_pct:
+                out.append(f"⚠️ {ticker} {d0}: ours Rs {ours:,.2f} vs Yahoo "
+                           f"Rs {theirs:,.2f} ({(ours/theirs-1)*100:+.1f}%)")
+        except Exception:
+            continue          # a source that won't answer is not a finding
+    print(f"  [bhavcopy] cross-checked {checked} tickers against Yahoo")
+    return out, checked
+
+
+def report_health(client, notify: bool = True) -> list:
+    """Run every check and TELEGRAM anything wrong. Silence here is meaningful:
+    it means coverage, freshness and agreement were all verified this run."""
+    findings = health_check(client)
+    diverged, compared = cross_check(client)
+    findings += diverged
+    # Report the SAMPLE SIZE, never just the verdict. "0 compared" must never
+    # read as "agreement verified".
+    if compared == 0:
+        findings.append("⚠️ Yahoo cross-check compared 0 tickers — agreement was "
+                        "NOT verified this run (source unreachable?)")
+    if not findings:
+        print(f"[bhavcopy] health OK — coverage and freshness pass, and "
+              f"{compared} tickers agree with Yahoo")
+        return []
+    print("[bhavcopy] HEALTH FINDINGS:")
+    for f in findings:
+        print("   " + f)
+    if notify:
+        try:
+            from notify import send_telegram
+            body = ("\n").join(findings[:20])
+            send_telegram("🩺 <b>Price data health</b>\n\n" + body)
+        except Exception as e:
+            print(f"  [bhavcopy] could not send health alert: {e}")
+    return findings
 
 
 def backfill(client, days: int = 730):
@@ -406,6 +609,10 @@ if __name__ == "__main__":
         sys.exit(0)
     from supabase import create_client
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    if mode == "health":
+        # Read-only: prove coverage, freshness and agreement with Yahoo.
+        report_health(client, notify=False)
+        sys.exit(0)
     if mode == "backfill":
         backfill(client)
     elif mode == "index-backfill":
