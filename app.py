@@ -862,6 +862,23 @@ def tab_holdings(enriched: pd.DataFrame):
         if deliv_cols:
             styled = styled.map(color_delivery, subset=deliv_cols)
         st.dataframe(styled, width="stretch", height=520, hide_index=True)
+        # A blank cell must say WHICH kind of blank it is, or you cannot tell
+        # whether to act (Vishal, 02-Sep-2026: "I don't understand if we are not
+        # able to fix the data, or if something is wrong, or if there is nothing
+        # to fix"). The State column now carries the reason; this decodes the rest.
+        st.caption(
+            "**Why a cell is blank —** "
+            "**⏳ BUILDING n/45w**: a recent listing. The weekly EMAs and state "
+            "need 45 weeks of history for a 40-week EMA, so they stay blank until "
+            "the count reaches 45. Daily DMAs still work. Nothing to fix — it fills "
+            "in by itself. · "
+            "**⚠️ NO PRICE DATA**: the price source did not answer. Try **🔄 Refresh "
+            "all data** in the sidebar; if it persists past a day, flag it. · "
+            "**—** in Deliv %, EBITDA or 52W High: not published for that stock "
+            "(SME and very recent listings often have none). · "
+            "**—** in Minor/Major Support or Target: not entered yet — set them in "
+            "the watchlist levels grid."
+        )
         if deliv_cols:
             st.caption("Deliv % = share of traded quantity actually taken as delivery "
                        "(4wk = rolling average). High = genuine accumulation, low = intraday "

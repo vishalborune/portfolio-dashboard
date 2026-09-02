@@ -22,6 +22,7 @@ Flowchart:
 """
 
 from __future__ import annotations
+import re
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -382,6 +383,27 @@ def current_state(ticker: str) -> dict:
 
 
 @_cache(ttl=60 * 60 * 4)
+def _state_display(d: dict) -> str:
+    """The on-screen state, with the WHY attached when there isn't one yet.
+
+    A bare "NO DATA" cell can't tell you whether something is broken, still
+    building, or simply unavailable — so you can't know whether to act. Both
+    non-states now say which they are, and the building case shows its progress
+    so you can see it is counting up rather than stuck (Vishal, 02-Sep-2026)."""
+    state = d.get("state", "")
+    if state == "INSUFFICIENT DATA":
+        m = re.search(r"Only (\d+) weeks", d.get("reason", "") or "")
+        if m:
+            have = int(m.group(1))
+            left = max(MIN_WEEKS_REQUIRED - have, 0)
+            return (f"⏳ BUILDING {have}/{MIN_WEEKS_REQUIRED}w "
+                    f"(~{left}w to go)")
+        return f"⏳ BUILDING (needs {MIN_WEEKS_REQUIRED}w)"
+    if state == "NO DATA":
+        return "⚠️ NO PRICE DATA — fetch failed"
+    return STATE_EMOJI.get(state, state)
+
+
 def states_for_holdings(tickers: tuple) -> pd.DataFrame:
     """Compute the current flowchart state for every holding. One row per ticker."""
     _cols = ["Ticker", "State", "State Display", "State Reason", "State Priority",
@@ -394,7 +416,7 @@ def states_for_holdings(tickers: tuple) -> pd.DataFrame:
         rows.append({
             "Ticker": t,
             "State": d["state"],
-            "State Display": STATE_EMOJI.get(d["state"], d["state"]),
+            "State Display": _state_display(d),
             "State Reason": d.get("reason", ""),
             "State Priority": STATE_PRIORITY.get(d["state"], 9),
             "EMA10": d.get("ema10"),
