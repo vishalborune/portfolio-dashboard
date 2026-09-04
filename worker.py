@@ -84,6 +84,10 @@ LEVELS_CLOSE = (9, 12)      # it exists to place orders, so no point Sat/Sun)
 DIGEST_OPEN = (21, 0)       # weekly digest — FRIDAY 21:00 IST, after the 20:00/20:30
 DIGEST_CLOSE = (23, 30)     # data jobs. Retried inside this window until it succeeds.
 DIGEST_RETRY = 1800         # 30 min between attempts
+BHAV_OPEN = (20, 5)         # nightly bhavcopy price store — the digest and every
+BHAV_CLOSE = (23, 30)       # EOD alert depend on it, so it lives HERE, not only
+BHAV_RETRY = 900            # on GitHub's best-effort cron (which skipped 04-Sep
+                            # and starved the digest into a reconcile block).
 
 
 def _now():
@@ -132,6 +136,8 @@ def main():
     last_live = last_nse = last_bse = 0.0
     last_beat = 0.0
     brief_day = None            # morning brief runs once per calendar day
+    bhav_day = None             # nightly price store done for this date
+    last_bhav_try = 0.0         # its retry throttle (file can publish late)
     # NOTE: deliberately NOT called `levels_day` — that name is already taken by
     # the fast-poll level cache above, which sets it at 08:30. Reusing it meant
     # this digest's `!= today` guard was already satisfied by 08:45 and it never
@@ -179,6 +185,50 @@ def main():
                     alerts.run_morning_levels()
                 except Exception as e:
                     print(f"⚠️ [worker] morning levels failed: {type(e).__name__}: {e}")
+
+            # ---- nightly bhavcopy price store (WEEKDAYS, evening) ----------
+            # Moved here 04-Sep-2026: GitHub's 20:00 cron silently skipped, our
+            # stored prices ended a day earlier, and the Friday digest was
+            # (rightly) blocked by its own reconciliation guard — no Telegram,
+            # no email. The digest can't be more reliable than the data job it
+            # depends on, so the data job now runs on the same always-on worker,
+            # BEFORE the digest block in this loop. GitHub's 20:00 cron stays as
+            # a backstop; the store is an idempotent upsert so both can run.
+            if (now.weekday() < 5 and _within(now, BHAV_OPEN, BHAV_CLOSE)
+                    and bhav_day != today
+                    and time.time() - last_bhav_try >= BHAV_RETRY):
+                last_bhav_try = time.time()
+                try:
+                    import bhavcopy
+                    _c = alerts.sb()
+                    uni = bhavcopy.tracked_universe(_c)
+                    prices = bhavcopy.extract_prices_for_date(today, universe=uni)
+                    if prices:
+                        bhavcopy.store_prices(_c, today, prices)
+                        print(f"[worker] bhavcopy: stored {len(prices)} closes "
+                              f"for {today}")
+                        bhav_day = today
+                        # The digest attempt at 21:00 may already have CACHED
+                        # weekly bars built from yesterday's table (in-process
+                        # 4h TTL) — drop them so its next retry recomputes on
+                        # tonight's closes instead of blocking until 23:30.
+                        try:
+                            import signals
+                            for fn_name in ("fetch_weekly", "_fetch_daily"):
+                                fn = getattr(signals, fn_name, None)
+                                if fn is not None and hasattr(fn, "clear"):
+                                    fn.clear()
+                        except Exception:
+                            pass
+                        bhavcopy.report_health(_c)
+                    else:
+                        print(f"[worker] bhavcopy: no rows for {today} yet "
+                              f"(holiday or file not published) — will retry")
+                except Exception as e:
+                    print(f"⚠️ [worker] bhavcopy store failed: "
+                          f"{type(e).__name__}: {e}")
+                    traceback.print_exc()
+                _reclaim_memory()      # the two exchange files are big downloads
 
             # ---- weekly digest (FRIDAY evening) ----------------------------
             # Moved here 28-Aug-2026: GitHub Actions' scheduler dropped the Friday
