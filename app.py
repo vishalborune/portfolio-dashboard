@@ -349,7 +349,21 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         bhav = db.get_sme_daily_prices(tuple(sorted(tickers)))
     except Exception:
         bhav = pd.DataFrame()
-    sme_tracked = set(bhav["ticker"].unique()) if not bhav.empty else set()
+    # "SME-tracked" = names with NO live feed (SME boards / BSE scrips), the
+    # curated SME_STOCKS list — NOT merely "has rows in our bhavcopy table".
+    # After the 01-Sep backfill EVERY ticker has bhavcopy rows, and using table
+    # membership made the WHOLE dashboard price at the last stored close: from
+    # market open until the 20:00 bhavcopy job, CMP was yesterday's close and
+    # "Today's P&L" was yesterday's move (Vishal caught it 04-Sep-2026 —
+    # dashboard said +24,826 while INDmoney said ~16,000; the exchange file
+    # proved INDmoney right). Mainboard names must keep asking Yahoo for the
+    # live quote; the stored bhavcopy series stays as the outage fallback below.
+    try:
+        from bhavcopy import SME_STOCKS as _SME_ONLY
+    except Exception:
+        _SME_ONLY = {}
+    have_bhav = set(bhav["ticker"].unique()) if not bhav.empty else set()
+    sme_tracked = have_bhav & set(_SME_ONLY.keys())
     yahoo_tickers = tuple(t for t in tickers if t not in sme_tracked)
 
     # 1) Daily bars: prev-close reference + fallback + bar-date for staleness
@@ -434,10 +448,24 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
             cmp_ = q_lp
             prev = q_pc if (q_pc and q_pc > 0) else b_prev
             stale, source = False, "quote"
-        else:
-            cmp_, prev = b_close if b_close else np.nan, b_prev if b_prev else np.nan
+        elif b_close:
+            cmp_, prev = b_close, b_prev if b_prev else np.nan
             stale = bool(bdate and bdate < expected)
             source = "bar (STALE)" if stale else "bar"
+        else:
+            # Yahoo gave nothing at all (datacenter block / outage): our own
+            # stored bhavcopy EOD close is the honest answer — a real last
+            # close beats a blank, and the date it carries says how old it is.
+            sub = bhav[bhav["ticker"] == t] if not bhav.empty else bhav
+            if sub is not None and len(sub):
+                sub = sub.sort_values("price_date")
+                latest, prev_row = sub.iloc[-1], (sub.iloc[-2] if len(sub) >= 2 else sub.iloc[-1])
+                cmp_, prev = float(latest["close"]), float(prev_row["close"])
+                bdate = pd.Timestamp(latest["price_date"]).date()
+                stale = bdate < expected
+                source = "bhavcopy EOD (live feed unavailable)"
+            else:
+                cmp_, prev, stale, source = np.nan, np.nan, True, "no data"
 
         rows.append({"Ticker": t, "CMP": cmp_, "Prev Close": prev,
                      "Price Stale": stale, "Price Source": source,
@@ -471,6 +499,14 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                 row["CMP"] = lp
                 if pc and pc > 0:
                     row["Prev Close"] = pc
+                else:
+                    # The stale price we just replaced was the newest SETTLED
+                    # close — which is precisely the previous-close reference
+                    # for a live quote. Leaving the older prev in place paired
+                    # today's live price with a TWO-session-old close and
+                    # booked yesterday's whole move into "Today's P&L"
+                    # (Shukra +6,773 vs a true -52, 04-Sep-2026).
+                    row["Prev Close"] = old_ref
                 row["Price Stale"] = False
                 row["Price Source"] = ("BSE direct" if (t.endswith(".BO") and pc is None)
                                         else "NSE twin")
