@@ -203,6 +203,10 @@ def main():
                     _c = alerts.sb()
                     uni = bhavcopy.tracked_universe(_c)
                     prices = bhavcopy.extract_prices_for_date(today, universe=uni)
+                    # Benchmark index closes ride the same store — miss them and
+                    # the weekly scorecard measures Fri->Thu against a Fri->Fri
+                    # portfolio (the -0.15%-vs-+0.08% wrong-week of 04-Sep-2026).
+                    prices.update(bhavcopy.fetch_index_closes(today))
                     if prices:
                         bhavcopy.store_prices(_c, today, prices)
                         print(f"[worker] bhavcopy: stored {len(prices)} closes "

@@ -2932,6 +2932,11 @@ def _benchmark_series():
     if _BENCH_CACHE is not None:
         return _BENCH_CACHE if _BENCH_CACHE is not False else None
     try:
+        # DEMOTED 04-Sep-2026: ^CNXSC is the Smallcap 100 — the WRONG index
+        # (the benchmark is the Smallcap 250; Vishal: "SMA 250 is the index")
+        # — and Yahoo only ever served it empty or as a 1-day stub anyway.
+        # Jump straight to the own-table chain: exact SC250, then ETF proxies.
+        raise ValueError("empty")
         import yfinance as yf
         df = yf.download(BENCHMARK_TICKER, period="3y", interval="1d",
                          progress=False, auto_adjust=False)
@@ -2967,16 +2972,30 @@ def _benchmark_series():
             # then Smallcap-250 ETF proxies (priced by our own daily
             # bhavcopy -- the proven path). _BENCH_LABEL records which
             # source won so the email can say so honestly.
+            # Smallcap 250 is THE benchmark (Vishal 04-Sep-2026) — the exact
+            # index wins when it has history; the 250 ETF proxies back it up;
+            # the Smallcap 100 series is a last resort only.
             candidates = [
-                ("NIFTYSMLCAP100.IDX", "Nifty Smallcap 100"),
+                ("NIFTYSMLCAP250.IDX", "Nifty Smallcap 250"),
                 ("HDFCSML250.NS", "Nifty Smallcap 250 (HDFC ETF proxy)"),
                 ("MOSMALL250.NS", "Nifty Smallcap 250 (MO ETF proxy)"),
+                ("NIFTYSMLCAP100.IDX", "Nifty Smallcap 100"),
             ]
             for tick, label in candidates:
                 res = (client.table("sme_daily_prices")
                        .select("price_date, close").eq("ticker", tick)
                        .order("price_date", desc=True).limit(900).execute())
                 rows = res.data or []
+                # FRESHNESS: a long-but-dead series must not beat a live one.
+                # 60 rows proves depth, not life — without this check a series
+                # whose feed quietly stopped would keep winning on row count
+                # while measuring some long-gone week (House Rule #7).
+                if rows:
+                    newest = date.fromisoformat(str(rows[0]["price_date"])[:10])
+                    if (date.today() - newest).days > 7:
+                        print(f"(digest: benchmark candidate {label} is STALE — "
+                              f"newest row {newest} — skipping)")
+                        continue
                 if len(rows) >= 60:      # need real history, not a few days
                     rows.sort(key=lambda r: r["price_date"])
                     s = pd.Series([float(r["close"]) for r in rows],
@@ -3114,6 +3133,18 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
                     f"({_fmt_l(gain)}) — index unavailable for comparison</p>", None)
         idx_ret = (i1 / i0 - 1) * 100
         alpha = pf_ret - idx_ret
+        # If the index level had to walk back from the snapshot date, the two
+        # sides of this comparison cover DIFFERENT windows — say so instead of
+        # letting a Fri->Thu index masquerade as the week (04-Sep-2026: index
+        # printed -0.15% for a week it actually ended +0.08%, because the
+        # last session's index row was missing).
+        idx_note = ""
+        r1 = next((today - timedelta(days=b) for b in range(0, 8)
+                   if (today - timedelta(days=b)) in series.index), None)
+        if r1 is not None and r1 != today:
+            idx_note = (f" <span style='color:#d97706;font-weight:600'>"
+                        f"(index to {r1.strftime('%d %b')} — latest available; "
+                        f"portfolio is to {today.strftime('%d %b')})</span>")
 
         if alpha >= WEEKLY_ALPHA_BAR:
             col, verdict = "#16a34a", "beating the index — must continue ✅"
@@ -3128,7 +3159,7 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
             f"<td style='padding:3px 0;font-weight:700'>{pf_ret:+.2f}% "
             f"<span style='font-weight:400;color:#64748b'>({_fmt_l(gain)})</span></td></tr>"
             f"<tr><td style='padding:3px 0;color:#64748b'>{_BENCH_LABEL}</td>"
-            f"<td style='padding:3px 0;font-weight:700'>{idx_ret:+.2f}%</td></tr>"
+            f"<td style='padding:3px 0;font-weight:700'>{idx_ret:+.2f}%{idx_note}</td></tr>"
             f"<tr><td style='padding:3px 0;color:#64748b'>Weekly alpha "
             f"(bar: {WEEKLY_ALPHA_BAR}%)</td>"
             f"<td style='padding:3px 0;font-weight:800;color:{col}'>{alpha:+.2f} pts</td></tr>"

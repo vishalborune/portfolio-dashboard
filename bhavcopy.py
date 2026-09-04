@@ -170,7 +170,14 @@ def fetch_bse_bhavcopy(d: date) -> pd.DataFrame:
 # official daily index closes on the same archives host as the bhavcopy.
 # Stored in sme_daily_prices under a synthetic ticker -- the table fits
 # (ticker/date/OHLC), no new schema. Rides the daily job AND the backfill.
-INDEX_TRACK = {"NIFTYSMLCAP100.IDX": "Nifty Smallcap 100"}
+INDEX_TRACK = {
+    # Smallcap 250 FIRST — it is THE benchmark (Vishal, 04-Sep-2026: "SMA 250
+    # is the index"); the ETF proxies are 250-based too, so every source in
+    # the digest's fallback chain now measures the same thing. Name verified
+    # against the real ind_close_all file (House Rule #5).
+    "NIFTYSMLCAP250.IDX": "Nifty Smallcap 250",
+    "NIFTYSMLCAP100.IDX": "NIFTY Smallcap 100",
+}
 
 
 def fetch_index_closes(d: date) -> dict:
