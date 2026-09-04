@@ -233,6 +233,18 @@ Yahoo. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
 Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)
+> **UPDATE 04-Sep-2026: the benchmark is the EXACT Nifty Smallcap 250** ("SMA 250
+> is the index" — Vishal). NSE's `ind_close_all` daily file WORKS AGAIN (the
+> paragraph below predates that): `NIFTYSMLCAP250.IDX` is tracked in
+> `bhavcopy.INDEX_TRACK`, backfilled 137 days, stored nightly by the WORKER's
+> bhavcopy block (not just the GitHub cron). Digest chain: exact SC250 → HDFC/MO
+> 250-ETF proxies → SC100; Yahoo ^CNXSC (wrong index, stub-prone) is no longer
+> consulted; any candidate whose newest row is >7 days old is skipped (depth ≠
+> life), and the email discloses in amber when the index level walks back from
+> the snapshot date. Learned the hard way: the 04-Sep digest printed index
+> -0.15% (SC100, Fri→THU because the skipped 20:00 job left today's row
+> missing) when the true SC250 week was -0.08% and the DAY was +0.20%.
+
 NSE discontinued public access to exact Nifty Smallcap 100 daily data
 (their legacy `ind_close_all` CSV is dead — confirmed via uniform 404/503
 across ~500 dates). Yahoo's `^CNXSC` returns either nothing or a useless
