@@ -59,6 +59,20 @@ CORPORATE_ACTIONS = [
                 "23-Sep-2025. Unadjusted, this inflated the 40wEMA and fired a FALSE "
                 "EXIT (close ₹207.3 vs a bloated 40wEMA ₹211.1).",
     },
+    {
+        "ticker": "PGIL.NS",
+        "ex_date": "2026-09-11",     # price stepped this day in NSE's own file
+        "action": "1:1 bonus",       # 1 new fully-paid share per 1 held
+        "price_divisor": 2.0,        # 2x shares outstanding -> prices /2
+        "note": "Pearl Global Industries. Caught 11-Sep-2026 the same evening via "
+                "an INDmoney reconciliation: broker value exceeded the dashboard "
+                "by EXACTLY one 65-share PGIL position — the broker had credited "
+                "bonus shares. Raw NSE signature ₹2,378.40 (10-Sep) -> ₹1,187.70 "
+                "(11-Sep), ratio 2.00. Unadjusted it already fired FALSE ADD21 + "
+                "W10EMA alerts at 09:10 that morning (halved price 'arrived' at "
+                "the unadjusted DMAs). Held by Vishal (65->130) and Lakshmi "
+                "(1,700->3,400); both holdings rows corrected same day.",
+    },
 ]
 
 GAP_THRESHOLD_PCT = 25.0   # a >25% overnight close move == probable split/bonus
