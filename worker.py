@@ -247,7 +247,21 @@ def main():
                     and time.time() - last_digest_try >= DIGEST_RETRY):
                 last_digest_try = time.time()
                 try:
-                    alerts.run_digest_if_due()
+                    # SUBPROCESS with a hard timeout (18-Sep-2026): the in-loop
+                    # call hung at its 21:00 attempt and froze the ENTIRE worker
+                    # loop — filings stopped at 20:42, no retry ever happened,
+                    # nothing was sent and nothing was logged, because the loop
+                    # itself was stuck inside run_digest. A child process cannot
+                    # freeze the loop (the timeout kills it), a crash inside it
+                    # cannot take the worker down, and its peak memory — the
+                    # digest is the heaviest job on this 512 MB box — returns to
+                    # the OS on exit instead of joining the malloc arena.
+                    import subprocess, sys as _sys, os as _os
+                    r = subprocess.run(
+                        [_sys.executable, "-u", "alerts.py", "digest-if-due"],
+                        timeout=1200,
+                        cwd=_os.path.dirname(_os.path.abspath(__file__)))
+                    print(f"[worker] digest-if-due subprocess exited {r.returncode}")
                 except Exception as e:
                     print(f"⚠️ [worker] weekly digest failed: {type(e).__name__}: {e}")
                     traceback.print_exc()
