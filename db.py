@@ -125,8 +125,33 @@ def add_holding(stock_name: str, quantity: float, purchase_cost: float,
     return new_id
 
 
-def update_holding(holding_id: int, **kwargs):
+def update_holding(holding_id: int, _log_adjust: bool = True, **kwargs):
+    # GUARDRAIL (19-Sep-2026): a direct quantity edit used to silently break
+    # the FIFO transaction trail (16 holdings had drifted). Any quantity
+    # change that does not come through buy_more/mark_as_sold now writes a
+    # matching adjustment transaction so the trail always sums to the truth.
     payload = {k: v for k, v in kwargs.items() if v is not None}
+    if _log_adjust and "quantity" in payload:
+        try:
+            holdings = get_holdings()
+            row = holdings[holdings["id"] == holding_id]
+            if not row.empty:
+                old_q = float(row.iloc[0]["quantity"])
+                diff = float(payload["quantity"]) - old_q
+                if abs(diff) > 1e-9:
+                    px = float(payload.get("purchase_cost",
+                               row.iloc[0]["purchase_cost"]) or 0)
+                    _insert_transaction(
+                        stock_name=row.iloc[0]["stock_name"],
+                        transaction_type="buy" if diff > 0 else "sell",
+                        quantity=abs(diff), price=px,
+                        amount=round(abs(diff) * px, 2),
+                        transaction_date=date.today(),
+                        notes="Manual quantity edit (auto-logged to keep the "
+                              "FIFO lot trail whole)",
+                        holding_id=holding_id)
+        except Exception as e:
+            print(f"[db] adjust-log skipped: {type(e).__name__}: {e}")
     if "buy_date" in payload:
         payload["buy_date"] = _iso(payload["buy_date"])
     if "quantity" in payload:
@@ -237,6 +262,46 @@ def delete_realised(realised_id: int):
     _bust()
 
 
+def fifo_lots(holding_id: int):
+    """Remaining FIFO lots for one holding, oldest first.
+
+    Reads the transaction trail (buys ordered by date; a price-0 buy is a
+    bonus lot) and consumes prior sells oldest-first, exactly as the demat
+    does. Returns (lots, covered) where lots is a list of
+    {"qty", "price", "date"} and covered says whether the trail's net
+    quantity matches the holding's live quantity (within 0.01) -- if it does
+    not, the trail is incomplete and FIFO numbers would be fiction, so
+    callers must fall back to the blended average AND SAY SO (a wrong
+    per-lot number is worse than an honest average -- House Rule #2).
+    """
+    res = (_client().table("transactions").select("*")
+           .eq("holding_id", holding_id)
+           .order("transaction_date").order("created_at").execute())
+    rows = res.data or []
+    lots = []
+    for t in rows:
+        qty = float(t.get("quantity") or 0)
+        if qty <= 0:
+            continue
+        if t.get("transaction_type") == "buy":
+            lots.append({"qty": qty, "price": float(t.get("price") or 0),
+                         "date": t.get("transaction_date")})
+        elif t.get("transaction_type") == "sell":
+            remaining = qty
+            while remaining > 1e-9 and lots:
+                take = min(lots[0]["qty"], remaining)
+                lots[0]["qty"] -= take
+                remaining -= take
+                if lots[0]["qty"] <= 1e-9:
+                    lots.pop(0)
+    holdings = get_holdings()
+    row = holdings[holdings["id"] == holding_id]
+    held = float(row.iloc[0]["quantity"]) if not row.empty else None
+    trail_qty = sum(l["qty"] for l in lots)
+    covered = held is not None and abs(trail_qty - held) < 0.01
+    return lots, covered
+
+
 def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
                  partial_quantity: Optional[float] = None,
                  reason: Optional[str] = None, notes: Optional[str] = None):
@@ -260,19 +325,40 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
     if sold_qty > total_qty:
         raise ValueError(f"Cannot sell {sold_qty} — only {total_qty} held")
 
-    # Insert into realised — capture the id so we can link the transaction
-    invested = round(sold_qty * float(r["purchase_cost"]), 2)
+    # FIFO (19-Sep-2026, Vishal): the demat sells the OLDEST shares first,
+    # so realised P&L must be computed against the oldest lots' actual costs
+    # and the remaining position's average recomputed from surviving lots.
+    # Only possible when the transaction trail fully covers the position;
+    # otherwise fall back to the blended average and label the method.
+    lots, covered = fifo_lots(holding_id)
+    remaining_lots = None
+    if covered:
+        consumed, remaining = [], sold_qty
+        remaining_lots = [dict(l) for l in lots]
+        while remaining > 1e-9 and remaining_lots:
+            take = min(remaining_lots[0]["qty"], remaining)
+            consumed.append({**remaining_lots[0], "qty": take})
+            remaining_lots[0]["qty"] -= take
+            remaining -= take
+            if remaining_lots[0]["qty"] <= 1e-9:
+                remaining_lots.pop(0)
+        invested = round(sum(c["qty"] * c["price"] for c in consumed), 2)
+        buy_d = _clean_date(consumed[0]["date"]) if consumed else _clean_date(r.get("buy_date"))
+        cost_method = "FIFO"
+    else:
+        invested = round(sold_qty * float(r["purchase_cost"]), 2)
+        buy_d = _clean_date(r.get("buy_date"))
+        cost_method = "AVG (trail incomplete)"
     sale_amount = round(sold_qty * float(selling_price), 2)
     gain = round(sale_amount - invested, 2)
     pct = round(gain / invested, 4) if invested else 0
-    buy_d = _clean_date(r.get("buy_date"))
     sale_d = _clean_date(sale_date)
     days = (sale_d - buy_d).days if (buy_d and sale_d) else None
 
     realised_payload = {
         "stock_name": r["stock_name"],
         "quantity": sold_qty,
-        "purchase_cost": float(r["purchase_cost"]),
+        "purchase_cost": round(invested / sold_qty, 2) if sold_qty else float(r["purchase_cost"]),
         "amount_invested": invested,
         "selling_price": float(selling_price),
         "sale_consideration": sale_amount,
@@ -294,17 +380,29 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
         price=float(selling_price),
         amount=sale_amount,
         transaction_date=sale_d or date.today(),
-        notes=f"Sold {'partial' if partial_quantity and sold_qty < total_qty else 'full'} position",
+        notes=f"Sold {'partial' if partial_quantity and sold_qty < total_qty else 'full'} position "
+              f"[{cost_method}]",
+        holding_id=holding_id,
         realised_id=realised_id,
     )
 
     if sold_qty >= total_qty:
         delete_holding(holding_id)
     else:
-        # Partial sell — reduce quantity on the holding
         new_qty = total_qty - sold_qty
-        new_invested = round(new_qty * float(r["purchase_cost"]), 2)
-        update_holding(holding_id, quantity=new_qty, amount_invested=new_invested)
+        if covered and remaining_lots:
+            # The shares still held are the NEWER lots — their weighted cost
+            # is the position's true average now (matches the broker).
+            rem_qty = sum(l["qty"] for l in remaining_lots)
+            new_avg = round(sum(l["qty"] * l["price"] for l in remaining_lots) / rem_qty, 2)
+            update_holding(holding_id, _log_adjust=False, quantity=new_qty,
+                           purchase_cost=new_avg,
+                           amount_invested=round(new_qty * new_avg, 2),
+                           buy_date=_clean_date(remaining_lots[0]["date"]))
+        else:
+            new_invested = round(new_qty * float(r["purchase_cost"]), 2)
+            update_holding(holding_id, _log_adjust=False, quantity=new_qty,
+                           amount_invested=new_invested)
 
     # Sprint 3: trade journal entry (best-effort, never blocks the sell)
     if reason:
@@ -652,6 +750,7 @@ def buy_more(holding_id: int, additional_qty: float, price: float,
     # Update the holding
     update_holding(
         holding_id,
+        _log_adjust=False,
         quantity=new_qty,
         purchase_cost=new_avg,
         amount_invested=new_invested,

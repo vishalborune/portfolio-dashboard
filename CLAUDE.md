@@ -483,6 +483,49 @@ sends a "saved X%" / "cost X%" verdict to Telegram. This is the system's
 long-run self-scoring mechanism — treat it as sacred, don't let it silently
 break.
 
+## FIFO tranche accounting (`db.fifo_lots`, Lakshmi 19-Sep-2026)
+His words: *"we buy the stocks in tranches... while selling it, the demat account
+calculates it on a first-in, first-out basis... once it is sold, the averages
+should also calculate again to reflect the right numbers."* Sells must be costed
+against the OLDEST lots (as the demat does), and the surviving position's average
+recomputed from the lots still held — not the stale blended avg.
+- **`db.fifo_lots(holding_id)`** replays the holding's transaction trail (buys
+  ordered by date; a price-0 buy is a BONUS lot) consuming sells oldest-first.
+  Returns `(lots, covered)`; `covered` = trail net qty matches the live holding
+  qty within 0.01. **If not covered, FIFO numbers would be fiction** — callers
+  fall back to the blended average AND LABEL IT (`cost_method` in the sell note:
+  `[FIFO]` vs `[AVG (trail incomplete)]` — House Rule #2, a wrong per-lot number
+  is worse than an honest average).
+- **`mark_as_sold`**: when covered, realised `amount_invested`/`purchase_cost` come
+  from the consumed lots' actual costs and `buy_date` = the oldest consumed lot's
+  date (so holding-days is per-lot true); on a PARTIAL sell the holding's
+  `purchase_cost`, `amount_invested` and `buy_date` are recomputed from the
+  SURVIVING lots. Sell transactions now carry `holding_id` (they didn't before —
+  that was why 16 trails had drifted).
+- **`update_holding` guardrail**: a direct quantity edit auto-inserts a matching
+  buy/sell adjustment transaction so the trail always sums to the truth
+  (`_log_adjust=False` for internal callers `buy_more`/`mark_as_sold`). Never
+  bypass it — a silent qty edit is exactly what broke the trails the first time.
+- **Trail REBUILD (20-Sep-2026)** from broker tranche exports: pf1 = INDmoney FY27
+  transaction CSV, pf2 = Kite holdings-breakdown export, pf3 = Upstox tranche list.
+  All 89 holdings across the 3 portfolios now have a covered trail (verified by
+  read-back replay). Conventions used — reuse them for any future rebuild:
+  shares bought BEFORE an export window get one "Opening lot" dated before the
+  oldest row, priced at the BALANCING price so trail avg == book avg (buys-only
+  trails) or at book avg (trails containing sells); when the trail OVERSHOOTS the
+  held qty (sells predate the window) the oldest lots are FIFO-TRIMMED rather than
+  inserting a fake sell — a synthetic sell would inject a phantom cashflow into
+  XIRR. PGIL 1:1 bonus lots inserted at 0 cost, ex-date 11-Sep-2026 (pf1 65, pf2
+  800). Shukra pf1 is held as `XBOM:524632` but trades in the INDmoney export as
+  SHUKRAPHAR — mapped explicitly.
+  Known residual diffs (deliberate, disclosed): pf2 PGIL trail avg 806.83 vs
+  Kite's 804.00 (Kite's own FIFO of the 50 pre-bonus shares sold); pf3 WELCORP
+  trail avg 806.61 vs book 865.08 — the TRAIL is the FIFO-correct number (1,300
+  shares sold consumed the older, costlier lots); the holdings row was left at
+  865.08 pending a check against Upstox before overwriting.
+  A pre-rebuild backup of all 675 transaction rows exists in the session
+  scratchpad (`transactions_backup_2026-09-20.json`).
+
 ## Known issues / backlog (as of 21-Jul-2026)
 - **EBITDA IS NOW REAL (01-Sep-2026)** — was permanently blank because
   `fundamentals_daily` had no such column. `fundamentals.fetch_one` now delegates to
