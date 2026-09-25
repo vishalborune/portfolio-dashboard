@@ -273,6 +273,12 @@ def main():
                         except Exception:
                             pass
                         usprices.health(_c)
+                        try:
+                            import usfundamentals
+                            usfundamentals.update_all(_c)
+                        except Exception as e:
+                            print(f"⚠️ [worker] US fundamentals failed: {type(e).__name__}: {e}")
+                        _reclaim_memory()      # companyfacts JSONs are ~4 MB each
                         # State changes + EOD entry/stop pass for the US book,
                         # off the closes just stored (US equivalent of the
                         # 20:47 states + 20:20 eod-entries runs).

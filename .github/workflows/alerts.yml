@@ -295,7 +295,7 @@ jobs:
           elif [ "${{ github.event.inputs.us_check }}" = "true" ]; then
             python usprices.py check
           else
-            python usprices.py store && python usprices.py health && python alerts.py us-eod
+            python usprices.py store && python usprices.py health && python usfundamentals.py update && python alerts.py us-eod
           fi
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

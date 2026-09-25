@@ -577,10 +577,25 @@ CLI: `check` (read-only) / `run` / `earnings` / `audit`. Verified 26-Sep-2026: p
 NVDA's GC selling 30,460 sh (~$6.8M) from Form 4; MU earnings 30-Sep flagged.
 Routing: `notify.chat_for_group("vishal_us")`. Sends happen only from the worker /
 GitHub (ANTHROPIC + TELEGRAM creds there); local runs print.
-**PHASE 2b-ii (not built):** (3) fundamentals from **SEC EDGAR XBRL companyfacts**
-(official, free JSON — Python computes QoQ/YoY, no scraping, no model transcription);
-(4) filings → Telegram from **SEC EDGAR** (8-K events, 10-Q/10-K results, **Form 4
-insider trades**, 13D/G) + Finnhub earnings calendar for the morning brief; (5) US
+**PHASE 2b-ii — FUNDAMENTALS (`usfundamentals.py`, shipped 26-Sep-2026).** SEC XBRL
+`companyfacts` (official, free, ~4 MB JSON per company, cached 20h in `.cache/`). Python
+picks quarterly values, derives Q4 = fiscal year − Q1..Q3 (10-Ks report only the year),
+computes QoQ/YoY, OPM, TTM, EPS, P/E, market cap (price × dei shares), P/B, ROE, ROCE
+(= op income TTM / (equity + LT debt)) and upserts `fundamentals_daily` — the SAME table
+the dashboard reads, so the US columns light up with no app change. **UNITS: for US rows
+the `*_cr` columns hold US$ BILLIONS** (market cap / revenue / EBITDA) and book_value is
+$ per share — the US holdings tab captions this. Gotchas coded in: (a) **concepts go
+stale** — MSFT's `Revenues` ends in 2010, it now files
+`RevenueFromContractWithCustomerExcludingAssessedTax`, so `_pick` chooses by data
+RECENCY, never list order; (b) entries without a `frame` are YTD cumulatives;
+(c) **cash-flow items (D&A) are YTD-only** — Q2..Q4 are derived as differences between
+consecutive cumulatives sharing a fiscal start; (d) fiscal years differ (NVDA Jan, MSFT
+Jun) — everything keys off END DATES; (e) entityName identity check vs the SEC title;
+(f) EBITDA blank when no D&A concept exists; negative-base YoY = blank (RKLB). Runs
+nightly after the US price store (worker + GitHub `usprices` job). CLI: `python
+usfundamentals.py NVDA` prints the table; `update` stores. Verified 26-Sep-2026: NVDA
+TTM rev $303B / OPM 65% / P/E 28; MSFT $332B / P/E 29; RKLB loss-making → no P/E.
+**PHASE 2b-iii (not built):** (5) US
 digest (third email, after the US Friday close = Saturday ~01:30 IST) benchmarked to
 QQQ with the same alpha bar; (6) re-tune alert thresholds — mega-caps hug their DMAs
 far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the 1% jump gate,

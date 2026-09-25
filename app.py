@@ -992,6 +992,11 @@ def tab_holdings(enriched: pd.DataFrame):
             "**—** in Minor/Major Support or Target: not entered yet — set them in "
             "the watchlist levels grid."
         )
+        if is_us_pf():
+            st.caption("**US book units:** Market Cap, Revenue (TTM) and EBITDA (TTM) are in "
+                       "**US$ billions** (the column names say Cr because the columns are shared "
+                       "with the Indian books); Book Value is $ per share. Source: SEC XBRL "
+                       "companyfacts, refreshed nightly. Delivery % has no US equivalent.")
         if deliv_cols:
             st.caption("Deliv % = share of traded quantity actually taken as delivery "
                        "(4wk = rolling average). High = genuine accumulation, low = intraday "
