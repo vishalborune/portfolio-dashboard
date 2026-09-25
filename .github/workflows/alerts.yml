@@ -48,6 +48,10 @@ on:
         description: "Re-send ONLY Vishal's digest email (after late trade entry)?"
         type: boolean
         default: false
+      list_telegram_chats:
+        description: "Diagnostic: list the Telegram chats/groups the bot has recently seen (to find a new group's chat ID)?"
+        type: boolean
+        default: false
       run_filings_now:
         description: "Check filings right now (tests the AI summaries)?"
         type: boolean
@@ -228,6 +232,33 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+  telegram-chats:
+    # Read-only diagnostic (26-Sep-2026): the bot token lives only here and on
+    # Render, so this is how a NEW group's chat ID is discovered — add the bot
+    # to the group, post a message, tick the box, read the ID off this log.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.list_telegram_chats == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python3 - <<'EOF'
+          import os, json, urllib.request
+          tok = os.environ["TELEGRAM_BOT_TOKEN"]
+          data = json.load(urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/getUpdates?limit=100", timeout=30))
+          seen = {}
+          for u in data.get("result", []):
+              m = u.get("message") or u.get("my_chat_member") or u.get("channel_post") or {}
+              c = m.get("chat") or {}
+              if c.get("id"):
+                  seen[c["id"]] = (c.get("type"), c.get("title") or c.get("username") or c.get("first_name"))
+          print(f"{len(data.get('result', []))} updates; chats seen:")
+          for cid, (typ, title) in seen.items():
+              print(f"  chat_id={cid}  type={typ}  title={title}")
+          if not seen:
+              print("  (none — post a message in the group AFTER adding the bot, then re-run)")
+          EOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
   digest:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
