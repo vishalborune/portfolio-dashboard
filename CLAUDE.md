@@ -498,6 +498,49 @@ switch sources without disclosure.
   last completed trading day's real files in ~2 min, use this BEFORE any
   long backfill)
 
+## Vishal's US book — portfolio 4 (started 24-Sep-2026, Phase 1 shipped 26-Sep-2026)
+Vishal began buying US stocks through **Alpaca (via INDmoney US)** — mostly Nasdaq-100 /
+S&P-100 names, 20-25% smaller companies. **Benchmark = Nasdaq 100 (QQQ proxy)**, his
+call: "Russell 2000 might not make sense" for a mega-cap-heavy book. Lakshmi's and
+Abinaya's books are untouched; US news/alerts will go to a SEPARATE Telegram group.
+**Design: one portfolio = one market = one currency.** `portfolio_id 4 = "Vishal · US"`
+appears in his login's portfolio switcher; every table is already portfolio-scoped, so
+isolation is by construction. `app.US_PORTFOLIOS`/`PF_CURRENCY` drive `cur()` ("$"),
+`fmt_inr`/`fmt_inr_compact` (USD → $1.2K / $1.23M) and `qty_fmt()` (4-dp fractional —
+Alpaca fills fractions, e.g. 1.21285603 AMZN). Stock names are `COMPANY (XNAS:SYM)` /
+`(XNYS:SYM)`; `extract_yf_ticker` returns the BARE Yahoo symbol, and **"no dot in the
+ticker" is how the app recognises a US name** (`is_us_ticker`). `fetch_live_prices`
+judges each name on ITS exchange's clock: `market_is_open_us` /
+`last_expected_close_date_us` (America/New_York, 09:30–16:00 = 19:00–01:30 IST summer
+/ 20:00–02:30 winter). Exchange pickers offer NASDAQ/NYSE on the US book.
+**Seeded from the Alpaca order report** (7 holdings, 9 fills, $2,492.50 stock +
+$7.48 commission = the report's $2,499.98). Prices stored EXCLUDING commission (as the
+report prints them); commission is itemised per fill in the transaction note — so US
+charges can be EXACT later, not estimated. `charges.PF_BROKER[4]="alpaca"` returns
+ZERO for now (an INR statutory formula on USD trades would be a wrong number).
+**Fenced off:** `alerts.get_holdings` EXCLUDES `US_PORTFOLIOS` — the India engine
+(IST windows, `(XNSE:` regexes, Screener, bhavcopy, INR digest) must never touch a
+Nasdaq name until its US twin exists. `PF_GROUP[4]="vishal_us"` (no Telegram route
+yet). The digest ignores pf4 (group filter). Delivery %/fundamentals show "—" for US.
+**Verified 26-Sep-2026:** Yahoo live quotes, weekly states and 10/21-DMA zones all
+resolve for AMZN/AVGO/GOOGL/MSFT/MU/NVDA/RKLB from a local IP. Day-one flowchart:
+AVGO + RKLB = EXIT, AMZN + GOOGL = BE CAUTIOUS (same TheWrap rules, unchanged
+thresholds).
+**PHASE 2 (not built):** (1) own the EOD data — nightly US closes into our own table
+(Tiingo primary / Stooq cross-check; no free official file exists like NSE's bhavcopy),
+with the split registry + gap detector live from day one (US splits are common);
+(2) live quotes for the ~1-min poller via **Finnhub** (free, 60/min, needs API key)
+with Yahoo + `_sane_quotes` as fallback; (3) fundamentals from **SEC EDGAR XBRL
+companyfacts** (official, free JSON — Python computes QoQ/YoY, no scraping, no model
+transcription); (4) filings → Telegram from **SEC EDGAR** (8-K events, 10-Q/10-K
+results, **Form 4 insider trades**, 13D/G) + Finnhub earnings calendar for the morning
+brief; (5) US digest (third email, after the US Friday close = Saturday ~01:30 IST)
+benchmarked to QQQ with the same alpha bar; (6) re-tune alert thresholds — mega-caps
+hug their DMAs far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the
+1% jump gate, 2% support band and 2× volume bar will over-fire; measure a week, then
+tighten. No delivery-% equivalent exists in the US (short interest is the nearest
+cousin — skipped). Needs FINNHUB/TIINGO keys as Render+GitHub secrets.
+
 ## Trade journal + exit audit loop
 Mark-as-Sold asks for an exit reason (EXIT signal / Profit booking / Thesis
 broken / Override+notes). `exit_audit.py` checks price 30/60/90 days later,
