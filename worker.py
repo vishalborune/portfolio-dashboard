@@ -88,6 +88,9 @@ BHAV_OPEN = (20, 5)         # nightly bhavcopy price store — the digest and ev
 BHAV_CLOSE = (23, 30)       # EOD alert depend on it, so it lives HERE, not only
 BHAV_RETRY = 900            # on GitHub's best-effort cron (which skipped 04-Sep
                             # and starved the digest into a reconcile block).
+US_STORE_OPEN = (7, 0)      # US EOD store (Vishal's US book, 26-Sep-2026): the US
+US_STORE_CLOSE = (9, 30)    # session closes 01:30/02:30 IST, so the morning AFTER
+US_STORE_RETRY = 900        # — Tue..Sat IST (Sat stores Friday's close).
 
 
 def _now():
@@ -138,6 +141,8 @@ def main():
     brief_day = None            # morning brief runs once per calendar day
     bhav_day = None             # nightly price store done for this date
     last_bhav_try = 0.0         # its retry throttle (file can publish late)
+    us_store_day = None         # US EOD store done for this (IST) date
+    last_us_store_try = 0.0
     # NOTE: deliberately NOT called `levels_day` — that name is already taken by
     # the fast-poll level cache above, which sets it at 08:30. Reusing it meant
     # this digest's `!= today` guard was already satisfied by 08:45 and it never
@@ -185,6 +190,37 @@ def main():
                     alerts.run_morning_levels()
                 except Exception as e:
                     print(f"⚠️ [worker] morning levels failed: {type(e).__name__}: {e}")
+
+            # ---- US EOD price store (Tue..Sat morning IST) -----------------
+            # Vishal's US book (portfolio 4). Yahoo daily bars -> our own table,
+            # then a health check against Finnhub's independent close, reported
+            # to the US Telegram group. Idempotent upsert; GitHub's 07:10 cron
+            # backstops it from a different IP in case Render's is blocked.
+            if (now.weekday() in (1, 2, 3, 4, 5)
+                    and _within(now, US_STORE_OPEN, US_STORE_CLOSE, weekends=True)
+                    and us_store_day != today
+                    and time.time() - last_us_store_try >= US_STORE_RETRY):
+                last_us_store_try = time.time()
+                try:
+                    import usprices
+                    _c = alerts.sb()
+                    n = usprices.store(_c)
+                    if n:
+                        us_store_day = today
+                        try:
+                            import signals
+                            for fn_name in ("fetch_weekly", "_fetch_daily"):
+                                fn = getattr(signals, fn_name, None)
+                                if fn is not None and hasattr(fn, "clear"):
+                                    fn.clear()
+                        except Exception:
+                            pass
+                        usprices.health(_c)
+                    else:
+                        print(f"[worker] usprices: nothing stored for {today} — will retry")
+                except Exception as e:
+                    print(f"⚠️ [worker] US price store failed: {type(e).__name__}: {e}")
+                    traceback.print_exc()
 
             # ---- nightly bhavcopy price store (WEEKDAYS, evening) ----------
             # Moved here 04-Sep-2026: GitHub's 20:00 cron silently skipped, our

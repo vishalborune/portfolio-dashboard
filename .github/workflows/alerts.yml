@@ -26,6 +26,7 @@ on:
     - cron: "3,18,33,48 3-9 * * 1-5"      # fast-poll: LIVE mainboard entry/add alerts (~1 min); off-peak minutes, first launch ~08:33 IST so it's live before the 09:15 open
     - cron: "50 14 * * 1-5"               # eod-entries: SME + final mainboard entry pass, 20:20 IST (after bhavcopy)
     - cron: "45 15 * * 1-5"               # deals: bulk/block deals in your stocks, 21:15 IST (after NSE publishes EOD deal files)
+    - cron: "40 1 * * 2-6"                # usprices: US EOD store + health, 07:10 IST Tue-Sat (US session closes 01:30/02:30 IST; Sat stores Friday). Backstop to the worker's 07:00 block.
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -54,6 +55,14 @@ on:
         default: false
       telegram_test_us:
         description: "Send a test message to the US Portfolio Alerts group?"
+        type: boolean
+        default: false
+      us_check:
+        description: "Diagnostic: US price layer check (Yahoo bars vs Finnhub quotes, read-only)?"
+        type: boolean
+        default: false
+      us_backfill:
+        description: "Backfill 2 years of US daily bars into our table (one-off / after adding a US name)?"
         type: boolean
         default: false
       run_filings_now:
@@ -263,6 +272,32 @@ jobs:
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+  usprices:
+    # US EOD store + health (Vishal's US book). The worker runs the same
+    # idempotent upsert at 07:00 IST; this is the different-IP backstop.
+    if: github.event.schedule == '40 1 * * 2-6' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.us_check == 'true' || github.event.inputs.us_backfill == 'true'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: |
+          if [ "${{ github.event.inputs.us_backfill }}" = "true" ]; then
+            python usprices.py backfill && python usprices.py health
+          elif [ "${{ github.event.inputs.us_check }}" = "true" ]; then
+            python usprices.py check
+          else
+            python usprices.py store && python usprices.py health
+          fi
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
   telegram-test-us:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.telegram_test_us == 'true'
