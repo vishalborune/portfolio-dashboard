@@ -33,7 +33,7 @@ CLI:  python usfundamentals.py NVDA        print the quarterly table + ratios
 """
 from __future__ import annotations
 import json, os, re, sys, time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -182,6 +182,17 @@ def snapshot(sym: str, cik: int, price: float | None, expect_title: str | None =
     rev = series["revenue"]
     if len(rev) < 2:
         return {"symbol": sym, "entity": ent, "error": "no quarterly revenue in companyfacts"}
+    # D&A: MSFT / GOOGL / AVGO file NO combined D&A tag (AVGO's last one is from
+    # 2018) — they tag Depreciation and AmortizationOfIntangibleAssets separately.
+    # A combined tag older than the revenue series by >200 days is stale; rebuild
+    # from the parts. Depreciation alone (when amortisation is missing for a
+    # quarter) UNDERSTATES EBITDA — the conservative direction.
+    newest_rev = list(rev)[-1]
+    da_ok = series["da"] and (date.fromisoformat(newest_rev) - date.fromisoformat(list(series["da"])[-1])).days <= 200
+    if not da_ok:
+        dep = quarterly(_pick(gaap, ["Depreciation", "DepreciationNonproduction"]))
+        amo = quarterly(_pick(gaap, ["AmortizationOfIntangibleAssets"]))
+        series["da"] = {k: v + amo.get(k, 0.0) for k, v in dep.items()} if dep else {}
     ends = list(rev)[-9:]
     rows = []
     for i, end in enumerate(ends):
@@ -211,6 +222,13 @@ def snapshot(sym: str, cik: int, price: float | None, expect_title: str | None =
     debt = instant(_pick(gaap, CONCEPTS["lt_debt"]))
     cash = instant(_pick(gaap, CONCEPTS["cash"]))
     sh = instant((dei.get("EntityCommonStockSharesOutstanding") or {}).get("units", {}).get("shares") or [])
+    if not sh:
+        # Multi-class issuers (Alphabet) carry no dei total in companyfacts; the
+        # balance-sheet CommonStockSharesOutstanding is the combined count.
+        sh = instant(_pick(gaap, ["CommonStockSharesOutstanding"], "shares"))
+    if not sh:
+        wa = quarterly(_pick(gaap, ["WeightedAverageNumberOfDilutedSharesOutstanding"], "shares"))
+        sh = (list(wa)[-1], wa[list(wa)[-1]]) if wa else None
     out["equity"], out["lt_debt"], out["cash"] = (eq[1] if eq else None), (debt[1] if debt else None), (cash[1] if cash else None)
     out["shares"] = sh[1] if sh else None
     out["price"] = price
@@ -274,7 +292,7 @@ def update_all(client) -> int:
             print(f"  [usfund] {sym}: {s['error']} — not stored")
             continue
         f = lambda v: None if v is None else float(v)
-        row = {"ticker": sym, "fetched_at": datetime.utcnow().isoformat(),
+        row = {"ticker": sym, "fetched_at": datetime.now(timezone.utc).isoformat(),
                "market_cap_cr": f(s["market_cap"] / B if s["market_cap"] else None),   # $ BILLIONS for US
                "pe": f(s["pe"]), "pb": f(s["pb"]), "book_value": f(s["book_value_ps"]),
                "roe": f(s["roe_pct"]), "roce": f(s["roce_pct"]),
