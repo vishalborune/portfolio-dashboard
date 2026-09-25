@@ -520,8 +520,10 @@ charges can be EXACT later, not estimated. `charges.PF_BROKER[4]="alpaca"` retur
 ZERO for now (an INR statutory formula on USD trades would be a wrong number).
 **Fenced off:** `alerts.get_holdings` EXCLUDES `US_PORTFOLIOS` — the India engine
 (IST windows, `(XNSE:` regexes, Screener, bhavcopy, INR digest) must never touch a
-Nasdaq name until its US twin exists. `PF_GROUP[4]="vishal_us"` (no Telegram route
-yet). The digest ignores pf4 (group filter). Delivery %/fundamentals show "—" for US.
+Nasdaq name until its US twin exists. `PF_GROUP[4]="vishal_us"` routes to the **"US Portfolio Alerts" supergroup,
+chat_id -1004304585068** via `notify.chat_for_group("vishal_us")` (env override
+`TELEGRAM_CHAT_ID_US`; a chat id is not a secret). Connection test sent 26-Sep-2026
+via the `telegram_test_us` tick-box; `list_telegram_chats` discovers new group IDs. The digest ignores pf4 (group filter). Delivery %/fundamentals show "—" for US.
 **Verified 26-Sep-2026:** Yahoo live quotes, weekly states and 10/21-DMA zones all
 resolve for AMZN/AVGO/GOOGL/MSFT/MU/NVDA/RKLB from a local IP. Day-one flowchart:
 AVGO + RKLB = EXIT, AMZN + GOOGL = BE CAUTIOUS (same TheWrap rules, unchanged
