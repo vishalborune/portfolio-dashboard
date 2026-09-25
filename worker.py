@@ -143,6 +143,8 @@ def main():
     last_bhav_try = 0.0         # its retry throttle (file can publish late)
     us_store_day = None         # US EOD store done for this (IST) date
     last_us_store_try = 0.0
+    us_levels, us_wema, us_levels_day = {}, {}, None   # US live poller (NY clock)
+    last_us_live = 0.0
     # NOTE: deliberately NOT called `levels_day` — that name is already taken by
     # the fast-poll level cache above, which sets it at 08:30. Reusing it meant
     # this digest's `!= today` guard was already satisfied by 08:45 and it never
@@ -174,6 +176,36 @@ def main():
                     print(f"[{now:%H:%M:%S}] live: {priced}/{len(levels)} priced")
                 except Exception as e:
                     print(f"⚠️ [worker] live cycle failed: {type(e).__name__}: {e}")
+
+            # ---- US book: live entry/add checks on NEW YORK hours -----------
+            # Same fast_cycle as India, run under alerts.set_market("US"):
+            # US holdings/watchlist only, Finnhub quotes, $ in messages, the
+            # US Telegram group. Levels are computed once per NY session from
+            # our own stored bars. try/finally so the market context can never
+            # leak into the next Indian pass.
+            try:
+                import usprices as _usp
+                _ny_today = datetime.now(_usp.NY).date()
+                if (_usp.market_is_open() or (datetime.now(_usp.NY).hour == 9)) and us_levels_day != _ny_today:
+                    alerts.set_market("US")
+                    try:
+                        print(f"[worker] computing US levels for {_ny_today}…")
+                        us_levels, us_wema = alerts.compute_fast_levels(client)
+                        us_levels_day = _ny_today
+                    finally:
+                        alerts.set_market("IN")
+                if (_usp.market_is_open() and us_levels
+                        and time.time() - last_us_live >= LIVE_INTERVAL):
+                    last_us_live = time.time()
+                    alerts.set_market("US")
+                    try:
+                        priced = alerts.fast_cycle(client, us_levels, us_wema)
+                        print(f"[{now:%H:%M:%S}] US live: {priced}/{len(us_levels)} priced")
+                    finally:
+                        alerts.set_market("IN")
+            except Exception as e:
+                alerts.set_market("IN")
+                print(f"⚠️ [worker] US live cycle failed: {type(e).__name__}: {e}")
 
             # ---- morning 'today's agenda' brief (once/day ~08:30, 7 days) ---
             if _within(now, BRIEF_OPEN, BRIEF_CLOSE, weekends=True) and brief_day != today:
@@ -216,6 +248,15 @@ def main():
                         except Exception:
                             pass
                         usprices.health(_c)
+                        # State changes + EOD entry/stop pass for the US book,
+                        # off the closes just stored (US equivalent of the
+                        # 20:47 states + 20:20 eod-entries runs).
+                        alerts.set_market("US")
+                        try:
+                            alerts.run_states()
+                            alerts.run_eod_entries()
+                        finally:
+                            alerts.set_market("IN")
                     else:
                         print(f"[worker] usprices: nothing stored for {today} — will retry")
                 except Exception as e:

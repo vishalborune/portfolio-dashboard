@@ -100,12 +100,43 @@ def sb():
     return _ReadOnlyClient(client) if _dry() else client
 
 
-# Vishal's US book (26-Sep-2026). This engine is India-only: NSE/BSE feeds,
-# IST session windows, Screener fundamentals, bhavcopy prices. Until the US
-# twin exists, its holdings are EXCLUDED here so no India-shaped code path
-# (an "(XNSE:" regex returning None, an IST market window, an INR digest)
-# silently mis-handles a Nasdaq name. The dashboard shows the US book fine.
+# MARKET CONTEXT (26-Sep-2026, Vishal's US book = portfolio 4). One process
+# runs ONE market at a time: "IN" (default) sees the Indian portfolios, "US"
+# sees US_PORTFOLIOS. Every loader below filters through it, so the SAME
+# check_* functions, dedup keys and thresholds serve both books — what differs
+# per market is the quote source (Yahoo vs Finnhub), the currency symbol in
+# messages, the Telegram group, and the session clock (the caller's problem:
+# worker.py runs the US cycle on New York hours). Switch with set_market(),
+# always in try/finally so an exception can't leave the engine in the wrong
+# market for the next Indian pass.
 US_PORTFOLIOS = {4}
+_MARKET = {"market": "IN"}
+
+
+def set_market(market: str):
+    _MARKET["market"] = "US" if str(market).upper() == "US" else "IN"
+
+
+def market() -> str:
+    return _MARKET["market"]
+
+
+def _cur() -> str:
+    """Currency symbol for alert text in the active market."""
+    return "$" if market() == "US" else "₹"
+
+
+def _market_pfs(rows):
+    """Keep only rows whose portfolio_id belongs to the active market."""
+    us = market() == "US"
+    return [r for r in rows if (int(r.get("portfolio_id", 1)) in US_PORTFOLIOS) == us]
+
+
+def _wl(client, cols: str = "*") -> list:
+    """Watchlist rows for the active market (portfolio_id always fetched)."""
+    sel = cols if (cols.strip() == "*" or "portfolio_id" in cols) else cols + ", portfolio_id"
+    rows = client.table("watchlist").select(sel).execute().data or []
+    return _market_pfs(rows)
 
 
 def get_holdings(client) -> pd.DataFrame:
@@ -114,7 +145,8 @@ def get_holdings(client) -> pd.DataFrame:
     if not df.empty and "portfolio_id" not in df.columns:
         df["portfolio_id"] = 1
     if not df.empty:
-        df = df[~df["portfolio_id"].astype(int).isin(US_PORTFOLIOS)].reset_index(drop=True)
+        us = market() == "US"
+        df = df[df["portfolio_id"].astype(int).isin(US_PORTFOLIOS) == us].reset_index(drop=True)
     return df
 
 
@@ -125,24 +157,33 @@ PF_GROUP = {1: "vishal", 2: "lakshmi", 3: "lakshmi", 4: "vishal_us"}
 # Vishal opted out — Lakshmi is the TA lead and acts on alerts; Vishal's
 # dashboard still shows all states, and his Sunday email digest continues.
 # To re-enable Vishal's pings: add "vishal" back to this set.
-TELEGRAM_ALERT_GROUPS = {"lakshmi"}
-PF_NAME = {1: "Vishal", 2: "Lakshmi", 3: "Abinaya"}
+TELEGRAM_ALERT_GROUPS = {"lakshmi", "vishal_us"}
+PF_NAME = {1: "Vishal", 2: "Lakshmi", 3: "Abinaya", 4: "Vishal US"}
 
 
 def chat_id_for_group(group: str):
-    # Only ONE Telegram group exists — the one already set up. It now carries
-    # Lakshmi + Abinaya's alerts (see TELEGRAM_ALERT_GROUPS below for which
-    # portfolios' data actually gets sent to it).
+    """Telegram destination per owner group: the default TELEGRAM_CHAT_ID group
+    for Lakshmi + Abinaya; the US Portfolio Alerts group for "vishal_us"
+    (26-Sep-2026, routing lives in notify.GROUP_CHAT_IDS)."""
     import os as _os
-    return _os.environ.get("TELEGRAM_CHAT_ID")
+    try:
+        from notify import chat_for_group
+        override = chat_for_group(group)
+    except Exception:
+        override = None
+    return override or _os.environ.get("TELEGRAM_CHAT_ID")
 
 
 def extract_yf_ticker(name: str):
-    m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", str(name))
+    m = re.search(r"\((X(?:NSE|BOM|NAS|NYS)):([^)]+)\)", str(name))
     if not m:
         return None
     exch, sym = m.group(1), m.group(2).strip()
-    return f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+    if exch == "XNSE":
+        return f"{sym}.NS"
+    if exch == "XBOM":
+        return f"{sym}.BO"
+    return sym.replace(".", "-")          # US: bare Yahoo/Finnhub symbol (BRK.B -> BRK-B)
 
 
 def short_name(name: str) -> str:
@@ -186,7 +227,7 @@ def check_watchlist_entries(client, price_fn=None):
     Entry math is bhavcopy-first (signals._fetch_daily), so SME watchlist names
     ARE covered now — off EOD closes in the evening pass, since they have no live
     feed (the old Yahoo-only 'SME skipped' limitation is gone, 21-Jul-2026)."""
-    rows = client.table("watchlist").select("*").execute().data or []
+    rows = _wl(client, "*")
     if not rows:
         return
 
@@ -257,21 +298,21 @@ def check_watchlist_entries(client, price_fn=None):
             dup_of_holding_add = (zone == "TRANCHE 2" and (ticker, grp) in held)
             if (zone in ("TRANCHE 1", "TRANCHE 2") and not dup_of_holding_add
                     and (ticker, grp, "ZONE") not in already):
-                which = ("1st tranche (10DMA ₹{:,.2f})".format(d["10DMA"])
+                which = ("1st tranche (10DMA {}{:,.2f})".format(_cur(), d["10DMA"])
                          if zone == "TRANCHE 1"
-                         else "2nd & FINAL tranche (21DMA ₹{:,.2f})".format(d["21DMA"]))
+                         else "2nd & FINAL tranche (21DMA {}{:,.2f})".format(_cur(), d["21DMA"]))
                 msgs_by_group.setdefault(grp, []).append(
                     f"🎯 {tag}<b>{e['name']}</b> — entry zone reached\n"
-                    f"CMP ₹{cmp_:,.2f} at the {which}")
+                    f"CMP {_cur()}{cmp_:,.2f} at the {which}")
                 to_log.append((ticker, grp, "ZONE"))
             hits = [(pf, t) for pf, t in ge["targets"] if cmp_ <= t]
             if hits and (ticker, grp, "TARGET") not in already:
                 whose = ", ".join(
-                    f"₹{t:,.2f} ({PF_NAME.get(pf, pf)})" if grp == "lakshmi"
-                    else f"₹{t:,.2f}" for pf, t in hits)
+                    f"{_cur()}{t:,.2f} ({PF_NAME.get(pf, pf)})" if grp == "lakshmi"
+                    else f"{_cur()}{t:,.2f}" for pf, t in hits)
                 msgs_by_group.setdefault(grp, []).append(
                     f"💰 {tag}<b>{e['name']}</b> — target buy price hit\n"
-                    f"CMP ₹{cmp_:,.2f} ≤ target {whose}")
+                    f"CMP {_cur()}{cmp_:,.2f} ≤ target {whose}")
                 to_log.append((ticker, grp, "TARGET"))
 
     sent = 0
@@ -347,7 +388,7 @@ def check_holding_adds(client, price_fn=None):
             if zone == "TRANCHE 2" and (ticker, grp, "ADD21") not in already:
                 msgs_by_group.setdefault(grp, []).append(
                     f"➕ {tag}<b>{e['name']}</b> — add zone (holding)\n"
-                    f"CMP ₹{cmp_:,.2f} at the FINAL-tranche 21DMA ₹{d['21DMA']:,.2f}")
+                    f"CMP {_cur()}{cmp_:,.2f} at the FINAL-tranche 21DMA {_cur()}{d['21DMA']:,.2f}")
                 to_log.append((ticker, grp, "ADD21"))
 
     sent = 0
@@ -455,10 +496,10 @@ def check_risk_stops(client, prices: dict):
             if cost_hits and (ticker, grp, "STOP10") not in already:
                 whose = ", ".join(
                     ((f"{PF_NAME.get(pf, pf)} " if grp == "lakshmi" else "")
-                     + f"cost ₹{c:,.2f} ({(cmp_/c - 1)*100:+.0f}%)") for pf, c in cost_hits)
+                     + f"cost {_cur()}{c:,.2f} ({(cmp_/c - 1)*100:+.0f}%)") for pf, c in cost_hits)
                 msgs_by_group.setdefault(grp, []).append(
                     f"🛑 {_grp_tag(grp, [pf for pf, _ in cost_hits])}<b>{e['name']}</b> — loss stop\n"
-                    f"CMP ₹{cmp_:,.2f}, ≥{int(STOP_FROM_COST*100)}% below {whose}")
+                    f"CMP {_cur()}{cmp_:,.2f}, ≥{int(STOP_FROM_COST*100)}% below {whose}")
                 to_log.append((ticker, grp, "STOP10"))
             # Trailing stop — off the recent peak (price-based, same for all holders)
             # dedup key "PEAK17" is a STABLE historical string, independent of the
@@ -469,7 +510,7 @@ def check_risk_stops(client, prices: dict):
                 dd = (cmp_ / peak - 1) * 100
                 msgs_by_group.setdefault(grp, []).append(
                     f"⛔ {_grp_tag(grp, [pf for pf, _ in holders])}<b>{e['name']}</b> — trailing stop\n"
-                    f"CMP ₹{cmp_:,.2f} is {dd:+.0f}% from its ~6-mo peak ₹{peak:,.2f}")
+                    f"CMP {_cur()}{cmp_:,.2f} is {dd:+.0f}% from its ~6-mo peak {_cur()}{peak:,.2f}")
                 to_log.append((ticker, grp, "PEAK17"))
 
     sent = 0
@@ -543,7 +584,7 @@ def check_wema_touch(client, prices: dict):
             pct = (cmp_ / wema - 1) * 100
             msgs_by_group.setdefault(grp, []).append(
                 f"📉 {_grp_tag(grp, pfs)}<b>{e['name']}</b> — at the 10-week EMA\n"
-                f"CMP ₹{cmp_:,.2f} vs 10wEMA ₹{wema:,.2f} ({pct:+.1f}%)")
+                f"CMP {_cur()}{cmp_:,.2f} vs 10wEMA {_cur()}{wema:,.2f} ({pct:+.1f}%)")
             to_log.append((ticker, grp, "W10EMA"))
 
     sent = 0
@@ -600,8 +641,7 @@ def manual_support_levels(client) -> dict:
     manually-entered columns. Empty dict (and a loud log line) if the migration
     hasn't been run yet, so the alert path degrades to silence, never to a crash."""
     try:
-        rows = client.table("watchlist").select(
-            "stock_name, support_minor, support_major").execute().data or []
+        rows = _wl(client, "stock_name, support_minor, support_major")
     except Exception as e:
         print(f"⚠️ [support] cannot read manual levels ({type(e).__name__}: {e}) — "
               f"has the support_minor/support_major migration been run? "
@@ -643,7 +683,7 @@ def check_support_touch(client, prices: dict):
     is the signal here (unlike the 5-EMA touch, which needs a dip-and-jump):
     he wants to place a limit order as price APPROACHES support, not after it
     has already bounced. Separate dedup kinds so one can't suppress the other."""
-    rows = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    rows = _wl(client, "stock_name, portfolio_id")
     if not rows:
         return
     today_iso = date.today().isoformat()
@@ -683,7 +723,7 @@ def check_support_touch(client, prices: dict):
                 icon = "🛡" if kind == "SUPMAJ" else "🔹"
                 msgs_by_group.setdefault(grp, []).append(
                     f"{icon} {_grp_tag(grp, pfs)}<b>{e['name']}</b> — {where} {label} support\n"
-                    f"CMP ₹{cmp_:,.2f} vs {label} support ₹{level:,.2f} ({dist:+.1f}%)")
+                    f"CMP {_cur()}{cmp_:,.2f} vs {label} support {_cur()}{level:,.2f} ({dist:+.1f}%)")
                 to_log.append((ticker, grp, kind))
 
     sent = 0
@@ -722,7 +762,7 @@ def check_ema5_touch(client, prices: dict):
     That captures both a pullback-to-5EMA bounce and a cross-up through it, but
     excludes stocks merely loitering on the line (no dip, or no jump) and anything
     not trending. Dedup kind EMA5, once/stock/group/day."""
-    rows = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+    rows = _wl(client, "stock_name, portfolio_id")
     if not rows:
         return
     today_iso = date.today().isoformat()
@@ -763,7 +803,7 @@ def check_ema5_touch(client, prices: dict):
             pct = (cmp_ / ema5 - 1) * 100
             msgs_by_group.setdefault(grp, []).append(
                 f"⚡ {_grp_tag(grp, pfs)}<b>{e['name']}</b> — bounced off the 5-day EMA (uptrend)\n"
-                f"CMP ₹{cmp_:,.2f} vs 5EMA ₹{ema5:,.2f} ({pct:+.1f}%), above 21-DMA")
+                f"CMP {_cur()}{cmp_:,.2f} vs 5EMA {_cur()}{ema5:,.2f} ({pct:+.1f}%), above 21-DMA")
             to_log.append((ticker, grp, "EMA5"))
 
     sent = 0
@@ -814,7 +854,7 @@ def _all_entry_tickers(client) -> set:
         if t:
             ts.add(t)
     try:
-        rows = client.table("watchlist").select("stock_name").execute().data or []
+        rows = _wl(client, "stock_name")
     except Exception:
         rows = []
     for r in rows:
@@ -827,7 +867,18 @@ def _all_entry_tickers(client) -> set:
 def _live_quotes(tickers: list) -> dict:
     """{ticker: (last_price, day_low)} live from Yahoo for MAINBOARD names.
     Modest thread count (Render/Yahoo storm history, house rule #4). Failures
-    log WHY and return (None, None) for that ticker — never a fake price."""
+    log WHY and return (None, None) for that ticker — never a fake price.
+    In the US market the quotes come from Finnhub (keyed API, 60/min free);
+    the same _sane_quotes band is applied by the caller either way."""
+    if market() == "US":
+        try:
+            import usprices
+            q = usprices.finnhub_quotes(list(tickers))
+            return {t: (q[t]["last"], q[t].get("low") or q[t]["last"]) if t in q else (None, None)
+                    for t in tickers}
+        except Exception as e:
+            print(f"⚠️ [fast-poll] Finnhub quote batch failed: {type(e).__name__}: {e}")
+            return {t: (None, None) for t in tickers}
     import yfinance as yf
     from concurrent.futures import ThreadPoolExecutor
 
@@ -924,7 +975,7 @@ def run_eod_entries():
     # 5-day EMA touch on the WATCHLIST off EOD closes (the only pass for SME
     # watchlist names; a final authoritative pass for mainboard).
     try:
-        wl = client.table("watchlist").select("stock_name").execute().data or []
+        wl = _wl(client, "stock_name")
         ema5_prices, seen5 = {}, set()
         for r in wl:
             t = extract_yf_ticker(r.get("stock_name"))
@@ -941,7 +992,7 @@ def run_eod_entries():
     # Support levels on the WATCHLIST off EOD closes — the only pass for SME
     # watchlist names, and a settled-close backstop for mainboard.
     try:
-        wl = client.table("watchlist").select("stock_name").execute().data or []
+        wl = _wl(client, "stock_name")
         manual_sup = manual_support_levels(client) if SUPPORT_ALERTS_REQUIRE_MANUAL else {}
         sup_prices, seen_s, no_level = {}, set(), []
         for r in wl:
@@ -2449,7 +2500,7 @@ def run_filings(nse_only: bool = False):
     client = sb()
     holdings = get_holdings(client)
     try:
-        watch = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+        watch = _wl(client, "stock_name, portfolio_id")
     except Exception:
         watch = []
 
@@ -2615,7 +2666,7 @@ def run_filings_audit():
             scope.setdefault(m.group(1).strip(),
                              re.sub(r"\s*\(XNSE:[^)]+\)\s*$", "", str(h["stock_name"])).strip())
     try:
-        for r in (client.table("watchlist").select("stock_name").execute().data or []):
+        for r in (_wl(client, "stock_name")):
             m = re.search(r"\(XNSE:([^)]+)\)", str(r.get("stock_name")))
             if m:
                 scope.setdefault(m.group(1).strip(),
@@ -2731,7 +2782,7 @@ def run_deals():
     client = sb()
     holdings = get_holdings(client)
     try:
-        watch = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+        watch = _wl(client, "stock_name, portfolio_id")
     except Exception:
         watch = []
 
@@ -3294,7 +3345,7 @@ def run_morning_levels():
             if t:
                 hold_names[t] = short_name(h["stock_name"])
     try:
-        wl = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+        wl = _wl(client, "stock_name, portfolio_id")
     except Exception:
         wl = []
     watch_names = {}
@@ -3397,7 +3448,7 @@ def run_morning_brief():
             if t:
                 hold_names[t] = short_name(h["stock_name"])
     try:
-        wl = client.table("watchlist").select("stock_name, portfolio_id").execute().data or []
+        wl = _wl(client, "stock_name, portfolio_id")
     except Exception:
         wl = []
     watch_names = {}
@@ -4224,6 +4275,16 @@ if __name__ == "__main__":
         mins = float(sys.argv[2]) if len(sys.argv) > 2 else 16.0
         secs = int(sys.argv[3]) if len(sys.argv) > 3 else 60
         run_fast_poll(minutes=mins, interval=secs)
+    elif mode == "us-fast-poll":
+        set_market("US")
+        mins = float(sys.argv[2]) if len(sys.argv) > 2 else 16.0
+        run_fast_poll(minutes=mins, interval=int(sys.argv[3]) if len(sys.argv) > 3 else 60)
+    elif mode == "us-eod":
+        # US book: state changes + EOD entry/stop pass, run the morning after
+        # the US close (after usprices.store). Same functions, US context.
+        set_market("US")
+        run_states()
+        run_eod_entries()
     else:
         {"states": run_states,
          "filings": run_filings,

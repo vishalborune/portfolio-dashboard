@@ -213,7 +213,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # The flowchart itself
 # ---------------------------------------------------------------------------
 
-def classify_row(row, prev_row=None) -> dict:
+def classify_row(row, prev_row=None, cur: str = "₹") -> dict:
     """Run one weekly bar through the flowchart. Returns state + reasons.
 
     prev_row enables the EXIT confirmation buffer (option (a)):
@@ -245,15 +245,15 @@ def classify_row(row, prev_row=None) -> dict:
         if close < row["support"]:
             detail["state"] = "EXIT"
             detail["reason"] = (f"EMAs converged ({detail['ema_spread_pct']}% spread) and close "
-                                f"₹{detail['close']} broke below swing support ₹{detail['support']}")
+                                f"{cur}{detail['close']} broke below swing support {cur}{detail['support']}")
         elif close > row["resistance"]:
             detail["state"] = "BULLISH SIGNAL"
-            detail["reason"] = (f"EMAs converged and close ₹{detail['close']} broke above "
-                                f"swing resistance ₹{detail['resistance']}")
+            detail["reason"] = (f"EMAs converged and close {cur}{detail['close']} broke above "
+                                f"swing resistance {cur}{detail['resistance']}")
         else:
             detail["state"] = "WAIT/WATCH"
             detail["reason"] = (f"EMAs converged ({detail['ema_spread_pct']}% spread); price inside "
-                                f"₹{detail['support']}–₹{detail['resistance']} range")
+                                f"{cur}{detail['support']}–{cur}{detail['resistance']} range")
     else:
         # RIGHT BRANCH — trending
         below_40 = close < row["ema40"]
@@ -265,30 +265,30 @@ def classify_row(row, prev_row=None) -> dict:
         if below_40 and (hard_break or prev_below_40):
             detail["state"] = "EXIT"
             if hard_break:
-                detail["reason"] = (f"Close ₹{detail['close']} is {EXIT_HARD_BREAK_PCT}%+ below the "
-                                    f"40-wk EMA ₹{detail['ema40']} — hard break, exit confirmed")
+                detail["reason"] = (f"Close {cur}{detail['close']} is {EXIT_HARD_BREAK_PCT}%+ below the "
+                                    f"40-wk EMA {cur}{detail['ema40']} — hard break, exit confirmed")
             else:
                 detail["reason"] = (f"Second consecutive weekly close below the 40-wk EMA "
-                                    f"(₹{detail['close']} vs ₹{detail['ema40']}) — exit confirmed")
+                                    f"({cur}{detail['close']} vs {cur}{detail['ema40']}) — exit confirmed")
         elif below_40:
             # First mild close below 40W — warning week, not exit yet
             detail["state"] = "BE CAUTIOUS"
             detail["reason"] = (f"⚠️ First weekly close below the 40-wk EMA "
-                                f"(₹{detail['close']} vs ₹{detail['ema40']}) — one more weekly close "
+                                f"({cur}{detail['close']} vs {cur}{detail['ema40']}) — one more weekly close "
                                 f"below, or a 3%+ break, confirms EXIT")
         elif close < row["ema20"]:
             detail["state"] = "BE CAUTIOUS"
-            detail["reason"] = (f"Close ₹{detail['close']} below 20-wk EMA ₹{detail['ema20']} "
-                                f"but holding 40-wk ₹{detail['ema40']}")
+            detail["reason"] = (f"Close {cur}{detail['close']} below 20-wk EMA {cur}{detail['ema20']} "
+                                f"but holding 40-wk {cur}{detail['ema40']}")
         elif close < row["ema10"]:
             detail["state"] = "MOMENTUM FADING"
-            detail["reason"] = (f"Close ₹{detail['close']} below 10-wk EMA ₹{detail['ema10']} "
-                                f"but holding 20-wk ₹{detail['ema20']}")
+            detail["reason"] = (f"Close {cur}{detail['close']} below 10-wk EMA {cur}{detail['ema10']} "
+                                f"but holding 20-wk {cur}{detail['ema20']}")
         else:
             detail["state"] = "MAINTAIN/ADD"
-            detail["reason"] = (f"Close ₹{detail['close']} above all EMAs "
-                                f"(10wk ₹{detail['ema10']} / 20wk ₹{detail['ema20']} / "
-                                f"40wk ₹{detail['ema40']}) — trend healthy")
+            detail["reason"] = (f"Close {cur}{detail['close']} above all EMAs "
+                                f"(10wk {cur}{detail['ema10']} / 20wk {cur}{detail['ema20']} / "
+                                f"40wk {cur}{detail['ema40']}) — trend healthy")
     return detail
 
 
@@ -382,7 +382,9 @@ def current_state(ticker: str) -> dict:
     df = _reconcile_last_week(ticker, df)
     ind = compute_indicators(df)
     prev = ind.iloc[-2] if len(ind) >= 2 else None
-    d = classify_row(ind.iloc[-1], prev_row=prev)
+    # US names (bare symbol, no .NS/.BO) read in dollars — the reason text is
+    # what the Telegram state alert prints (26-Sep-2026, Vishal's US book).
+    d = classify_row(ind.iloc[-1], prev_row=prev, cur="$" if "." not in str(ticker) else "₹")
     d["ticker"] = ticker
     d["as_of"] = str(ind["date"].iloc[-1].date()) if hasattr(ind["date"].iloc[-1], "date") else str(ind["date"].iloc[-1])
     return d

@@ -528,20 +528,47 @@ via the `telegram_test_us` tick-box; `list_telegram_chats` discovers new group I
 resolve for AMZN/AVGO/GOOGL/MSFT/MU/NVDA/RKLB from a local IP. Day-one flowchart:
 AVGO + RKLB = EXIT, AMZN + GOOGL = BE CAUTIOUS (same TheWrap rules, unchanged
 thresholds).
-**PHASE 2 (not built):** (1) own the EOD data — nightly US closes into our own table
-(Tiingo primary / Stooq cross-check; no free official file exists like NSE's bhavcopy),
-with the split registry + gap detector live from day one (US splits are common);
-(2) live quotes for the ~1-min poller via **Finnhub** (free, 60/min, needs API key)
-with Yahoo + `_sane_quotes` as fallback; (3) fundamentals from **SEC EDGAR XBRL
-companyfacts** (official, free JSON — Python computes QoQ/YoY, no scraping, no model
-transcription); (4) filings → Telegram from **SEC EDGAR** (8-K events, 10-Q/10-K
-results, **Form 4 insider trades**, 13D/G) + Finnhub earnings calendar for the morning
-brief; (5) US digest (third email, after the US Friday close = Saturday ~01:30 IST)
-benchmarked to QQQ with the same alpha bar; (6) re-tune alert thresholds — mega-caps
-hug their DMAs far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the
-1% jump gate, 2% support band and 2× volume bar will over-fire; measure a week, then
-tighten. No delivery-% equivalent exists in the US (short interest is the nearest
-cousin — skipped). Needs FINNHUB/TIINGO keys as Render+GitHub secrets.
+**PHASE 2a — PRICE LAYER + ALERT TWIN (shipped 26-Sep-2026).**
+- **`usprices.py`** stores Yahoo daily bars for every US holding/watchlist name into
+  `sme_daily_prices` under the BARE symbol, so `signals` is own-data-first for US names
+  with NO flowchart changes (verified: NVDA 105 weekly / 260 daily bars from our table).
+  Cross-checks each stored close against **Finnhub's** independent quote (sample size
+  always reported) and Telegrams findings to the US group. **Stooq is behind a
+  JavaScript challenge** (same wall as BSE's API) and **Finnhub candles are premium** —
+  so Yahoo bars are the EOD source; if Render's IP ever blocks them the health check
+  says so and GitHub's 07:10 cron (different IP) backstops. Yahoo bars are
+  split-ADJUSTED at write time (unlike bhavcopy) — a split AFTER rows were stored
+  leaves a step the gap detector flags; register it in `CORPORATE_ACTIONS` as usual.
+  Backfilled 2y (3,514 rows, 7/7). Worker block 07:00–09:30 IST Tue–Sat (the morning
+  after the US close; Sat stores Friday). CLI: `check | health | quotes | store |
+  backfill`; tick-boxes `us_check`, `us_backfill`.
+- **Alert engine = the SAME `alerts.py` under a MARKET CONTEXT.** `alerts.set_market
+  ("US")` makes `get_holdings`/`_wl()` (every watchlist read now goes through it) return
+  only `US_PORTFOLIOS`, `_live_quotes` use Finnhub, `_cur()` put `$` in messages, and
+  `chat_id_for_group("vishal_us")` resolve to the US group via `notify.chat_for_group`.
+  The check_* functions, dedup keys (group `vishal_us`, alert_state per portfolio) and
+  thresholds are untouched. **Always switch in try/finally** — a leaked "US" context
+  would make the next Indian pass see the wrong book. CLI: `python alerts.py us-eod`
+  (states + EOD entry/stop pass) and `us-fast-poll`. Worker: US levels computed once
+  per NY session, `fast_cycle` every 60s while `usprices.market_is_open()` (NY clock,
+  19:00–01:30 / 20:00–02:30 IST); `us-eod` runs right after the 07:00 store (the US
+  equivalent of the 20:47 states + 20:20 eod-entries). Dry-run verified 26-Sep-2026:
+  7 state changes + 1 add-zone (GOOGL at its 21-DMA) routed to chat -1004304585068,
+  context reverted to IN (85 holdings) afterwards. First real run will announce all 7
+  states (alert_state is empty for pf4) — expected, same as India's day one.
+  Thresholds are still India's (see 2b-6 below): expect over-firing until measured.
+**PHASE 2b (not built):** (3) fundamentals from **SEC EDGAR XBRL companyfacts**
+(official, free JSON — Python computes QoQ/YoY, no scraping, no model transcription);
+(4) filings → Telegram from **SEC EDGAR** (8-K events, 10-Q/10-K results, **Form 4
+insider trades**, 13D/G) + Finnhub earnings calendar for the morning brief; (5) US
+digest (third email, after the US Friday close = Saturday ~01:30 IST) benchmarked to
+QQQ with the same alpha bar; (6) re-tune alert thresholds — mega-caps hug their DMAs
+far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the 1% jump gate,
+2% support band and 2× volume bar will over-fire; measure a week, then tighten. No
+delivery-% equivalent exists in the US (short interest is the nearest cousin —
+skipped). `FINNHUB_API_KEY` is in local secrets + GitHub; **Render worker still needs
+it added by hand** (Vishal, Environment tab) or the US poller logs "FINNHUB_API_KEY
+missing" every cycle and prices nothing.
 
 ## Trade journal + exit audit loop
 Mark-as-Sold asks for an exit reason (EXIT signal / Profit booking / Thesis

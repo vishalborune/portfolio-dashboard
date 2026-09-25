@@ -200,6 +200,7 @@ def finnhub_quotes(symbols: list[str]) -> dict:
                 print(f"  [usprices] finnhub {s}: empty quote {j}")
                 continue
             out[s] = {"last": last, "prev_close": pc or None,
+                      "low": float(j.get("l")) if j.get("l") else None,
                       "day_pct": float(j.get("dp")) if j.get("dp") is not None else None,
                       "ts": datetime.fromtimestamp(int(j.get("t") or 0), NY)}
         except Exception as e:
