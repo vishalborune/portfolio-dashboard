@@ -468,6 +468,14 @@ switch sources without disclosure.
   same class of bug as `send_telegram`'s documented return-False contract.
   The manual `send_digest_now` tick-box FORCE-sends (bypasses the guard): a human pressing
   the button means "send it now", and the guard would otherwise refuse the rescue.
+  **Re-send ONE book only (25-Sep-2026):** `python alerts.py digest vishal` (or
+  `lakshmi`) / tick-box `send_vishal_digest_now`. Exists because Vishal enters trades
+  AFTER the Friday email has gone out and wants his regenerated without re-sending
+  Lakshmi's. A partial re-send never writes `__digest_email__` (that marker means the
+  whole week reached everyone) but DOES upsert that book's `digest_history` snapshot
+  for Friday, so next week's WoW compares against the corrected book. Can be triggered
+  headlessly from Vishal's PC via the GitHub REST `dispatches` endpoint using the token
+  `git credential fill` returns (no `gh` CLI installed).
 - **Friday 21:00 IST**: weekly digest (moved from Sunday per Lakshmi's
   request — he plans portfolio strategy on Saturdays)
 - Manual tick-boxes on `workflow_dispatch`: bhavcopy-backfill,
