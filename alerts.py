@@ -3722,12 +3722,17 @@ def run_snapshot_refresh():
         send_email, send_telegram = keep_mail, keep_tg
 
 
-def run_digest():
+def run_digest(only=None):
     """Weekly digest — TWO separate emails (Vishal 07-Aug-2026): his OWN book in
     one email, the Lakshmi+Abinaya book in another, so neither email carries the
     other's (long) all-holdings states table. Both go to DIGEST_EMAILS. The
     Telegram TEASER rides ONLY the Lakshmi/Abinaya email (Vishal opted out of
     Telegram). Each call stores its portfolios' weekly digest_history snapshots.
+
+    `only` = "vishal" | "lakshmi" re-sends ONE book (25-Sep-2026: Vishal entered
+    two weeks of trades after the Friday digest had gone out and wanted HIS email
+    regenerated without re-sending the other one). A partial re-send never writes
+    the delivery marker — that marker means "this week's digest reached everyone".
 
     Returns True only if EVERY email was actually delivered — the caller uses that
     to decide whether to mark this week as done."""
@@ -3740,10 +3745,10 @@ def run_digest():
     hl = all_holdings[all_holdings["portfolio_id"].isin(lak)]
     hv = all_holdings[all_holdings["portfolio_id"].isin(vis)]
     results = []
-    if not hl.empty:
+    if not hl.empty and only in (None, "lakshmi"):
         results.append(_digest_for(client, hl, tg_pf_ids=lak,
                                    label="Lakshmi & Abinaya", telegram=True))
-    if not hv.empty:
+    if not hv.empty and only in (None, "vishal"):
         results.append(_digest_for(client, hv, tg_pf_ids=[],
                                    label="Vishal", telegram=False))
     # True only when every email we tried actually left the building. A digest the
@@ -3754,7 +3759,7 @@ def run_digest():
     # triggered rescue delivered the email and left no trace of it — which would
     # have had the backstop send a duplicate 30 minutes later (28-Aug-2026).
     # Whoever sends it, the send is what gets recorded.
-    if ok:
+    if ok and only is None:
         _mark_digest_sent(client)
     return ok
 
@@ -4216,7 +4221,8 @@ if __name__ == "__main__":
          "filings-audit": run_filings_audit,
          "deals": run_deals,
          "calendar": run_calendar,
-         "digest": run_digest,
+         # `python alerts.py digest vishal` re-sends ONE book (see run_digest)
+         "digest": lambda: run_digest(only=sys.argv[2] if len(sys.argv) > 2 else None),
          "digest-if-due": run_digest_if_due,
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,

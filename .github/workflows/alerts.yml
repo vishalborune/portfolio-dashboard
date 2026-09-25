@@ -44,6 +44,10 @@ on:
         description: "Send the Sunday digest right now?"
         type: boolean
         default: false
+      send_vishal_digest_now:
+        description: "Re-send ONLY Vishal's digest email (after late trade entry)?"
+        type: boolean
+        default: false
       run_filings_now:
         description: "Check filings right now (tests the AI summaries)?"
         type: boolean
@@ -229,7 +233,7 @@ jobs:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
     # "Send the Sunday digest right now?" tick-box (GitHub sometimes drops
     # scheduled runs entirely -- this is the recovery button for that).
-    if: github.event.schedule == '0 17 * * 5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_digest_now == 'true')
+    if: github.event.schedule == '0 17 * * 5' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.send_digest_now == 'true' || github.event.inputs.send_vishal_digest_now == 'true'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -242,7 +246,9 @@ jobs:
       # "send it now", and on 28-Aug-2026 the guard would otherwise have refused
       # the very rescue that was needed.
       - run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event.inputs.send_vishal_digest_now }}" = "true" ]; then
+            python alerts.py digest vishal
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python alerts.py digest
           else
             python alerts.py digest-if-due
