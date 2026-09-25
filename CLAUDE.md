@@ -591,7 +591,12 @@ RECENCY, never list order; (b) entries without a `frame` are YTD cumulatives;
 (c) **cash-flow items (D&A) are YTD-only** — Q2..Q4 are derived as differences between
 consecutive cumulatives sharing a fiscal start; (d) fiscal years differ (NVDA Jan, MSFT
 Jun) — everything keys off END DATES; (e) entityName identity check vs the SEC title;
-(f) EBITDA blank when no D&A concept exists; negative-base YoY = blank (RKLB). Runs
+(f) MSFT/GOOGL/AVGO file NO combined D&A tag (AVGO's last is 2018) — when the combined tag
+is >200 days staler than revenue, D&A = `Depreciation` + `AmortizationOfIntangibleAssets`
+(depreciation alone understates EBITDA = the conservative direction); (g) Alphabet has
+no dei share total in companyfacts (multi-class) — shares fall back to
+`CommonStockSharesOutstanding`, then diluted weighted-average; negative-base YoY = blank
+(RKLB). All 7 names carry market cap + EBITDA after these fallbacks. Runs
 nightly after the US price store (worker + GitHub `usprices` job). CLI: `python
 usfundamentals.py NVDA` prints the table; `update` stores. Verified 26-Sep-2026: NVDA
 TTM rev $303B / OPM 65% / P/E 28; MSFT $332B / P/E 29; RKLB loss-making → no P/E.
