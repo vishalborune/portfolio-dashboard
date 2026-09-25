@@ -27,6 +27,7 @@ on:
     - cron: "50 14 * * 1-5"               # eod-entries: SME + final mainboard entry pass, 20:20 IST (after bhavcopy)
     - cron: "45 15 * * 1-5"               # deals: bulk/block deals in your stocks, 21:15 IST (after NSE publishes EOD deal files)
     - cron: "40 1 * * 2-6"                # usprices: US EOD store + health, 07:10 IST Tue-Sat (US session closes 01:30/02:30 IST; Sat stores Friday). Backstop to the worker's 07:00 block.
+    - cron: "27 * * * *"                  # us-filings: SEC EDGAR poll hourly, 7 days — backstop to the worker's 15-min poll (dedup via filings_seen)
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -63,6 +64,10 @@ on:
         default: false
       us_backfill:
         description: "Backfill 2 years of US daily bars into our table (one-off / after adding a US name)?"
+        type: boolean
+        default: false
+      us_filings_now:
+        description: "Poll SEC EDGAR for US filings right now?"
         type: boolean
         default: false
       run_filings_now:
@@ -298,6 +303,27 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+  us-filings:
+    # SEC EDGAR filings for the US book (8-K, 10-Q/K, Form 4 insider, 13D/G).
+    # Worker polls every 15 min; this hourly cron is the different-IP backstop.
+    if: github.event.schedule == '27 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.us_filings_now == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python usfilings.py run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   telegram-test-us:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.telegram_test_us == 'true'

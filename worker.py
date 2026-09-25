@@ -91,6 +91,10 @@ BHAV_RETRY = 900            # on GitHub's best-effort cron (which skipped 04-Sep
 US_STORE_OPEN = (7, 0)      # US EOD store (Vishal's US book, 26-Sep-2026): the US
 US_STORE_CLOSE = (9, 30)    # session closes 01:30/02:30 IST, so the morning AFTER
 US_STORE_RETRY = 900        # — Tue..Sat IST (Sat stores Friday's close).
+US_FILINGS_INTERVAL = 900   # SEC EDGAR poll every 15 min, 7 days (filings accepted
+                            # 06:00-22:00 ET = 15:30-07:30 IST; dedup makes it cheap)
+US_EARN_OPEN = (18, 30)     # earnings-date brief, once a day before the US open
+US_EARN_CLOSE = (19, 15)
 
 
 def _now():
@@ -145,6 +149,8 @@ def main():
     last_us_store_try = 0.0
     us_levels, us_wema, us_levels_day = {}, {}, None   # US live poller (NY clock)
     last_us_live = 0.0
+    last_us_filings = 0.0       # SEC EDGAR poll throttle
+    us_earn_day = None          # earnings brief once per day
     # NOTE: deliberately NOT called `levels_day` — that name is already taken by
     # the fast-poll level cache above, which sets it at 08:30. Reusing it meant
     # this digest's `!= today` guard was already satisfied by 08:45 and it never
@@ -206,6 +212,25 @@ def main():
             except Exception as e:
                 alerts.set_market("IN")
                 print(f"⚠️ [worker] US live cycle failed: {type(e).__name__}: {e}")
+
+            # ---- US filings (SEC EDGAR, every 15 min, 7 days) + earnings brief --
+            if time.time() - last_us_filings >= US_FILINGS_INTERVAL:
+                last_us_filings = time.time()
+                try:
+                    import usfilings
+                    n = usfilings.run(alerts.sb())
+                    if n:
+                        print(f"[{now:%H:%M:%S}] US filings: {n} alert(s)")
+                except Exception as e:
+                    print(f"⚠️ [worker] US filings failed: {type(e).__name__}: {e}")
+                _reclaim_memory()
+            if _within(now, US_EARN_OPEN, US_EARN_CLOSE) and us_earn_day != today:
+                us_earn_day = today
+                try:
+                    import usfilings
+                    usfilings.earnings_brief(alerts.sb())
+                except Exception as e:
+                    print(f"⚠️ [worker] US earnings brief failed: {type(e).__name__}: {e}")
 
             # ---- morning 'today's agenda' brief (once/day ~08:30, 7 days) ---
             if _within(now, BRIEF_OPEN, BRIEF_CLOSE, weekends=True) and brief_day != today:

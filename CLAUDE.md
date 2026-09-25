@@ -557,7 +557,27 @@ thresholds).
   context reverted to IN (85 holdings) afterwards. First real run will announce all 7
   states (alert_state is empty for pf4) — expected, same as India's day one.
   Thresholds are still India's (see 2b-6 below): expect over-firing until measured.
-**PHASE 2b (not built):** (3) fundamentals from **SEC EDGAR XBRL companyfacts**
+**PHASE 2b-i — FILINGS + EARNINGS DATES (`usfilings.py`, shipped 26-Sep-2026).**
+Source = SEC EDGAR's per-company submissions JSON (`data.sec.gov/submissions/CIK##.json`,
+official, free, every form incl. insiders' Form 4). **EDGAR 403s a generic User-Agent** —
+it must read "Name contact@email" (`SEC_USER_AGENT` env to set Vishal's own); <= ~8
+req/s (`_sec_get` paces). Ticker→CIK from `company_tickers.json`, cached 7 days in
+`.cache/`. **Blacklist, not whitelist** (India's lesson): `ROUTINE_FORMS` (144, S-8, Form
+3/5, FWP, 424B2/3, 13G/A ...) are skipped, everything else alerts. **Form 4 is PARSED
+from the XML — no model**: owner, role, BUY/SELL, shares, avg price, $ value, % of
+holding, shares after; award/exercise/withholding codes (A M F G ...) are routine.
+**8-K** item codes decoded (`ITEM_LABELS`: 2.02 results ⭐, 4.01 auditor change 🚨,
+4.02 restatement 🚨, 5.02 officer change ...) + a Haiku gist of the document text
+(temperature 0, `MAX_GISTS_PER_RUN`=6, `MAX_DOC_CHARS`=14k). 10-Q/10-K/13D/G/S-3 = ⭐
+headline + link. Dedup = `filings_seen` fingerprint `us|<accession>` (same table as
+India; marked seen only AFTER a successful send). Earnings brief = Finnhub calendar,
+next 7 days, once a day 18:30 IST (marker `__us_earnings__`). Worker: EDGAR poll every
+15 min, 7 days; GitHub cron `27 * * * *` hourly backstop; tick-box `us_filings_now`.
+CLI: `check` (read-only) / `run` / `earnings` / `audit`. Verified 26-Sep-2026: parsed
+NVDA's GC selling 30,460 sh (~$6.8M) from Form 4; MU earnings 30-Sep flagged.
+Routing: `notify.chat_for_group("vishal_us")`. Sends happen only from the worker /
+GitHub (ANTHROPIC + TELEGRAM creds there); local runs print.
+**PHASE 2b-ii (not built):** (3) fundamentals from **SEC EDGAR XBRL companyfacts**
 (official, free JSON — Python computes QoQ/YoY, no scraping, no model transcription);
 (4) filings → Telegram from **SEC EDGAR** (8-K events, 10-Q/10-K results, **Form 4
 insider trades**, 13D/G) + Finnhub earnings calendar for the morning brief; (5) US
