@@ -547,6 +547,29 @@ recomputed from the lots still held — not the stale blended avg.
   865.08 pending a check against Upstox before overwriting.
   A pre-rebuild backup of all 675 transaction rows exists in the session
   scratchpad (`transactions_backup_2026-09-20.json`).
+- **pf1 IS NOW REBUILT FROM THE COMPLETE INDMONEY HISTORY (25-Sep-2026)** — every
+  holding's trail = INDmoney's own trade rows since the position was last zero (real
+  dates/prices, bonus credits as zero-cost lots), holdings row = FIFO-remaining
+  qty/avg/oldest-lot date. Averages match INDmoney to the paisa; the only holding
+  absent from the trade report is **Indo-MIM (IPO allotment — allotments never appear
+  in a transaction report)**, left as-is. Backups in `outputs/`.
+  **The bug this caught (Vishal: "current value and invested don't tally"):** five
+  buys were DOUBLE-COUNTED (~₹1.06L) — he had bumped the QUANTITY on the dashboard
+  for the 15/18-Sep trades before the `update_holding` guardrail existed (no
+  transaction row), the 20-Sep rebuild therefore treated those shares as older
+  "opening" lots, and the 25-Sep import from the broker report added the same buys
+  again. **Lesson: "is this trade already entered?" must be answered from the
+  HOLDING'S QUANTITY, not from the transactions table alone** — the trail can lag
+  the holding. The guardrail now makes them inseparable, but any pre-guardrail
+  quantity edit still leaves that trap.
+  **INDmoney export gotchas:** (a) it mangles every 1st-of-month date to `Mon-YY`
+  ("Sep-26" = 01-Sep-2026) — parse it as the 1st; (b) an "FY" export can silently
+  omit months (the 25-Sep FY27 report began 06-Aug; an earlier export held
+  02-Apr→04-Aug) — stitch exports and check the first row's date against the period
+  in the header; (c) always import the EXACT execution price from the report, not
+  a verbally quoted one (Minda: 679.1165 vs the 678.11 quoted).
+  Replay tool: `scratchpad/replay_indmoney.py` (FIFO replay of all FY files +
+  bonus events vs holdings) — worth promoting into the repo if this recurs.
 
 ## Known issues / backlog (as of 21-Jul-2026)
 - **EBITDA IS NOW REAL (01-Sep-2026)** — was permanently blank because
