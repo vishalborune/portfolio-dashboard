@@ -50,6 +50,21 @@ def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
     return chunks
 
 
+# Per-group Telegram destinations (26-Sep-2026). A chat id is NOT a secret —
+# nothing can post to it without the bot token — so the routing lives in code
+# with an env override, and no new secret is needed on Render/GitHub.
+#   "lakshmi" -> the default TELEGRAM_CHAT_ID group ("Portfolio Alerts")
+#   "vishal_us" -> "US Portfolio Alerts" supergroup (Vishal's US book, pf 4)
+GROUP_CHAT_IDS = {
+    "vishal_us": os.environ.get("TELEGRAM_CHAT_ID_US", "-1004304585068"),
+}
+
+
+def chat_for_group(group: str):
+    """Chat id override for an owner group; None means the default group."""
+    return GROUP_CHAT_IDS.get(str(group or "").lower())
+
+
 def send_telegram(text: str, chat_id: str = None) -> bool:
     """Send a message to a Telegram group (default: TELEGRAM_CHAT_ID), auto-splitting if long."""
     if _dry_run():

@@ -52,6 +52,10 @@ on:
         description: "Diagnostic: list the Telegram chats/groups the bot has recently seen (to find a new group's chat ID)?"
         type: boolean
         default: false
+      telegram_test_us:
+        description: "Send a test message to the US Portfolio Alerts group?"
+        type: boolean
+        default: false
       run_filings_now:
         description: "Check filings right now (tests the AI summaries)?"
         type: boolean
@@ -259,6 +263,24 @@ jobs:
           EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+  telegram-test-us:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.telegram_test_us == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - run: |
+          python3 -c "
+          import notify
+          ok = notify.send_telegram('✅ <b>US Portfolio Alerts</b> channel connected.\nVishal\'s US book (portfolio 4) will report here.', chat_id=notify.chat_for_group('vishal_us'))
+          print('sent' if ok else 'FAILED'); raise SystemExit(0 if ok else 1)"
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
   digest:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
