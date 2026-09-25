@@ -133,14 +133,14 @@ def login_gate():
             if pw == owner_pw:
                 st.session_state.role = "owner"
                 st.session_state.user = "Vishal"
-                st.session_state.portfolios = {1: "Vishal"}
+                st.session_state.portfolios = {1: "Vishal · India", 4: "Vishal · US"}
                 st.session_state.portfolio_id = 1
                 gate.empty()
                 return True
             elif friend_pw and pw == friend_pw:
                 st.session_state.role = "friend"
                 st.session_state.user = _get_secret("FRIEND_NAME", "Friend")
-                st.session_state.portfolios = {1: "Vishal"}
+                st.session_state.portfolios = {1: "Vishal · India", 4: "Vishal · US"}
                 st.session_state.portfolio_id = 1
                 gate.empty()
                 return True
@@ -174,6 +174,32 @@ def can_edit_holdings() -> bool:
     return st.session_state.get("role") in ("owner", "lakshmi")
 
 
+# ---------------------------------------------------------------------------
+# MARKET / CURRENCY (26-Sep-2026: Vishal's US book = portfolio 4)
+# ---------------------------------------------------------------------------
+# One portfolio = one market = one currency. Every table is already scoped by
+# portfolio_id, so a US book is isolated from the Indian ones by construction;
+# what changes per market is the currency symbol, the compact-number style
+# (Cr/L vs M/K), fractional quantities (US brokers fill fractions) and which
+# exchange's session hours decide "is the market open".
+US_PORTFOLIOS = {4}
+PF_CURRENCY = {4: "USD"}
+
+
+def is_us_pf() -> bool:
+    return int(st.session_state.get("portfolio_id", 1)) in US_PORTFOLIOS
+
+
+def cur() -> str:
+    """Currency symbol for the active portfolio: '$' for the US book, '₹' otherwise."""
+    return "$" if is_us_pf() else "₹"
+
+
+def qty_fmt() -> str:
+    """Quantity format: whole shares in India, fractional fills in the US."""
+    return "{:,.4f}" if is_us_pf() else "{:,.0f}"
+
+
 def can_edit_watchlist() -> bool:
     return st.session_state.get("role") in ("owner", "friend", "lakshmi")
 
@@ -187,14 +213,25 @@ def can_edit_notes() -> bool:
 # ---------------------------------------------------------------------------
 
 def extract_yf_ticker(name: str):
-    """'COMPANY (XNSE:SYMBOL)' -> 'SYMBOL.NS' for yfinance."""
+    """'COMPANY (XNSE:SYMBOL)' -> 'SYMBOL.NS' for yfinance; US names
+    '(XNAS:AMZN)' / '(XNYS:BRK.B)' -> bare 'AMZN' (Yahoo's US symbols carry no
+    suffix — so "no dot in the ticker" is how the rest of the app recognises a
+    US name)."""
     if not isinstance(name, str):
         return None
-    m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", name)
+    m = re.search(r"\((X(?:NSE|BOM|NAS|NYS)):([^)]+)\)", name)
     if not m:
         return None
     exch, sym = m.group(1), m.group(2).strip()
-    return f"{sym}.NS" if exch == "XNSE" else f"{sym}.BO"
+    if exch == "XNSE":
+        return f"{sym}.NS"
+    if exch == "XBOM":
+        return f"{sym}.BO"
+    return sym.replace(".", "-")     # Yahoo writes BRK.B as BRK-B
+
+
+def is_us_ticker(t) -> bool:
+    return isinstance(t, str) and "." not in t
 
 
 def short_name(name: str) -> str:
@@ -208,9 +245,10 @@ def short_name(name: str) -> str:
 def build_stock_name(company: str, exchange: str, symbol: str) -> str:
     """Combine user-entered fields into the canonical stock_name format."""
     company = company.strip().upper()
-    if not company.endswith("LIMITED"):
+    codes = {"NSE": "XNSE", "BSE": "XBOM", "NASDAQ": "XNAS", "NYSE": "XNYS"}
+    exch_code = codes.get(exchange, "XNSE")
+    if exch_code in ("XNSE", "XBOM") and not company.endswith("LIMITED"):
         company = f"{company} LIMITED"
-    exch_code = "XNSE" if exchange == "NSE" else "XBOM"
     return f"{company} ({exch_code}:{symbol.strip().upper()})"
 
 
@@ -219,9 +257,9 @@ def parse_stock_name(name: str):
     (company, exchange, symbol), for pre-filling the edit form. Trailing
     'LIMITED' is stripped for a clean field (build_stock_name re-adds it)."""
     exchange, symbol = "NSE", ""
-    m = re.search(r"\((X(?:NSE|BOM)):([^)]+)\)", name or "")
+    m = re.search(r"\((X(?:NSE|BOM|NAS|NYS)):([^)]+)\)", name or "")
     if m:
-        exchange = "NSE" if m.group(1) == "XNSE" else "BSE"
+        exchange = {"XNSE": "NSE", "XBOM": "BSE", "XNAS": "NASDAQ", "XNYS": "NYSE"}[m.group(1)]
         symbol = m.group(2).strip()
     company = re.sub(r"\s*\([^)]*\)\s*$", "", name or "").strip()
     company = re.sub(r"\s+LIMITED$", "", company, flags=re.IGNORECASE).strip()
@@ -262,6 +300,33 @@ def last_expected_close_date():
     else:
         candidate = d - timedelta(days=1)
     while candidate.weekday() >= 5:   # walk back over weekends
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+# US session (NYSE/Nasdaq): 09:30–16:00 America/New_York, Mon–Fri. That is
+# 19:00–01:30 IST in summer and 20:00–02:30 IST in winter, so a US name's
+# "is the market open" / "which close should I be seeing" must be judged on
+# New York's clock, never Chennai's.
+NY = ZoneInfo("America/New_York")
+
+
+def market_is_open_us() -> bool:
+    n = datetime.now(NY)
+    if n.weekday() >= 5:
+        return False
+    minutes = n.hour * 60 + n.minute
+    return (9 * 60 + 30) <= minutes <= (16 * 60)
+
+
+def last_expected_close_date_us():
+    n = datetime.now(NY)
+    d = n.date()
+    if n.weekday() < 5 and (n.hour * 60 + n.minute) >= (16 * 60):
+        candidate = d
+    else:
+        candidate = d - timedelta(days=1)
+    while candidate.weekday() >= 5:
         candidate -= timedelta(days=1)
     return candidate
 
@@ -399,8 +464,8 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
         except Exception:
             pass
 
-    expected = last_expected_close_date()
-    market_open = market_is_open()
+    expected_in, open_in = last_expected_close_date(), market_is_open()
+    expected_us, open_us = last_expected_close_date_us(), market_is_open_us()
     MAX_PLAUSIBLE_MOVE = 0.25   # smallcap daily circuit ~20%; beyond this per
                                  # missing day, the quote is garbage, not a move
     rows = []
@@ -417,6 +482,9 @@ def fetch_live_prices(tickers: tuple) -> pd.DataFrame:
                          "Price Date": str(latest["price_date"].date())})
             continue
 
+        # each name is judged against ITS exchange's clock
+        expected, market_open = ((expected_us, open_us) if is_us_ticker(t)
+                                 else (expected_in, open_in))
         q_lp, q_pc = quotes.get(t, (None, None))
         b_close = bar_close.get(t)
         b_prev = bar_prev.get(t)
@@ -576,7 +644,7 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
 @st.cache_data(ttl=INFO_CACHE_TTL)
 def lookup_company(symbol: str, exchange: str) -> str:
     """Try to fetch company name from yfinance for a given symbol."""
-    suffix = ".NS" if exchange == "NSE" else ".BO"
+    suffix = {"NSE": ".NS", "BSE": ".BO"}.get(exchange, "")
     try:
         info = yf.Ticker(f"{symbol.upper()}{suffix}").info or {}
         return info.get("longName") or info.get("shortName") or ""
@@ -730,8 +798,11 @@ def compute_kpis(enriched: pd.DataFrame, realised: pd.DataFrame) -> dict:
 # ---------------------------------------------------------------------------
 
 def fmt_inr(x, decimals=0):
+    """Money in the ACTIVE portfolio's currency (name kept for its 100+ callers)."""
     if pd.isna(x) or x is None:
         return "—"
+    if is_us_pf():
+        return f"${x:,.2f}"
     return f"₹{x:,.{decimals}f}"
 
 
@@ -746,6 +817,12 @@ def fmt_inr_compact(x):
         return "—"
     sign = "-" if x < 0 else ""
     ax = abs(x)
+    if is_us_pf():
+        if ax >= 1_000_000:
+            return f"{sign}${ax/1_000_000:.2f}M"
+        if ax >= 10_000:
+            return f"{sign}${ax/1_000:.1f}K"
+        return f"{sign}${ax:,.2f}"
     if ax >= 1_00_00_000:      # >= 1 crore
         return f"{sign}₹{ax/1_00_00_000:.2f} Cr"
     if ax >= 1_00_000:          # >= 1 lakh
@@ -879,13 +956,13 @@ def tab_holdings(enriched: pd.DataFrame):
             return "color: #ef4444;"                          # mostly speculative churn
 
         styled = view.style.format({
-            "Qty": "{:,.0f}", "Avg Cost": "₹{:,.2f}", "Invested": "₹{:,.0f}",
-            "CMP": "₹{:,.2f}",
+            "Qty": qty_fmt(), "Avg Cost": cur() + "{:,.2f}", "Invested": cur() + "{:,.0f}",
+            "CMP": cur() + "{:,.2f}",
             "% from 10wEMA": "{:+.1f}%", "Vol vs 10wk": "{:.1f}x",
-            "10DMA": "₹{:,.2f}", "21DMA": "₹{:,.2f}", "% vs 21DMA": "{:+.1f}%",
+            "10DMA": cur() + "{:,.2f}", "21DMA": cur() + "{:,.2f}", "% vs 21DMA": "{:+.1f}%",
             "Deliv % (last)": "{:.0f}%", "Deliv % (4wk)": "{:.0f}%",
-            "Day Change %": "{:+.2f}%", "Current Value": "₹{:,.0f}",
-            "P&L": "₹{:,.0f}", "P&L %": "{:+.2f}%",
+            "Day Change %": "{:+.2f}%", "Current Value": cur() + "{:,.0f}",
+            "P&L": cur() + "{:,.0f}", "P&L %": "{:+.2f}%",
             "Allocation %": "{:.1f}%", "Market Cap (Cr)": "{:,.0f}",
             "PE (live)": "{:.2f}", "P/B": "{:.2f}",
             "Revenue (TTM Cr)": "{:,.0f}", "EBITDA (TTM Cr)": "{:,.0f}",
@@ -966,7 +1043,8 @@ def _form_add_holding():
         with c1:
             company = st.text_input("Company name", placeholder="e.g. Lincoln Pharmaceuticals")
         with c2:
-            exchange = st.radio("Exchange", ["NSE", "BSE"], horizontal=True)
+            exchange = st.radio("Exchange", ["NASDAQ", "NYSE"] if is_us_pf() else ["NSE", "BSE"],
+                                horizontal=True)
         symbol = st.text_input(
             "Symbol",
             placeholder="LINCOLN (NSE) or 524000 (BSE numeric code)",
@@ -997,7 +1075,7 @@ def _form_add_holding():
             # and the watchlist row is where its support levels and thesis score
             # live. Removing it silently threw those away. Take it off the
             # watchlist by hand when you're done accumulating.
-            st.success(f"✅ Added {qty:g} × {short_name(stock_name)} @ ₹{cost:,.2f}")
+            st.success(f"✅ Added {qty:g} × {short_name(stock_name)} @ {cur()}{cost:,.2f}")
             st.rerun()
         except Exception as e:
             st.error(f"Failed to add: {e}")
@@ -1011,7 +1089,7 @@ def _form_buy_more(enriched: pd.DataFrame):
 
     options = enriched[["id", "Short Name", "quantity", "purchase_cost", "CMP"]].copy()
     options["label"] = options.apply(
-        lambda r: f"{r['Short Name']} (have {r['quantity']:.0f} @ avg ₹{r['purchase_cost']:,.2f})",
+        lambda r: f"{r['Short Name']} (have {r['quantity']:g} @ avg {cur()}{r['purchase_cost']:,.2f})",
         axis=1,
     )
     pick = st.selectbox("Select holding to add to", options["label"].tolist(), key="buymore_pick")
@@ -1043,10 +1121,10 @@ def _form_buy_more(enriched: pd.DataFrame):
             new_qty = old_qty + add_qty
             new_avg = ((old_qty * old_cost) + (add_qty * add_price)) / new_qty
             st.info(
-                f"📊 **Preview:** {old_qty:.0f} @ ₹{old_cost:,.2f}  +  "
-                f"{add_qty:.0f} @ ₹{add_price:,.2f}  →  "
-                f"**{new_qty:.0f} @ ₹{new_avg:,.2f}**  "
-                f"(invested ₹{new_qty * new_avg:,.0f})"
+                f"📊 **Preview:** {old_qty:g} @ {cur()}{old_cost:,.2f}  +  "
+                f"{add_qty:g} @ {cur()}{add_price:,.2f}  →  "
+                f"**{new_qty:g} @ {cur()}{new_avg:,.2f}**  "
+                f"(invested {cur()}{new_qty * new_avg:,.0f})"
             )
 
         submitted = st.form_submit_button("🔁 Buy more", type="primary")
@@ -1065,7 +1143,7 @@ def _form_buy_more(enriched: pd.DataFrame):
             )
             st.success(
                 f"✅ Added {add_qty:.0f} more shares of {row['Short Name']}. "
-                f"New position: {result['new_qty']:.0f} units @ avg ₹{result['new_avg']:,.2f}"
+                f"New position: {result['new_qty']:g} units @ avg {cur()}{result['new_avg']:,.2f}"
             )
             st.rerun()
         except Exception as e:
@@ -1078,7 +1156,7 @@ def _form_mark_as_sold(enriched: pd.DataFrame):
         return
     options = enriched[["id", "Short Name", "quantity", "CMP"]].copy()
     options["label"] = options.apply(
-        lambda r: f"{r['Short Name']} ({r['quantity']:.0f} units @ live ₹{r['CMP']:,.2f})", axis=1
+        lambda r: f"{r['Short Name']} ({r['quantity']:g} units @ live {cur()}{r['CMP']:,.2f})", axis=1
     )
     pick = st.selectbox("Select holding", options["label"].tolist(), key="sell_pick")
     if not pick:
@@ -1143,7 +1221,7 @@ def _form_edit_delete_holding(enriched: pd.DataFrame):
         return
     options = enriched[["id", "Short Name", "quantity", "purchase_cost"]].copy()
     options["label"] = options.apply(
-        lambda r: f"{r['Short Name']} ({r['quantity']:.0f} units @ ₹{r['purchase_cost']:,.2f})", axis=1
+        lambda r: f"{r['Short Name']} ({r['quantity']:g} units @ {cur()}{r['purchase_cost']:,.2f})", axis=1
     )
     pick = st.selectbox("Select holding", options["label"].tolist(), key="edit_pick")
     if not pick:
@@ -1198,7 +1276,7 @@ def tab_allocation(enriched: pd.DataFrame, k: dict):
         sec = enriched.groupby("Sector", dropna=False)["Current Value"].sum().reset_index()
         sec = sec.sort_values("Current Value", ascending=True)
         fig2 = px.bar(sec, x="Current Value", y="Sector", orientation="h",
-                      text=sec["Current Value"].apply(lambda x: f"₹{x/1000:,.0f}k"))
+                      text=sec["Current Value"].apply(lambda x: f"{cur()}{x/1000:,.0f}k"))
         fig2.update_layout(height=480, margin=dict(t=10, b=10), xaxis_title="", yaxis_title="")
         st.plotly_chart(fig2, width="stretch")
 
@@ -1277,13 +1355,13 @@ def tab_watchlist():
             wl_view[cols].rename(columns={
                 "target_buy_price": "Target Buy", "notes": "Notes", "added_by": "Added By",
             }).style.format({
-                "CMP": "₹{:,.2f}", "Day Change %": "{:+.2f}%",
-                "Target Buy": "₹{:,.2f}", "Distance to Target %": "{:+.2f}%",
+                "CMP": cur() + "{:,.2f}", "Day Change %": "{:+.2f}%",
+                "Target Buy": cur() + "{:,.2f}", "Distance to Target %": "{:+.2f}%",
                 "% vs 5DMA": "{:+.1f}%",
                 "% vs 10DMA": "{:+.1f}%", "% vs 21DMA": "{:+.1f}%",
-                "52W High": "₹{:,.2f}", "% vs 52WH": "{:+.1f}%",
-                "Minor Sup": "₹{:,.2f}", "% vs Minor Sup": "{:+.1f}%",
-                "Major Sup": "₹{:,.2f}", "% vs Major Sup": "{:+.1f}%",
+                "52W High": cur() + "{:,.2f}", "% vs 52WH": "{:+.1f}%",
+                "Minor Sup": cur() + "{:,.2f}", "% vs Minor Sup": "{:+.1f}%",
+                "Major Sup": cur() + "{:,.2f}", "% vs Major Sup": "{:+.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
         st.dataframe(styled, width="stretch", hide_index=True, height=420)
@@ -1319,7 +1397,8 @@ def _form_add_watchlist():
         with c1:
             company = st.text_input("Company name", placeholder="e.g. Lincoln Pharmaceuticals")
         with c2:
-            exchange = st.radio("Exchange", ["NSE", "BSE"], horizontal=True, key="wl_exch")
+            exchange = st.radio("Exchange", ["NASDAQ", "NYSE"] if is_us_pf() else ["NSE", "BSE"],
+                                horizontal=True, key="wl_exch")
         # Lakshmi 16-Aug-2026: NSE unless the company is BSE-ONLY. This isn't a
         # preference, it's a data-quality rule — NSE announcements come off the
         # RSS feed every 3 minutes, while BSE's own API is dead behind an Akamai
@@ -1414,20 +1493,20 @@ def _editor_watchlist_levels(wl: pd.DataFrame):
         column_config={
             "Stock": st.column_config.TextColumn("Stock", width="medium"),
             "CMP": st.column_config.NumberColumn(
-                "CMP ₹", format="%.2f",
+                f"CMP {cur()}", format="%.2f",
                 help="Current price, for reference while you set levels. Read-only."),
             # No forced decimals on the INPUT columns: "%.2f" makes an empty cell
             # render as 0.00 and a typed 400 jump to 400.00, so every edit starts
             # with select-all-and-delete. Plain numbers type naturally and blanks
             # stay blank.
             "Target Buy": st.column_config.NumberColumn(
-                "Target Buy ₹", min_value=0.0, step=1.0,
+                f"Target Buy {cur()}", min_value=0.0, step=1.0,
                 help="Your buy price. Alerts when CMP falls to it. Leave empty for none."),
             "Minor Support": st.column_config.NumberColumn(
-                "Minor Support ₹", min_value=0.0, step=1.0,
+                f"Minor Support {cur()}", min_value=0.0, step=1.0,
                 help="Near-term shelf you expect a bounce from. Empty = no alert."),
             "Major Support": st.column_config.NumberColumn(
-                "Major Support ₹", min_value=0.0, step=1.0,
+                f"Major Support {cur()}", min_value=0.0, step=1.0,
                 help="Structural floor — where the trend would really break. "
                      "Empty = no alert."),
         },
@@ -1486,8 +1565,10 @@ def _form_edit_watchlist(wl: pd.DataFrame):
         with c1:
             company = st.text_input("Company name", value=company0)
         with c2:
-            exchange = st.radio("Exchange", ["NSE", "BSE"],
-                                index=0 if exch0 == "NSE" else 1, horizontal=True)
+            _exch_opts = ["NASDAQ", "NYSE"] if is_us_pf() else ["NSE", "BSE"]
+            exchange = st.radio("Exchange", _exch_opts,
+                                index=_exch_opts.index(exch0) if exch0 in _exch_opts else 0,
+                                horizontal=True)
         symbol = st.text_input("Symbol", value=sym0,
                                help="No spaces — e.g. JITFINFRA, not 'JITF INFRA'")
         st.caption("💡 Target and support levels are set in the **Set your levels** "
@@ -1560,8 +1641,8 @@ def tab_realised(realised: pd.DataFrame):
             "pct_gain_loss": "P&L %", "sale_date": "Sale Date",
             "buy_date": "Buy Date", "no_of_days": "Days Held",
         }).style.format({
-            "Qty": "{:,.0f}", "Buy Price": "₹{:,.2f}", "Sell Price": "₹{:,.2f}",
-            "Sale Amount": "₹{:,.0f}", "P&L": "₹{:,.0f}", "P&L %": "{:+.2%}",
+            "Qty": qty_fmt(), "Buy Price": cur() + "{:,.2f}", "Sell Price": cur() + "{:,.2f}",
+            "Sale Amount": cur() + "{:,.0f}", "P&L": cur() + "{:,.0f}", "P&L %": "{:+.2%}",
         }, na_rep="—").map(color_pnl, subset=["P&L", "P&L %"])
     )
     st.dataframe(styled, width="stretch", hide_index=True, height=460)
@@ -1595,7 +1676,7 @@ def tab_realised(realised: pd.DataFrame):
             chg = (float(p) - float(row["exit_price"])) / float(row["exit_price"]) * 100
             # Stock fell after we sold → the exit saved money; rose → it cost us
             verdict = "saved" if chg < 0 else "cost"
-            return f"₹{float(p):,.1f} ({verdict} {abs(chg):.1f}%)"
+            return f"{cur()}{float(p):,.1f} ({verdict} {abs(chg):.1f}%)"
 
         for col in ("price_30d", "price_60d", "price_90d"):
             jv[col.replace("price_", "After ").replace("d", " days")] = jv.apply(
@@ -1604,7 +1685,7 @@ def tab_realised(realised: pd.DataFrame):
                    "After 30 days", "After 60 days", "After 90 days", "notes"]].rename(
             columns={"exit_date": "Exit Date", "exit_price": "Exit ₹",
                      "qty_sold": "Qty", "reason": "Reason", "notes": "Notes"})
-        st.dataframe(show.style.format({"Exit ₹": "₹{:,.2f}", "Qty": "{:,.0f}"},
+        st.dataframe(show.style.format({"Exit ₹": cur() + "{:,.2f}", "Qty": qty_fmt()},
                                        na_rep="—"),
                      width="stretch", hide_index=True)
         st.caption("'saved X%' = the stock fell after the exit (the rule protected you). "
@@ -1812,7 +1893,7 @@ def tab_history(k: dict):
     ))
     fig.update_layout(title="Portfolio value over time", height=420,
                        margin=dict(t=50, b=10), hovermode="x unified",
-                       yaxis_title="₹", xaxis_title="")
+                       yaxis_title=cur(), xaxis_title="")
     st.plotly_chart(fig, width="stretch")
 
     st.subheader("Snapshot history")
@@ -1901,7 +1982,7 @@ def tab_transactions():
 
     styled = (
         view[show_cols].style.format({
-            "Qty": "{:,.0f}", "Price": "₹{:,.2f}", "Amount": "₹{:,.2f}",
+            "Qty": qty_fmt(), "Price": cur() + "{:,.2f}", "Amount": cur() + "{:,.2f}",
         }, na_rep="—").map(color_type, subset=["Type"])
     )
     st.dataframe(styled, width="stretch", hide_index=True, height=500)
@@ -1950,7 +2031,7 @@ def tab_transactions():
             opts = {
                 f"#{int(r['id'])} · {r['transaction_date'].strftime('%Y-%m-%d')} · "
                 f"{r['transaction_type'].upper()} · {short_name(r['stock_name'])} · "
-                f"qty {r['quantity']:g} @ ₹{r['price']:g}": int(r["id"])
+                f"qty {r['quantity']:g} @ {cur()}{r['price']:g}": int(r["id"])
                 for _, r in tx.sort_values("transaction_date", ascending=False).iterrows()
             }
             sel = st.selectbox("Entry to delete", ["— select —"] + list(opts.keys()),
@@ -2089,11 +2170,11 @@ def main():
     if not enriched.empty and "Price Stale" in enriched.columns:
         stale_names = enriched.loc[enriched["Price Stale"] == True, "Short Name"].tolist()
 
-    if market_is_open():
-        badge = "🟢 Market OPEN"
+    if (market_is_open_us() if is_us_pf() else market_is_open()):
+        badge = "🟢 Market OPEN" + (" (US)" if is_us_pf() else "")
         note = "prices refresh every 5 min (Yahoo feed, ~15 min delayed)"
     else:
-        badge = "🔴 Market CLOSED"
+        badge = "🔴 Market CLOSED" + (" (US)" if is_us_pf() else "")
         note = ("last close loaded for all holdings — safe to compare with INDmoney"
                 if not stale_names else
                 "last close loaded, EXCEPT the stocks flagged below")

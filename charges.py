@@ -43,7 +43,7 @@ from __future__ import annotations
 import pandas as pd
 
 # Which broker each portfolio trades through (CLAUDE.md).
-PF_BROKER = {1: "indmoney", 2: "zerodha", 3: "upstox"}
+PF_BROKER = {1: "indmoney", 2: "zerodha", 3: "upstox", 4: "alpaca"}
 
 STT_PCT = 0.001            # 0.1% both sides, delivery
 STAMP_PCT = 0.00015        # 0.015%, BUY only
@@ -58,6 +58,13 @@ BROKERS = {
                 "brokerage_pct": 0.0, "brokerage_cap": 20.0, "dp_per_sell": 20.00},
     "indmoney": {"name": "INDmoney", "brokerage_per_order": 0.0,
                  "brokerage_pct": 0.0, "brokerage_cap": 0.0, "dp_per_sell": 21.83},
+    # US book (Alpaca via INDmoney, 26-Sep-2026): none of the Indian statutory
+    # charges apply, and the broker itemises its own commission per fill
+    # (~0.3%; recorded in each transaction's note). Estimating it here would be
+    # an INR formula applied to USD trades — a wrong number — so the US rate is
+    # zero until the itemised commission is read back from the trail.
+    "alpaca": {"name": "Alpaca (INDmoney US)", "brokerage_per_order": 0.0,
+               "brokerage_pct": 0.0, "brokerage_cap": 0.0, "dp_per_sell": 0.0, "us": True},
 }
 
 
@@ -76,6 +83,9 @@ def estimate(amount: float, side: str, broker: str = "zerodha",
         return {}
     side = str(side).lower().strip()
     b = BROKERS.get(str(broker).lower(), BROKERS["zerodha"])
+    if b.get("us"):
+        return {"brokerage": 0.0, "stt": 0.0, "stamp": 0.0, "exchange": 0.0,
+                "sebi": 0.0, "gst": 0.0, "dp": 0.0, "total": 0.0, "pct_of_amount": 0.0}
     ex = EXCHANGE_PCT.get(str(exchange).upper(), EXCHANGE_PCT["NSE"])
 
     brokerage = min(b["brokerage_per_order"] or amount * b["brokerage_pct"],

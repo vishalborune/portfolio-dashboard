@@ -100,16 +100,26 @@ def sb():
     return _ReadOnlyClient(client) if _dry() else client
 
 
+# Vishal's US book (26-Sep-2026). This engine is India-only: NSE/BSE feeds,
+# IST session windows, Screener fundamentals, bhavcopy prices. Until the US
+# twin exists, its holdings are EXCLUDED here so no India-shaped code path
+# (an "(XNSE:" regex returning None, an IST market window, an INR digest)
+# silently mis-handles a Nasdaq name. The dashboard shows the US book fine.
+US_PORTFOLIOS = {4}
+
+
 def get_holdings(client) -> pd.DataFrame:
     res = client.table("holdings").select("*").execute()
     df = pd.DataFrame(res.data or [])
     if not df.empty and "portfolio_id" not in df.columns:
         df["portfolio_id"] = 1
+    if not df.empty:
+        df = df[~df["portfolio_id"].astype(int).isin(US_PORTFOLIOS)].reset_index(drop=True)
     return df
 
 
 # Portfolio -> owner group -> Telegram chat routing
-PF_GROUP = {1: "vishal", 2: "lakshmi", 3: "lakshmi"}
+PF_GROUP = {1: "vishal", 2: "lakshmi", 3: "lakshmi", 4: "vishal_us"}
 
 # Which owner groups receive Telegram alerts (state changes + filings).
 # Vishal opted out — Lakshmi is the TA lead and acts on alerts; Vishal's
