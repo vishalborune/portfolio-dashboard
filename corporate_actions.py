@@ -35,7 +35,17 @@ Volume (traded shares) is MULTIPLIED by the same factor for the older rows so
 the volume-spike comparison stays on one consistent share scale.
 """
 from __future__ import annotations
+import sys
 import pandas as pd
+
+# Findings carry ⚠️/emoji and exist to explain a failure; under Windows cp1252 the
+# print itself raised UnicodeEncodeError and the detector died BEFORE listing the
+# unadjusted tickers it had found (25-Sep-2026). Same fix as alerts.py/bhavcopy.py.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # The registry. `ticker` MUST match the string stored in sme_daily_prices.
 CORPORATE_ACTIONS = [
@@ -72,6 +82,19 @@ CORPORATE_ACTIONS = [
                 "W10EMA alerts at 09:10 that morning (halved price 'arrived' at "
                 "the unadjusted DMAs). Held by Vishal (65->130) and Lakshmi "
                 "(1,700->3,400); both holdings rows corrected same day.",
+    },
+    {
+        "ticker": "E2E.NS",
+        "ex_date": "2026-06-05",     # price stepped this day in NSE's own file
+        "action": "9:1 bonus",       # 9 new fully-paid shares per 1 held
+        "price_divisor": 10.0,       # 10x shares outstanding -> prices /10
+        "note": "E2E Networks. Caught 25-Sep-2026 by Vishal: the flowchart said EXIT "
+                "while price sat ABOVE its 50-day EMA. Raw NSE signature ₹4,313.60 "
+                "(04-Jun) -> ₹452.90 (05-Jun); Lakshmi's Kite export shows 50 shares "
+                "held + 450 bonus credited 03-Jun (9 per 1 held). Unadjusted, the "
+                "40wEMA read ₹1,468 against a ₹652 close -> FALSE EXIT for months. "
+                "The detector HAD flagged it nightly, but its Telegram goes only to "
+                "Lakshmi's group and its local run crashed on cp1252 before printing.",
     },
 ]
 

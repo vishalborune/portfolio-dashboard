@@ -107,6 +107,20 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    Lesson: when a NEW bhavcopy ticker is added, its full backfill can contain an
    OLD unadjusted split/bonus — the detector will flag it on the next daily run,
    so act on that flag (don't let it recur silently every run).
+   **Third event caught 25-Sep-2026 — E2E Networks (E2E.NS) 9:1 bonus, ex-date
+   05-Jun-2026 (₹4,313.60→₹452.90), divisor 10.** Vishal asked why the flowchart said
+   EXIT while price sat above its 50-DMA. The 40wEMA read ₹1,468 against a ₹652 close;
+   adjusted it is ₹426 and the true state is **MAINTAIN/ADD**. It had been a FALSE
+   EXIT in every digest since the 01-Sep backfill (held by Vishal AND Lakshmi). Ratio
+   verified two ways: NSE's own file steps ÷10, and Kite credited 450 bonus shares on
+   50 held. **Why it lived for weeks despite the detector:** (a) the detector's
+   Telegram goes to the Lakshmi group only (Vishal opted out) and nobody acted on it;
+   (b) run locally, `corporate_actions.py` crashed on Windows cp1252 while printing
+   its ⚠️ findings — the detector died BEFORE naming the ticker (now UTF-8 safe, same
+   fix as alerts.py/bhavcopy.py). **A detector finding that nobody owns is the same
+   as no detector** — when the nightly health Telegram flags an unadjusted gap, that
+   is the day to register it. The 25-Sep digest (both books) still shows E2E as EXIT;
+   the next states run self-heals with "E2E → MAINTAIN/ADD (was EXIT)".
 
 ## Dashboard performance: `db._bust()` must NOT clear market caches (01-Sep-2026)
 It used to call `st.cache_data.clear()`, which drops EVERY cache in the app — including
