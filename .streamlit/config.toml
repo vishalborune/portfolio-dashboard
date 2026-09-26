@@ -1,0 +1,14 @@
+# Streamlit server config for the Render web services (26-Sep-2026).
+# Two deploys of the dashboard failed overnight with "Port scan timeout — no open
+# ports" and NO Streamlit output for 15 minutes: the free instance (0.1 CPU,
+# 512 MB) stalled before the server bound its port. The code was unchanged
+# between the last good deploy and the failed one, and the same app binds in
+# seconds locally on the same Python 3.14 — so this trims what Streamlit does
+# at startup and in the background on a starved box. secrets.toml stays local.
+[server]
+headless = true          # never try to open a browser / prompt on a server
+fileWatcherType = "none" # no source-tree polling on the deployed copy (nothing edits it there)
+runOnSave = false
+
+[browser]
+gatherUsageStats = false # skip the telemetry call-home at boot
