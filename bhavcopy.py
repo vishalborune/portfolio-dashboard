@@ -181,6 +181,14 @@ def fetch_bse_bhavcopy(d: date) -> pd.DataFrame:
             with z.open(name) as f:
                 df = pd.read_csv(f)
         df.columns = [c.strip().upper() for c in df.columns]
+        # Same holiday-republish guard as NSE: BSE's file carries a DATE column
+        # (the trade date) — a file served for a holiday is stamped with the
+        # previous session's date.
+        if "DATE" in df.columns:
+            stamped = pd.to_datetime(df["DATE"].astype(str).str.strip(), errors="coerce").dt.date.dropna().unique()
+            if len(stamped) and all(sd != d for sd in stamped):
+                print(f"  [bhavcopy] BSE file for {d} is stamped {stamped[0]} — holiday republish, skipped.")
+                return pd.DataFrame()
         return df
     except Exception:
         return pd.DataFrame()
