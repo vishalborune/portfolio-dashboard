@@ -136,6 +136,19 @@ def fetch_nse_bhavcopy(d: date) -> pd.DataFrame:
                 continue
             df = pd.read_csv(io.StringIO(r.text))
             df.columns = [c.strip() for c in df.columns]
+            # HOLIDAY REPUBLISH GUARD (02-Oct-2026, Gandhi Jayanti): NSE served a
+            # file at the 02-Oct URL whose rows were stamped DATE1 = 01-Oct-2026 —
+            # Thursday's session republished under Friday's filename. Trusting the
+            # filename stored a phantom trading day (79 names, closes AND volumes
+            # identical to the day before). The file's own date is the truth
+            # (House Rule #7: non-empty is not the same as usable).
+            dcol = next((c for c in df.columns if c.upper() == "DATE1"), None)
+            if dcol is not None:
+                stamped = pd.to_datetime(df[dcol].astype(str).str.strip(), errors="coerce").dt.date.dropna().unique()
+                if len(stamped) and all(sd != d for sd in stamped):
+                    print(f"  [bhavcopy] NSE file for {d} is stamped {', '.join(str(x) for x in stamped[:2])} — "
+                          f"a holiday republish of the previous session, NOT {d}'s data. Skipped.")
+                    return pd.DataFrame()
             if "CLOSE_PRICE" in df.columns:
                 df = df.rename(columns={"CLOSE_PRICE": "CLOSE"})
             df["SYMBOL"] = df["SYMBOL"].astype(str).str.strip()
@@ -143,6 +156,17 @@ def fetch_nse_bhavcopy(d: date) -> pd.DataFrame:
         except Exception as e:
             print(f"  [bhavcopy] NSE {host} for {d}: {type(e).__name__}: {e}")
     return pd.DataFrame()
+
+
+def _nse_file_exists(d: date) -> bool:
+    """True when NSE serves SOME file for the date (used to tell 'holiday
+    republish rejected' apart from 'NSE download failed')."""
+    try:
+        r = requests.head(f"https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{d:%d%m%Y}.csv",
+                          headers=HEADERS, timeout=10)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 def fetch_bse_bhavcopy(d: date) -> pd.DataFrame:
@@ -331,6 +355,12 @@ def extract_prices_for_date(d: date, universe: dict = None) -> dict:
 
     bse_needed = {k: v for k, v in universe.items()
                   if v.get("exchange") == "BSE" and v.get("scrip_code")}
+    # BSE's file carries no trade-date column to verify against, and both
+    # exchanges share the holiday calendar: if NSE's file for this date was a
+    # holiday republish (rejected above), BSE's is too — store nothing.
+    if bse_needed and nse_needed and nse_df.empty and _nse_file_exists(d):
+        print(f"  [bhavcopy] BSE skipped for {d}: NSE's file for the date was a holiday republish")
+        bse_needed = {}
     if bse_needed:
         bse_df = fetch_bse_bhavcopy(d)
         if bse_df.empty:

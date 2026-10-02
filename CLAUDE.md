@@ -228,6 +228,20 @@ than no check; "0 compared" is now itself a finding.
 `bhavcopy.py` also reconfigures stdout to UTF-8 (same cp1252 crash already fixed in
 alerts.py — its findings carry emoji and exist to explain failures).
 
+## Exchange HOLIDAY files are REPUBLISHES of the previous session (02-Oct-2026)
+On Gandhi Jayanti NSE served `sec_bhavdata_full_02102026.csv` (HTTP 200, 3,534 rows)
+whose every row is stamped **DATE1 = 01-Oct-2026** — Thursday's file under Friday's
+name — and BSE served `bhavcopy021026_CSV.ZIP` likewise. The nightly job trusted the
+FILENAME and stored a phantom 2-Oct bar for all 79 names (closes AND volumes identical
+to 1-Oct). The digest was unaffected (same closes; the index file is NOT republished on
+holidays, hence its honest "index to 1 Oct — latest available" note), but a phantom
+trading day skews the daily DMAs/peaks. Fixed: `fetch_nse_bhavcopy` rejects a file
+whose DATE1 ≠ the requested date (logs why), and `extract_prices_for_date` skips BSE on
+such a day (BSE's file has no trade-date column; both exchanges share the calendar —
+`_nse_file_exists` tells "republish rejected" apart from "NSE download failed"). The 79
+phantom rows were deleted (backup `outputs/phantom_rows_2026-10-02.json`). House Rule #7
+in action: a 200 with 400 KB of real-looking data was still not that day's data.
+
 ## Known SME/BSE-only tickers requiring bhavcopy (not Yahoo)
 `bhavcopy.py`'s `SME_STOCKS` dict is the single source of truth. Currently
 tracks: OBSCP, TCL, UTSSAV, VIESL (NSE Emerge), SSEGL (NSE Emerge, series ST),
