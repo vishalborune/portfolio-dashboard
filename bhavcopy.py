@@ -631,6 +631,14 @@ def cross_check(client, universe: dict = None, tol_pct: float = 1.0,
             h = yf.Ticker(ticker).history(start=d0, end=nxt, auto_adjust=False)
             if h is None or h.empty:
                 continue
+            # Yahoo answers a request for a NON-trading date with a stub bar
+            # labelled with some other day (02-Oct-2026 holiday: AGI "800.00"
+            # labelled 01-Oct against a real 01-Oct close of 790.80). Compare
+            # only when the bar is dated the day we asked about.
+            bar_day = h.index[0].date() if hasattr(h.index[0], "date") else None
+            if bar_day is not None and bar_day.isoformat() != d0:
+                print(f"  [bhavcopy] {ticker}: Yahoo returned a bar dated {bar_day} for {d0} — skipped")
+                continue
             theirs = float(h["Close"].iloc[0])
             checked += 1
             if theirs > 0 and abs(ours / theirs - 1) * 100 > tol_pct:
