@@ -181,7 +181,20 @@ def snapshot(sym: str, cik: int, price: float | None, expect_title: str | None =
         series[key] = quarterly(_pick(gaap, CONCEPTS[key], UNITS.get(key, "USD")))
     rev = series["revenue"]
     if len(rev) < 2:
-        return {"symbol": sym, "entity": ent, "error": "no quarterly revenue in companyfacts"}
+        # ANNUAL-ONLY FILER (Nebius, 04-Oct-2026): a foreign private issuer files a
+        # 20-F once a year and no quarterly XBRL, so there is no TTM to compute —
+        # FY2025 revenue would be nine months stale for a company growing several-
+        # fold (a wrong number, House Rule #2). Store only what IS current: market
+        # cap from price x the filed share count. Everything else stays blank.
+        sh = instant((dei.get("EntityCommonStockSharesOutstanding") or {}).get("units", {}).get("shares") or [])
+        if not sh:
+            sh = instant(_pick(gaap, ["CommonStockSharesOutstanding"], "shares"))
+        shares = sh[1] if sh else None
+        return {"symbol": sym, "entity": ent, "partial": "annual-only filer (20-F): no quarterly data, P&L columns left blank",
+                "shares": shares, "price": price,
+                "market_cap": (price * shares) if (price and shares) else None,
+                "pe": None, "pb": None, "book_value_ps": None, "roe_pct": None, "roce_pct": None,
+                "revenue_ttm": None, "ebitda_ttm": None, "opm_ttm_pct": None}
     # D&A: MSFT / GOOGL / AVGO file NO combined D&A tag (AVGO's last one is from
     # 2018) — they tag Depreciation and AmortizationOfIntangibleAssets separately.
     # A combined tag older than the revenue series by >200 days is stale; rebuild
@@ -291,6 +304,8 @@ def update_all(client) -> int:
         if s.get("error"):
             print(f"  [usfund] {sym}: {s['error']} — not stored")
             continue
+        if s.get("partial"):
+            print(f"  [usfund] {sym}: {s['partial']} — market cap only")
         f = lambda v: None if v is None else float(v)
         row = {"ticker": sym, "fetched_at": datetime.now(timezone.utc).isoformat(),
                "market_cap_cr": f(s["market_cap"] / B if s["market_cap"] else None),   # $ BILLIONS for US

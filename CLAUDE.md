@@ -632,6 +632,16 @@ annualised +2.1% into "XIRR 162.5%, alpha +116 pts", arithmetically right and us
 Dry-run verified: reconciles $2,544 vs $2,544, QQQ 501 days, teaser to -1004304585068,
 market context reverted to IN. First real send = Saturday 10-Oct (this week sets the
 WoW baseline). Preview: `outputs/us_digest_preview.html`.
+**US BOOK UPDATED 04-Oct-2026 from the full Alpaca order report (2019→04-Oct):** 14
+new fills applied via `db.buy_more`/`add_holding` under `db._active_pf = lambda: 4`
+(bare-mode default is pf1 — ALWAYS patch it for US scripts). 11 holdings now (added
+NBIS, TSLA, META, AAPL); total $5,932.13 stock + $17.81 commission = $5,949.94 vs the
+report's $5,949.96 (fractional-fill rounding). Guarded against double-apply by asserting
+the seeded quantities first. Execution times in the report are IST — 01:24 AM IST on
+02-Oct is the 01-Oct New York session. **Nebius (NBIS) is a foreign private issuer:**
+annual 20-F only, RUB history from the Yandex era, no quarterly XBRL — `usfundamentals`
+stores its MARKET CAP only and leaves P&L columns blank (FY2025 revenue would be nine
+months stale for a company growing several-fold). Prices/filings/alerts cover it fully.
 **PHASE 2b-iv (not built):** (6) re-tune alert thresholds — mega-caps hug their DMAs
 far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the 1% jump gate,
 2% support band and 2× volume bar will over-fire; measure a week, then tighten. No
