@@ -135,11 +135,17 @@ def fetch_eod(symbols: list[str], period: str = "10d") -> dict:
     return out
 
 
+# Benchmarks for the US digest (04-Oct-2026): stored alongside the holdings so
+# the digest reads them from our own table like every other series.
+US_INDEX_TRACK = {"QQQ": "Nasdaq 100 (QQQ)", "^IXIC": "Nasdaq Composite"}
+
+
 def store(client, symbols: list[str] | None = None, period: str = "10d") -> int:
     """Upsert Yahoo daily bars into sme_daily_prices (one batched upsert per
     symbol). Returns rows written. Idempotent — worker and GitHub can both run it."""
     from bhavcopy import _f
-    symbols = symbols or us_universe(client)
+    symbols = list(symbols or us_universe(client))
+    symbols += [i for i in US_INDEX_TRACK if i not in symbols]
     bars = fetch_eod(symbols, period=period)
     written = 0
     for s, df in bars.items():

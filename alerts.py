@@ -2984,8 +2984,53 @@ BENCHMARK_TICKER = "^CNXSC"   # Nifty Smallcap 100 on Yahoo
 _BENCH_CACHE = None
 _BENCH_LABEL = "Nifty Smallcap 100"
 
+# US book (04-Oct-2026, Vishal): PRIMARY benchmark = Nasdaq 100 via QQQ (the
+# alpha bar and the shadow-portfolio XIRR are measured against it); the Nasdaq
+# Composite is shown as a SECOND comparison row so both reads are in one box.
+# Both series are stored nightly by usprices (US_INDEX_TRACK) in our own table.
+US_BENCH_PRIMARY = ("QQQ", "Nasdaq 100 (QQQ)")
+US_BENCH_SECOND = ("^IXIC", "Nasdaq Composite")
+_US_SERIES_CACHE = {}
+
+
+def _own_series(tick: str, label: str, min_rows: int = 60):
+    """Daily closes for one stored ticker as a date-indexed Series, or None when
+    the stored history is too short or STALE (>7 days — depth is not life)."""
+    if tick in _US_SERIES_CACHE:
+        return _US_SERIES_CACHE[tick]
+    out = None
+    try:
+        rows = (sb().table("sme_daily_prices").select("price_date, close").eq("ticker", tick)
+                .order("price_date", desc=True).limit(900).execute().data or [])
+        if rows:
+            newest = date.fromisoformat(str(rows[0]["price_date"])[:10])
+            if (date.today() - newest).days > 7:
+                print(f"(digest: benchmark {label} is STALE — newest row {newest} — skipped)")
+                rows = []
+        if len(rows) >= min_rows:
+            rows.sort(key=lambda r: r["price_date"])
+            out = pd.Series([float(r["close"]) for r in rows],
+                            index=[date.fromisoformat(str(r["price_date"])[:10]) for r in rows])
+            print(f"(digest: benchmark = {label}, {len(out)} days from own table)")
+        else:
+            print(f"(digest: benchmark {label} has only {len(rows)} usable rows — unavailable)")
+    except Exception as e:
+        print(f"(digest: benchmark {label} lookup failed: {e})")
+    _US_SERIES_CACHE[tick] = out
+    return out
+
 
 def _benchmark_series():
+    global _BENCH_LABEL
+    if market() == "US":
+        s_ = _own_series(*US_BENCH_PRIMARY)
+        if s_ is not None:
+            _BENCH_LABEL = US_BENCH_PRIMARY[1]
+        return s_
+    return _benchmark_series_in()
+
+
+def _benchmark_series_in():
     """Daily closes of the Nifty Smallcap 100, ~3 years, as a pandas Series
     indexed by date. None on failure -- benchmark sections then degrade to
     a note, per house rules. Cached per process run."""
@@ -3207,6 +3252,20 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
                         f"(index to {r1.strftime('%d %b')} — latest available; "
                         f"portfolio is to {today.strftime('%d %b')})</span>")
 
+        # US book: the Nasdaq Composite as a second comparison row (same dates).
+        # Alpha and the verdict stay against the PRIMARY (QQQ / Nasdaq 100).
+        idx2_html, idx2 = "", None
+        if market() == "US":
+            s2 = _own_series(*US_BENCH_SECOND)
+            j0 = _level_on(s2, prev_d) if s2 is not None else None
+            j1 = _level_on(s2, today) if s2 is not None else None
+            if j0 and j1:
+                idx2 = (j1 / j0 - 1) * 100
+                idx2_html = (f"<tr><td style='padding:3px 0;color:#64748b'>{US_BENCH_SECOND[1]}</td>"
+                             f"<td style='padding:3px 0;font-weight:700'>{idx2:+.2f}% "
+                             f"<span style='font-weight:400;color:#64748b'>(alpha vs Composite "
+                             f"{pf_ret - idx2:+.2f} pts)</span></td></tr>")
+
         if alpha >= WEEKLY_ALPHA_BAR:
             col, verdict = "#16a34a", "beating the index — must continue ✅"
         elif alpha >= 0:
@@ -3221,6 +3280,7 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
             f"<span style='font-weight:400;color:#64748b'>({_fmt_l(gain)})</span></td></tr>"
             f"<tr><td style='padding:3px 0;color:#64748b'>{_BENCH_LABEL}</td>"
             f"<td style='padding:3px 0;font-weight:700'>{idx_ret:+.2f}%{idx_note}</td></tr>"
+            f"{idx2_html}"
             f"<tr><td style='padding:3px 0;color:#64748b'>Weekly alpha "
             f"(bar: {WEEKLY_ALPHA_BAR}%)</td>"
             f"<td style='padding:3px 0;font-weight:800;color:{col}'>{alpha:+.2f} pts</td></tr>"
@@ -3229,7 +3289,8 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
             f"<p style='margin:2px 0 0;color:#94a3b8;font-size:11px'>"
             f"week measured {prev_d.strftime('%d %b')} → {today.strftime('%d %b')}; "
             f"independent of XIRR / entry dates</p>",
-            {"pf_ret": pf_ret, "idx_ret": idx_ret, "alpha": alpha})
+            {"pf_ret": pf_ret, "idx_ret": idx_ret, "alpha": alpha,
+             "idx2_ret": idx2, "idx2_label": US_BENCH_SECOND[1] if idx2 is not None else None})
     except Exception as e:
         return (f"<p style='color:#888'>Weekly vs index unavailable: {e}</p>", None)
 
@@ -3243,11 +3304,17 @@ def _benchmark_week_move():
 
 
 def _fmt_l(x):
-    """Rupees in lakh/crore, compact."""
+    """Money, compact: rupees in lakh/crore; dollars with K/M on the US book."""
     try:
         x = float(x)
     except (TypeError, ValueError):
         return "—"
+    if market() == "US":
+        if abs(x) >= 1e6:
+            return f"${x/1e6:,.2f}M"
+        if abs(x) >= 1e4:
+            return f"${x/1e3:,.1f}K"
+        return f"${x:,.2f}"
     if abs(x) >= 1e7:
         return f"₹{x/1e7:,.2f} Cr"
     return f"₹{x/1e5:,.1f} L"
@@ -3636,16 +3703,16 @@ def _report_mismatches(findings, dig_total, ref_total, label=""):
     gap = abs(dig_total - ref_total)
     gap_pct = gap / ref_total * 100 if ref_total else 0.0
     who = f" [{label}]" if label else ""
-    print(f"[digest-reconcile]{who} digest Rs {dig_total:,.0f} vs independent "
-          f"Rs {ref_total:,.0f} (gap Rs {gap:,.0f} = {gap_pct:.2f}%)")
+    print(f"[digest-reconcile]{who} digest {_cur()}{dig_total:,.0f} vs independent "
+          f"{_cur()}{ref_total:,.0f} (gap {_cur()}{gap:,.0f} = {gap_pct:.2f}%)")
     for f in findings:
         if f["kind"] == "COST":
             print(f"    COST-FALLBACK {f['name']} ({f['ticker']}): digest has no "
-                  f"price, would use cost Rs {f['digest']:,.2f} vs market "
-                  f"Rs {f['ref']:,.2f} ({f['gap_pct']:+.1f}%), qty {f['qty']:.0f}")
+                  f"price, would use cost {_cur()}{f['digest']:,.2f} vs market "
+                  f"{_cur()}{f['ref']:,.2f} ({f['gap_pct']:+.1f}%), qty {f['qty']:.0f}")
         else:
             print(f"    PRICE-DRIFT   {f['name']} ({f['ticker']}): digest "
-                  f"Rs {f['digest']:,.2f} vs independent Rs {f['ref']:,.2f} "
+                  f"{_cur()}{f['digest']:,.2f} vs independent {_cur()}{f['ref']:,.2f} "
                   f"({f['gap_pct']:+.1f}%), qty {f['qty']:.0f}")
     return gap_pct
 
@@ -3747,6 +3814,53 @@ def run_digest_if_due() -> bool:
     return False
 
 
+US_DIGEST_MARKER = "__us_digest_email__"
+
+
+def run_us_digest() -> bool:
+    """Weekly digest for Vishal's US book (portfolio 4): email + Telegram teaser
+    to the US group, benchmarked to QQQ with the Nasdaq Composite alongside.
+    Computed AS OF the last Friday (US close), so a Saturday-morning IST run
+    stores a Friday-dated snapshot and measures Friday-to-Friday. Never writes
+    the Indian digest's marker; its own marker is written only on a delivered
+    email."""
+    set_market("US")
+    try:
+        client = sb()
+        h = get_holdings(client)
+        if h.empty:
+            print("[us-digest] no US holdings — nothing to send")
+            return False
+        _US_SERIES_CACHE.clear()
+        ok = _digest_for(client, h, tg_pf_ids=sorted(int(p) for p in h["portfolio_id"].unique()),
+                         label="Vishal · US", telegram=True, asof=last_friday())
+        if ok:
+            try:
+                client.table("entry_alert_log").upsert({
+                    "ticker": US_DIGEST_MARKER, "grp": "vishal_us",
+                    "alert_date": date.today().isoformat(), "kind": "DIGEST"}).execute()
+            except Exception as e:
+                print(f"⚠️ [us-digest] could not write the delivery marker: {e}")
+        return bool(ok)
+    finally:
+        set_market("IN")
+
+
+def run_us_digest_if_due() -> bool:
+    client = sb()
+    try:
+        rows = (client.table("entry_alert_log").select("ticker")
+                .eq("alert_date", date.today().isoformat())
+                .eq("ticker", US_DIGEST_MARKER).execute().data or [])
+    except Exception as e:
+        print(f"⚠️ [us-digest] marker check failed ({e}) — assuming NOT sent")
+        rows = []
+    if rows:
+        print("[us-digest] already delivered today — skipping")
+        return False
+    return run_us_digest()
+
+
 def run_snapshot_refresh():
     """Re-stamp THIS WEEK'S Friday snapshot using the CURRENT book, then exit.
     Sends nothing.
@@ -3825,7 +3939,7 @@ def run_digest(only=None):
     return ok
 
 
-def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
+def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, asof=None):
     """Digest v2 (19-Jul-2026): the weekly review meeting. Per-portfolio
     money numbers with week-over-week trend, states, dead-money flags,
     profit tiers, journal+audit corner, delivery conviction, concentration.
@@ -3834,7 +3948,10 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
     `label` names this email (subject + header, e.g. 'Vishal'); `telegram=False`
     suppresses the Telegram teaser (used for the email-only Vishal digest)."""
     import json as _json
-    today = date.today()
+    # `asof` (04-Oct-2026): the US digest runs SATURDAY morning IST, after the US
+    # Friday close, but is a Friday-to-Friday measure — so it is computed, dated
+    # and snapshotted "as of" Friday.
+    today = asof or date.today()
     label_suffix = f" — {label}" if label else ""
     pf_ids = sorted(int(p) for p in holdings["portfolio_id"].unique())
 
@@ -3896,8 +4013,8 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                           f"then re-run. (DIGEST_RECONCILE_MODE=warn to send anyway.)")
                     return
                 _rows_html = "<br>".join(
-                    f"{html.escape(str(f['name']))}: digest ₹{f['digest']:,.2f} vs "
-                    f"market ₹{f['ref']:,.2f} ({f['gap_pct']:+.1f}%)"
+                    f"{html.escape(str(f['name']))}: digest {_cur()}{f['digest']:,.2f} vs "
+                    f"market {_cur()}{f['ref']:,.2f} ({f['gap_pct']:+.1f}%)"
                     f"{' — digest has NO price, using cost' if f['kind'] == 'COST' else ''}"
                     for f in _finds) or "portfolio totals disagree"
                 recon_box = (
@@ -3906,8 +4023,8 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                     "margin:14px 0'><div style='font-size:15px;font-weight:800;color:#dc2626'>"
                     "⚠️ VALUATION MISMATCH — treat the numbers below as unverified</div>"
                     f"<div style='font-size:13px;color:#7f1d1d;margin-top:6px'>{_rows_html}"
-                    f"<br><i>Digest total ₹{_dig:,.0f} vs independent re-pricing "
-                    f"₹{_ref:,.0f} ({_gap_pct:.2f}% apart).</i></div></div>")
+                    f"<br><i>Digest total {_cur()}{_dig:,.0f} vs independent re-pricing "
+                    f"{_cur()}{_ref:,.0f} ({_gap_pct:.2f}% apart).</i></div></div>")
         except Exception as ex:
             print(f"(digest: valuation cross-check failed — {ex})")
 
@@ -3985,6 +4102,14 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
             trend_pnl = _delta(unreal, prev.get("unrealised") if prev else None)
             trend_xirr = (_delta(xirr, prev.get("xirr") if prev else None, pts=True)
                           if xirr is not None else "")
+            # A book younger than ~90 days has no meaningful ANNUALISED return —
+            # +2% in 9 days prints as "162% XIRR" (US book, 04-Oct-2026). Say so
+            # rather than let an honest arithmetic result read as a verdict.
+            book_days = (today - min(d for d, _ in raw_cfs)).days if raw_cfs else None
+            young = book_days is not None and book_days < 90
+            if young:
+                trend_xirr = (f"<span style='color:#d97706'>book is {book_days} days old — "
+                              f"annualised figures are not meaningful yet</span>")
 
             # profit tiers: crossings vs last week's per-ticker pnl_pct
             tiers_html = ""
@@ -4079,7 +4204,8 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                             margin-bottom:6px">📅 THIS WEEK vs the index</div>
                 {weekly_html}
               </div>
-              <div style="margin-top:8px">{_bench_html(xirr, bench)}</div>
+              <div style="margin-top:8px">{_bench_html(xirr, bench) if not young else
+                  f"<p style='margin:4px 0;color:#94a3b8'>vs {_BENCH_LABEL}: the long-run alpha verdict starts once the book is 90 days old ({90 - book_days} to go)</p>"}</div>
               {tiers_html}{conc_html}
             </div>""")
 
@@ -4116,7 +4242,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
                                     f"<b>{verdict} {abs(chg):.1f}%</b>")
         lines = []
         for j in entries:
-            lines.append(f"{short_name(j['ticker'])} sold @ ₹{float(j['exit_price']):,.1f} "
+            lines.append(f"{short_name(j['ticker'])} sold @ {_cur()}{float(j['exit_price']):,.1f} "
                          f"({j['reason']})" + (f" — <i>{j['notes']}</i>" if j.get("notes") else ""))
         if lines or verdicts:
             journal_html = "<br>".join(lines + verdicts)
@@ -4199,8 +4325,10 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
       </div>
 
       <div style="color:#94a3b8;font-size:11px;text-align:center;margin-top:14px">
-        Generated by the alert engine · flowchart v1.0 (40W EMA) · prices via
-        yfinance + official NSE/BSE files · benchmark: Nifty Smallcap 100 ·
+        Generated by the alert engine · flowchart v1.0 (40W EMA) ·
+        {"prices: Yahoo daily bars cross-checked vs Finnhub · benchmark: Nasdaq 100 (QQQ), Nasdaq Composite shown alongside"
+         if market() == "US" else
+         "prices via yfinance + official NSE/BSE files · benchmark: Nifty Smallcap 250"} ·
         trends vs last week's snapshot</div>
     </div>"""
 
@@ -4244,8 +4372,11 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
             if wk:
                 icon = "✅" if wk["alpha"] >= WEEKLY_ALPHA_BAR else (
                     "🟠" if wk["alpha"] >= 0 else "🔴")
-                tg.append(f"   {icon} week: <b>{wk['pf_ret']:+.2f}%</b> vs index "
+                tg.append(f"   {icon} week: <b>{wk['pf_ret']:+.2f}%</b> vs {_BENCH_LABEL} "
                           f"{wk['idx_ret']:+.2f}% → alpha <b>{wk['alpha']:+.2f} pts</b>")
+                if wk.get("idx2_ret") is not None:
+                    tg.append(f"   vs {wk['idx2_label']} {wk['idx2_ret']:+.2f}% "
+                              f"→ alpha {wk['pf_ret'] - wk['idx2_ret']:+.2f} pts")
         tg_exits = exits
         if tg_pf_ids is not None:               # keep only in-scope portfolios' exits
             allowed = tuple(f"[{PF_NAME.get(p)}]" for p in tg_pf_ids) + ("[Both]",)
@@ -4255,7 +4386,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True):
         if dead_money:
             tg.append(f"💤 {len(dead_money)} stock(s) on dead-money watch")
         tg.append("Full review in the email 📧")
-        chat = chat_id_for_group("lakshmi")
+        chat = chat_id_for_group("vishal_us" if market() == "US" else "lakshmi")
         if telegram and chat:            # Vishal's email-only digest sends no teaser
             send_telegram("\n".join(tg), chat_id=chat)
     except Exception as ex:
@@ -4295,6 +4426,8 @@ if __name__ == "__main__":
          # `python alerts.py digest vishal` re-sends ONE book (see run_digest)
          "digest": lambda: run_digest(only=sys.argv[2] if len(sys.argv) > 2 else None),
          "digest-if-due": run_digest_if_due,
+         "us-digest": run_us_digest,
+         "us-digest-if-due": run_us_digest_if_due,
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
          "morning-levels": run_morning_levels,

@@ -288,6 +288,13 @@ def main():
                             alerts.run_eod_entries()
                         finally:
                             alerts.set_market("IN")
+                        # Saturday = the morning after the US Friday close: the
+                        # weekly US digest (Friday-dated snapshot, QQQ + Composite).
+                        if now.weekday() == 5:
+                            try:
+                                alerts.run_us_digest_if_due()
+                            except Exception as e:
+                                print(f"⚠️ [worker] US digest failed: {type(e).__name__}: {e}")
                     else:
                         print(f"[worker] usprices: nothing stored for {today} — will retry")
                 except Exception as e:

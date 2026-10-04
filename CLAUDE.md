@@ -614,9 +614,25 @@ no dei share total in companyfacts (multi-class) — shares fall back to
 nightly after the US price store (worker + GitHub `usprices` job). CLI: `python
 usfundamentals.py NVDA` prints the table; `update` stores. Verified 26-Sep-2026: NVDA
 TTM rev $303B / OPM 65% / P/E 28; MSFT $332B / P/E 29; RKLB loss-making → no P/E.
-**PHASE 2b-iii (not built):** (5) US
-digest (third email, after the US Friday close = Saturday ~01:30 IST) benchmarked to
-QQQ with the same alpha bar; (6) re-tune alert thresholds — mega-caps hug their DMAs
+**PHASE 2b-iii — US WEEKLY DIGEST (shipped 04-Oct-2026).** `alerts.run_us_digest` =
+the SAME `_digest_for` under `set_market("US")`: dollars (`_fmt_l` is market-aware),
+the US Telegram group for the teaser, and **`asof=last_friday()`** — it runs SATURDAY
+morning IST (after the 07:00 US price store; GitHub backstop `20 3 * * 6` = 08:50 IST)
+but is computed, dated and snapshotted as of FRIDAY, so the US week is Friday-to-Friday
+like India's. **Benchmarks: PRIMARY = Nasdaq 100 via QQQ** (`US_BENCH_PRIMARY` — the
+weekly alpha bar and the shadow-portfolio XIRR measure against it) **+ the Nasdaq
+Composite (`^IXIC`) as a second row** in the weekly box with its own alpha (Vishal:
+"compare the QQQ and also the Nasdaq"). Both stored nightly by `usprices.store`
+(`US_INDEX_TRACK`), 2y backfilled, read via `alerts._own_series` (7-day staleness skip).
+Own delivery marker `__us_digest_email__` (never the Indian one); tick-box
+`send_us_digest_now` force-sends; CLI `python alerts.py us-digest[-if-due]`.
+**Young-book guard (04-Oct-2026):** a book <90 days old prints "annualised figures are
+not meaningful yet" instead of an XIRR trend/alpha verdict — the 9-day-old US book had
+annualised +2.1% into "XIRR 162.5%, alpha +116 pts", arithmetically right and useless.
+Dry-run verified: reconciles $2,544 vs $2,544, QQQ 501 days, teaser to -1004304585068,
+market context reverted to IN. First real send = Saturday 10-Oct (this week sets the
+WoW baseline). Preview: `outputs/us_digest_preview.html`.
+**PHASE 2b-iv (not built):** (6) re-tune alert thresholds — mega-caps hug their DMAs
 far more tightly than Indian smallcaps, so `MORNING_NEAR_PCT` 1.5%, the 1% jump gate,
 2% support band and 2× volume bar will over-fire; measure a week, then tighten. No
 delivery-% equivalent exists in the US (short interest is the nearest cousin —
