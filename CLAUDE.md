@@ -45,6 +45,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
 | `screener_data.py` | Deterministic screener.in parser — quarterly table, annual P&L, ROCE/ROE, promoter/pledge trend. **Python computes every QoQ/YoY %.** `python screener_data.py HFCL` |
 | `thesis.py` | Stage-2 thesis scorecard (7 pillars /14 + verdict). Opus 5 + web search researches only DU/SM/GV; RQ/MG/VA come from screener_data, TE is scored in Python. `python thesis.py "<name>" [--reason ..] [--send]` |
+| `fy_tracker.py` | FY return-target tracker (50% for each book, Lakshmi 04-Oct-2026): Modified Dietz FY-to-date return vs a compounding pace line. ONE module feeds the dashboard card (`app.render_fy_target`) and the digest block, so they can't disagree. `python fy_tracker.py` prints all four books. |
 | `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours (weekdays) + NSE filings every 3 min + BSE filings every 2h **7 DAYS** (companies file board-meeting outcomes/results on Saturdays; the RSS feed is a ~1-day snapshot so a weekend filing ages off before Monday — `_within(..., weekends=True)` for filings, weekday-only for live/market checks; 01-Aug-2026, Vishal caught it). Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | ~~`*_schema.sql`~~ | (Historical — schema was applied to Supabase directly; no `.sql` files are committed in the repo.) |
@@ -1192,6 +1193,43 @@ cost), so this uses the pipe we already own. Flagged, not silently substituted.
 
 **Test:** `python dryrun.py thesis "Krishival Foods (XNSE:KRISHIVAL)"` — prints the note,
 sends nothing, stores nothing.
+
+## FY return target tracker (`fy_tracker.py`, Lakshmi + Vishal 04-Oct-2026)
+Lakshmi wants **50% return this financial year**; Vishal and Abinaya the same. Vishal's US
+book gets its own separate card on the US dashboard (50% a year, from its first buy).
+**Measure — agreed with Vishal 04-Oct-2026: Modified Dietz, NOT annualised.** R = (V_end −
+V_start − ΣF) / (V_start + Σ wᵢFᵢ); F = money into stocks (buys +, sells −), wᵢ = share of
+the window each flow was invested. Broker deposits are irrelevant — only money that went
+into stocks counts. **CAGR rejected** (treats every deposit as return). **XIRR rejected as
+the tracker** (annualises a part-year: +20% in October reads ~+45%; it stays in the digest
+for the long view). **Pace is compounding**, (1.5)^(days/365) − 1 — +22.7% at day 184, not 25%.
+**Start value is rebuilt BACKWARDS** — holdings at start = holdings today − buys since +
+sells since — priced at the start date's RAW close (our bhavcopy table, else NSE/BSE's own
+file, cached in `.cache/bhav_closes_*.json`). Never from an early snapshot: those carry data
+errors fixed later. 31-Mar-2026 was a market HOLIDAY — the holiday-republish guard rejects
+that day's files and `close_on` walks back to the 30-Mar close (memoised per process).
+**Windows:** Vishal from 1 April (his FY log verified complete 04-Oct-2026); Lakshmi +
+Abinaya from the **10-Jul close** (live logging began 12/14-Jul; April–July needs their
+31-Mar holdings + tradebook — then delete their `START_OVERRIDE` entries); US from the day
+before the first buy. A window's target = the annual pace over the window's length
+(Lakshmi's 10-Jul→31-Mar window = 34.1%).
+**Fail-safe (House Rule #2):** a position NEGATIVE at the start, an unpriced opening
+holding, or a start-price vs first-trade ratio outside 0.5–2× with no bonus lot logged
+(an unlogged split/bonus) → NO number; the card and digest name what to fix.
+**Log fixes made 04-Oct-2026 to make the backwards rebuild valid (backup
+`outputs/transactions_backup_2026-10-04.json`):** pf1 — Rashi id439 qty/price swapped
+(865 @ 29 → 29 @ 865); HBL 22-Jul and Welspun 26-Aug sales logged twice (Mark-as-Sold copy
++ INDmoney-rebuild copy; legacy copies deleted, realised links moved). pf2 — LT Foods
+entered twice (invalid ticker "LT FOODS" three buys + a consolidated LTFOODS re-entry; the
+re-entry deleted, ticker fixed); Indo-MIM ticker spelling. pf3 — Texmaco wrong-ticker
+duplicate deleted; Jyoti CNC 525 @ 972.47 entered in Abinaya's book then re-entered in
+Lakshmi's (Abinaya copy deleted). **OPEN: Abinaya's Venky's** — 250 @ 1,759 + 100 @ 1,654.84
+(no holding, no sale) vs Lakshmi's 359 @ 1,729.40; same avg price, 9 shares differ, so NOT
+auto-fixed. Abinaya's tracker stays paused (and the household line off) until Vishal says
+which is right. **Lesson: the dashboard's add/delete flow leaves orphan transactions when
+a holding is re-entered under another ticker or book — the backwards check finds them.**
+First readings 04-Oct-2026: Vishal +50.6% (₹7.6L) vs pace +23.1%, SC250 +23.1% same window —
+target already reached; Lakshmi +3.4% vs pace +10.0% (SC250 −2.9%); US +3.1% vs +1.2% (QQQ +1.1%).
 
 ## Trading scorecard (`metrics.py` + `app.tab_scorecard`, Vishal 22-Aug-2026)
 *"If you can't measure, you can't improve"* — scores DECISIONS, not the market, from

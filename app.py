@@ -797,6 +797,75 @@ def compute_kpis(enriched: pd.DataFrame, realised: pd.DataFrame) -> dict:
 # UI HELPERS
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fy_progress(pf: int, v_end: float | None, day_iso: str) -> dict:
+    """FY-target progress (fy_tracker). Keyed on portfolio, the value shown and
+    the day, so a new trade or a new day recomputes (House Rule #9)."""
+    import fy_tracker
+    return fy_tracker.compute(db._client(), pf, v_end=v_end)
+
+
+def render_fy_target(k: dict):
+    """🎯 FY return target (Lakshmi 04-Oct-2026: 50% this financial year; Vishal
+    and Abinaya too). Modified Dietz return on money in stocks, not annualised,
+    against a compounding pace line. One module (fy_tracker) feeds this AND the
+    weekly digest, so the two can never disagree."""
+    import fy_tracker
+    pf = int(st.session_state.get("portfolio_id", 1))
+    today = now_ist().date()
+    try:
+        r = _fy_progress(pf, round(float(k["current"]), 2), today.isoformat())
+    except Exception as e:
+        st.caption(f"🎯 FY target tracker unavailable: {e}")
+        return
+    _s, _e, fy_label = signals.fy_bounds(today)
+    title = (f"🎯 US book target: {r['target_pct']:.0f}% a year" if is_us_pf()
+             else f"🎯 {fy_label} target: {r['target_pct']:.0f}% return")
+    with st.container(border=True):
+        st.markdown(f"**{title}** · <span style='color:#64748b'>{r['note']}</span>",
+                    unsafe_allow_html=True)
+        if r["status"] != "OK":
+            st.warning("Tracker paused until the log is fixed — a wrong number is worse "
+                       "than none:\n\n" + "\n".join(f"- {p}" for p in r["problems"]))
+            return
+        col, words = fy_tracker.verdict(r)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Return so far", f"{r['ret']:+.1f}%", f"{r['ahead_pts']:+.1f} pts vs pace",
+                  help=f"Profit on money in stocks since {r['start']:%d %b %Y} — "
+                       f"{fmt_inr(r['pnl'])} on a start value of {fmt_inr(r['v_start'])} plus "
+                       f"{fmt_inr(r['net_flow'])} net new money, each rupee weighted by how long "
+                       f"it was invested. Not annualised.")
+        c2.metric("On-pace mark today", f"{r['pace_now']:+.1f}%",
+                  help=f"Where a book compounding at {r['target_pct']:.0f}% a year would be after "
+                       f"{r['days']} days — compounding, not straight-line.")
+        c3.metric("Target for the window", f"{r['window_target']:.1f}%",
+                  help=f"{r['target_pct']:.0f}% a year applied to {r['start']:%d %b %Y} → "
+                       f"{r['window_end']:%d %b %Y}.")
+        if r["needed"] is not None and r["needed"] <= 0:
+            c4.metric("Still needed", "reached ✅", help="Target already met — it now needs holding.")
+        elif r["needed"] is not None:
+            c4.metric("Still needed", f"{r['needed']:+.1f}%",
+                      help=f"Return needed over the remaining {r['remaining_days']} days to finish "
+                           f"on target.")
+        frac = max(0.0, min(1.0, r["ret"] / r["window_target"])) if r["window_target"] else 0.0
+        st.progress(frac, text=f"{frac * 100:.0f}% of the way to {r['window_target']:.1f}% — {words}")
+        ctx = (f" · {r['index']['label']} {r['index']['ret']:+.1f}% over the same window"
+               if r.get("index") else "")
+        line = f"P&L in window {fmt_inr(r['pnl'])}{ctx}"
+        # Lakshmi's login carries two books: show the household line as well.
+        pfs = set(st.session_state.get("portfolios", {}).keys())
+        if pfs == {2, 3}:
+            try:
+                both = [_fy_progress(p, None, today.isoformat()) for p in (2, 3)]
+                h = fy_tracker.combine(both, "Lakshmi + Abinaya")
+                line += (f" · **Household (Lakshmi + Abinaya): {h['ret']:+.1f}%** vs pace "
+                         f"{h['pace_now']:+.1f}%" if h else
+                         " · Household line resumes once both books pass their checks")
+            except Exception:
+                pass
+        st.caption(line)
+
+
 def fmt_inr(x, decimals=0):
     """Money in the ACTIVE portfolio's currency (name kept for its 100+ callers)."""
     if pd.isna(x) or x is None:
@@ -2245,6 +2314,7 @@ def main():
     except Exception:
         c6.metric("XIRR", "—", help="Transactions table unavailable")
 
+    render_fy_target(k)
     st.divider()
 
     tab_names = [

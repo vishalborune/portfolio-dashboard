@@ -4032,6 +4032,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
     pf_sections = []
     detail_by_pf = {}
     weekly_by_pf = {}          # pf -> {pf_ret, idx_ret, alpha} for the Telegram recap
+    fy_by_pf = {}              # pf -> fy_tracker result
     for pf in pf_ids:
         try:
             inv = val = 0.0
@@ -4148,6 +4149,35 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
             # Lakshmi's weekly scorecard — the headline he actually judges on,
             # because unlike XIRR it doesn't depend on the entry dates.
             weekly_html, weekly_stats = _weekly_vs_index(client, pf, prev, val, unreal, today)
+
+            # FY return target (fy_tracker — the same module the dashboard card uses)
+            fy_html = ""
+            try:
+                import fy_tracker
+                fr = fy_tracker.compute(client, pf, v_end=val, end=today)
+                fy_by_pf[pf] = fr
+                if fr["status"] == "OK":
+                    fcol, fwords = fy_tracker.verdict(fr)
+                    need = ("target already reached — now it needs holding"
+                            if fr["needed"] is not None and fr["needed"] <= 0 else
+                            f"needs {fr['needed']:+.1f}% over the remaining {fr['remaining_days']} days")
+                    idx = (f" · {fr['index']['label']} {fr['index']['ret']:+.1f}% same window"
+                           if fr.get("index") else "")
+                    fy_html = (f"<div style='font-size:14px;font-weight:800;color:#0f766e;margin:10px 0 4px'>"
+                               f"🎯 FY target {fr['target_pct']:.0f}%</div>"
+                               f"<p style='margin:2px 0'>Return so far <b>{fr['ret']:+.1f}%</b> "
+                               f"({_fmt_l(fr['pnl'])}) vs on-pace mark {fr['pace_now']:+.1f}% — "
+                               f"<b style='color:{fcol}'>{fwords}</b></p>"
+                               f"<p style='margin:2px 0;color:#475569'>Window target "
+                               f"{fr['window_target']:.1f}% · {need}{idx}</p>"
+                               f"<p style='margin:2px 0;color:#94a3b8;font-size:11px'>{fr['note']}; "
+                               f"money-weighted, not annualised</p>")
+                else:
+                    import html as _html_mod      # `html` is a local (the email body) in this function
+                    fy_html = ("<p style='color:#d97706'>🎯 FY target tracker paused — "
+                               + _html_mod.escape("; ".join(fr["problems"])) + "</p>")
+            except Exception as ex:
+                print(f"(digest: FY tracker failed for pf {pf}: {ex})")
             weekly_by_pf[pf] = weekly_stats
 
             # FY-to-date realised P&L (1 Apr–31 Mar, capped at today so a future-
@@ -4206,6 +4236,7 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
               </div>
               <div style="margin-top:8px">{_bench_html(xirr, bench) if not young else
                   f"<p style='margin:4px 0;color:#94a3b8'>vs {_BENCH_LABEL}: the long-run alpha verdict starts once the book is 90 days old ({90 - book_days} to go)</p>"}</div>
+              {fy_html}
               {tiers_html}{conc_html}
             </div>""")
 
@@ -4385,6 +4416,11 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
             tg.append("🔴 EXIT: " + ", ".join(tg_exits))
         if dead_money:
             tg.append(f"💤 {len(dead_money)} stock(s) on dead-money watch")
+        for pf in pf_ids:
+            fr = fy_by_pf.get(pf)
+            if (tg_pf_ids is None or pf in tg_pf_ids) and fr and fr.get("status") == "OK":
+                tg.append(f"🎯 {PF_NAME.get(pf, pf)} FY: <b>{fr['ret']:+.1f}%</b> vs pace "
+                          f"{fr['pace_now']:+.1f}% (target {fr['window_target']:.0f}% for the window)")
         tg.append("Full review in the email 📧")
         chat = chat_id_for_group("vishal_us" if market() == "US" else "lakshmi")
         if telegram and chat:            # Vishal's email-only digest sends no teaser
