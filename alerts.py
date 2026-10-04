@@ -4156,7 +4156,21 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
                 import fy_tracker
                 fr = fy_tracker.compute(client, pf, v_end=val, end=today)
                 fy_by_pf[pf] = fr
-                if fr["status"] == "OK":
+                if fr["status"] == "OK" and fr.get("target_pct") is None:
+                    # growth mode (Vishal): no target, the year's growth as an evolving number
+                    wk = fy_tracker.week_change(client, pf, fr)
+                    idx = (f" · {fr['index']['label']} {fr['index']['ret']:+.1f}% same period "
+                           f"(you {fr['ret'] - fr['index']['ret']:+.1f} pts)") if fr.get("index") else ""
+                    wk_txt = (f" · this week {'+' if wk['pnl_delta'] >= 0 else '−'}"
+                              f"{_fmt_l(abs(wk['pnl_delta']))}") if wk else ""
+                    fy_html = (f"<div style='font-size:14px;font-weight:800;color:#0f766e;margin:10px 0 4px'>"
+                               f"📈 Growth this FY</div>"
+                               f"<p style='margin:2px 0'><b>{_fmt_l(fr['pnl'])}</b> "
+                               f"(<b>{fr['ret']:+.1f}%</b> on money invested){wk_txt}{idx}</p>"
+                               f"<p style='margin:2px 0;color:#94a3b8;font-size:11px'>started the year at "
+                               f"{_fmt_l(fr['v_start'])} · added {_fmt_l(fr['net_flow'])} fresh money · "
+                               f"money-weighted, not annualised</p>")
+                elif fr["status"] == "OK":
                     fcol, fwords = fy_tracker.verdict(fr)
                     need = ("target already reached — now it needs holding"
                             if fr["needed"] is not None and fr["needed"] <= 0 else

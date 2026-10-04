@@ -1229,6 +1229,23 @@ First readings 04-Oct-2026: Vishal +50.6% (₹7.6L) vs pace +23.1%, SC250 +23.1%
 target already reached; Lakshmi +3.4% vs pace +10.0% (SC250 −2.9%); Abinaya +17.2% vs pace +10.0%; household
 +8.1%; US +3.1% vs +1.2% (QQQ +1.1%).
 
+**GROWTH MODE for Vishal's India book (05-Oct-2026).** After walking through why the
+tracker's ₹7.6L exceeds his dashboard's realised + unrealised (₹5.53L — the dashboard
+measures from PURCHASE price, so the first ₹2.1L of this year's recovery only cancels the
+31-March paper dip on the 18 carried-in stocks), he asked to drop the 50% target for his
+own book: *"make it an evolving number... see how much I can push for the year"*.
+`TARGET_PCT[1] = None` → `app._render_fy_growth`: growth this FY (₹ and %), change since
+the last weekly snapshot (`fy_tracker.week_change` = compute at that Friday with the
+snapshot's value), Smallcap 250 same period, and "started at / added / worth today".
+Digest block likewise. Lakshmi, Abinaya and the US book keep the 50% target.
+`compute()` now builds start holdings from ALL trades since the start but the return only
+from trades up to `end`, so a past `end` is valid (it requires `v_end` for that day).
+Weekly trail for pf1: 11-Sep ₹7.73L · 18-Sep ₹7.72L · 25-Sep ₹8.53L · 02-Oct ₹7.63L.
+**How to explain the two numbers to Vishal (what finally landed):** "bought at 100, fell to
+80 by 31 March, sold at 110 → realised profit 10 (dashboard, tax), growth this year 30
+(tracker); the first 20 only cancelled the dip." And the ₹51L "bought" / ₹42L "sold" are
+TURNOVER (the same rupees recycled ~4-5×), not capital — fresh money added = ₹9.2L.
+
 ## Trading scorecard (`metrics.py` + `app.tab_scorecard`, Vishal 22-Aug-2026)
 *"If you can't measure, you can't improve"* — scores DECISIONS, not the market, from
 CLOSED trades only. Lives in its own module so the dashboard and the digest can never

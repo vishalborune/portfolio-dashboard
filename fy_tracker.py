@@ -44,7 +44,10 @@ import os
 import re
 from datetime import date, timedelta
 
-TARGET_PCT = {1: 50.0, 2: 50.0, 3: 50.0, 4: 50.0}
+# None = GROWTH MODE (Vishal 05-Oct-2026, his India book only): no fixed target or
+# pace line — the card tracks the year's growth as an evolving number ("see how much
+# I can push for the year"). Lakshmi, Abinaya and the US book keep the 50% target.
+TARGET_PCT = {1: None, 2: 50.0, 3: 50.0, 4: 50.0}
 START_OVERRIDE = {2: date(2026, 7, 10), 3: date(2026, 7, 10)}
 START_NOTE = {2: "measured from 10 Jul — April–July pending the broker's 31-Mar holdings + tradebook",
               3: "measured from 10 Jul — April–July pending the broker's 31-Mar holdings + tradebook"}
@@ -189,7 +192,8 @@ def compute(client, pf: int, v_end: float | None = None, end: date | None = None
     """FY-target progress for one portfolio. `v_end` lets the caller pass the
     value it already shows (dashboard / digest) so the tracker and that screen
     can never disagree; otherwise it is priced here at the latest stored close."""
-    end = end or date.today()
+    today = date.today()
+    end = end or today
     target = TARGET_PCT.get(pf, 50.0)
     fy_start, fy_end = fy_window(end)
     us = pf in US_PORTFOLIOS
@@ -204,17 +208,21 @@ def compute(client, pf: int, v_end: float | None = None, end: date | None = None
         note = START_NOTE.get(pf, "measured from 1 April")
     window_end = fy_end if not us or fy_end > start else end
 
+    # Start holdings come from TODAY's holdings minus EVERY trade since the start;
+    # the return itself only uses trades up to `end`. Keeping the two apart is what
+    # lets a past `end` (e.g. last Friday, for "this week") give the right answer.
     flows, net_qty = [], {}
     for t in tx:
         d = date.fromisoformat(str(t["transaction_date"])[:10])
-        if not (start < d <= end):
+        if d <= start:
             continue
         tk = ticker_of(t["stock_name"])
         q = float(t["quantity"] or 0)
         amt = float(t["amount"]) if t.get("amount") not in (None, "") else q * float(t["price"] or 0)
         sign = 1 if t["transaction_type"] == "buy" else -1
-        flows.append((d, sign * amt, tk, sign * q, float(t["price"] or 0)))
         net_qty[tk] = net_qty.get(tk, 0.0) + sign * q
+        if d <= end:
+            flows.append((d, sign * amt, tk, sign * q, float(t["price"] or 0)))
 
     cur_qty = {}
     for h in hold:
@@ -252,6 +260,8 @@ def compute(client, pf: int, v_end: float | None = None, end: date | None = None
     if problems:
         return {**base, "status": "CHECK", "problems": sorted(problems)}
 
+    if v_end is None and end < today:
+        return {**base, "status": "CHECK", "problems": ["a past end date needs that day's portfolio value"]}
     if v_end is None:
         v_end = 0.0
         for tk, q in cur_qty.items():
@@ -271,23 +281,50 @@ def compute(client, pf: int, v_end: float | None = None, end: date | None = None
     pnl = v_end - v_start - net_flow
     ret = pnl / denom * 100
 
-    g = 1 + target / 100
-    window_days = max((window_end - start).days, 1)
-    window_target = (g ** (window_days / 365) - 1) * 100
-    pace_now = (g ** (T / 365) - 1) * 100
     remaining = max((window_end - end).days, 0)
-    needed = ((1 + window_target / 100) / (1 + ret / 100) - 1) * 100 if remaining else None
+    if target is None:                       # growth mode: no target, no pace
+        window_target = pace_now = needed = None
+    else:
+        g = 1 + target / 100
+        window_days = max((window_end - start).days, 1)
+        window_target = (g ** (window_days / 365) - 1) * 100
+        pace_now = (g ** (T / 365) - 1) * 100
+        needed = ((1 + window_target / 100) / (1 + ret / 100) - 1) * 100 if remaining else None
 
     idx = None
     itk, ilabel = INDEX_TICKER["US" if us else "IN"]
-    i0, i1 = close_on(client, itk, start), latest_close(client, itk)
+    i0 = close_on(client, itk, start)
+    i1 = latest_close(client, itk) if end >= today else close_on(client, itk, end)
     if i0 and i1:
         idx = {"label": ilabel, "ret": (i1 / i0 - 1) * 100}
 
     return {**base, "status": "OK", "v_start": v_start, "v_end": v_end, "net_flow": net_flow,
             "pnl": pnl, "ret": ret, "pace_now": pace_now, "window_target": window_target,
-            "ahead_pts": ret - pace_now, "remaining_days": remaining, "needed": needed,
+            "ahead_pts": (ret - pace_now) if pace_now is not None else None,
+            "remaining_days": remaining, "needed": needed,
             "days": T, "n_opening": len(opening), "n_flows": len(flows), "index": idx}
+
+
+def week_change(client, pf: int, r: dict) -> dict | None:
+    """How much the year's growth moved since the last weekly snapshot (the
+    Friday-close book the digest stores and Saturday re-stamps). None when there
+    is no snapshot inside the window yet."""
+    if r.get("status") != "OK":
+        return None
+    try:
+        snap = (client.table("digest_history").select("snap_date,current_value")
+                .eq("portfolio_id", pf).lt("snap_date", r["end"].isoformat())
+                .gt("snap_date", r["start"].isoformat())
+                .order("snap_date", desc=True).limit(1).execute().data or [])
+    except Exception:
+        return None
+    if not snap:
+        return None
+    d = date.fromisoformat(str(snap[0]["snap_date"])[:10])
+    prev = compute(client, pf, v_end=float(snap[0]["current_value"]), end=d)
+    if prev.get("status") != "OK":
+        return None
+    return {"since": d, "pnl_delta": r["pnl"] - prev["pnl"], "ret_then": prev["ret"], "pnl_then": prev["pnl"]}
 
 
 def combine(results: list[dict], label: str) -> dict | None:
@@ -337,9 +374,15 @@ if __name__ == "__main__":
         if r["status"] != "OK":
             print("   CHECK: " + "\n          ".join(r["problems"]))
             continue
-        col, words = verdict(r)
         print(f"   start value {cur}{r['v_start']:,.0f} ({r['n_opening']} holdings) · net new money {cur}{r['net_flow']:,.0f} "
               f"({r['n_flows']} trades) · value now {cur}{r['v_end']:,.0f}")
+        if r["target_pct"] is None:
+            wk = week_change(c, pf, r)
+            print(f"   GROWTH MODE: {cur}{r['pnl']:,.0f} this FY ({r['ret']:+.2f}%)"
+                  + (f" · since {wk['since']:%d %b}: {wk['pnl_delta']:+,.0f}" if wk else "")
+                  + (f" · {r['index']['label']} {r['index']['ret']:+.2f}% same window" if r["index"] else ""))
+            continue
+        col, words = verdict(r)
         print(f"   return {r['ret']:+.2f}% (P&L {cur}{r['pnl']:,.0f}) · pace mark today {r['pace_now']:+.2f}% · {words}")
         print(f"   window target {r['window_target']:.1f}% · needed over the remaining {r['remaining_days']} days: "
               f"{r['needed']:+.1f}%" + (f" · {r['index']['label']} {r['index']['ret']:+.2f}% same window" if r["index"] else ""))

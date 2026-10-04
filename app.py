@@ -805,6 +805,42 @@ def _fy_progress(pf: int, v_end: float | None, day_iso: str) -> dict:
     return fy_tracker.compute(db._client(), pf, v_end=v_end)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fy_week(pf: int, v_end: float | None, day_iso: str):
+    import fy_tracker
+    r = fy_tracker.compute(db._client(), pf, v_end=v_end)
+    return fy_tracker.week_change(db._client(), pf, r)
+
+
+def _render_fy_growth(r: dict, fy_label: str, pf: int, today):
+    """GROWTH MODE (Vishal 05-Oct-2026): no fixed target — the year's growth as an
+    evolving number, so he can see how far better decisions push it."""
+    with st.container(border=True):
+        st.markdown(f"**📈 {fy_label} growth so far** · <span style='color:#64748b'>{r['note']}</span>",
+                    unsafe_allow_html=True)
+        try:
+            wk = _fy_week(pf, round(float(r["v_end"]), 2), today.isoformat())
+        except Exception:
+            wk = None
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Growth this FY", fmt_inr(r["pnl"]),
+                  (f"{'+' if wk['pnl_delta'] >= 0 else '−'}{fmt_inr(abs(wk['pnl_delta']))} since "
+                   f"{wk['since']:%d %b}") if wk else None,
+                  help="How much your money grew since 1 April: value today − value on 1 April − "
+                       "fresh money you added. Includes the recovery of anything that was down on "
+                       "31 March (the dashboard's Realised/Unrealised measure from purchase price).")
+        c2.metric("Return on money invested", f"{r['ret']:+.1f}%",
+                  (f"{r['ret'] - wk['ret_then']:+.1f} pts since {wk['since']:%d %b}") if wk else None,
+                  help="Growth ÷ money at work, each rupee weighted by how long it was invested. "
+                       "Not annualised.")
+        if r.get("index"):
+            c3.metric(f"{r['index']['label']}, same period", f"{r['index']['ret']:+.1f}%",
+                      help="The index over exactly the same dates, for context.")
+            c4.metric("You vs the index", f"{r['ret'] - r['index']['ret']:+.1f} pts")
+        st.caption(f"Started the year at {fmt_inr(r['v_start'])} · added {fmt_inr(r['net_flow'])} of fresh "
+                   f"money · worth {fmt_inr(r['v_end'])} today")
+
+
 def render_fy_target(k: dict):
     """🎯 FY return target (Lakshmi 04-Oct-2026: 50% this financial year; Vishal
     and Abinaya too). Modified Dietz return on money in stocks, not annualised,
@@ -819,6 +855,9 @@ def render_fy_target(k: dict):
         st.caption(f"🎯 FY target tracker unavailable: {e}")
         return
     _s, _e, fy_label = signals.fy_bounds(today)
+    if r.get("target_pct") is None and r.get("status") == "OK":
+        _render_fy_growth(r, fy_label, pf, today)
+        return
     title = (f"🎯 US book target: {r['target_pct']:.0f}% a year" if is_us_pf()
              else f"🎯 {fy_label} target: {r['target_pct']:.0f}% return")
     with st.container(border=True):
