@@ -1223,13 +1223,11 @@ holding, or a start-price vs first-trade ratio outside 0.5–2× with no bonus l
 entered twice (invalid ticker "LT FOODS" three buys + a consolidated LTFOODS re-entry; the
 re-entry deleted, ticker fixed); Indo-MIM ticker spelling. pf3 — Texmaco wrong-ticker
 duplicate deleted; Jyoti CNC 525 @ 972.47 entered in Abinaya's book then re-entered in
-Lakshmi's (Abinaya copy deleted). **OPEN: Abinaya's Venky's** — 250 @ 1,759 + 100 @ 1,654.84
-(no holding, no sale) vs Lakshmi's 359 @ 1,729.40; same avg price, 9 shares differ, so NOT
-auto-fixed. Abinaya's tracker stays paused (and the household line off) until Vishal says
-which is right. **Lesson: the dashboard's add/delete flow leaves orphan transactions when
+Lakshmi's (Abinaya copy deleted). **Venky's (resolved 04-Oct-2026, Vishal: "it's only Lakshmi's"):** Abinaya's 250 @ 1,759 + 100 @ 1,654.84 were a wrong-book entry — deleted. **Lesson: the dashboard's add/delete flow leaves orphan transactions when
 a holding is re-entered under another ticker or book — the backwards check finds them.**
 First readings 04-Oct-2026: Vishal +50.6% (₹7.6L) vs pace +23.1%, SC250 +23.1% same window —
-target already reached; Lakshmi +3.4% vs pace +10.0% (SC250 −2.9%); US +3.1% vs +1.2% (QQQ +1.1%).
+target already reached; Lakshmi +3.4% vs pace +10.0% (SC250 −2.9%); Abinaya +17.2% vs pace +10.0%; household
++8.1%; US +3.1% vs +1.2% (QQQ +1.1%).
 
 ## Trading scorecard (`metrics.py` + `app.tab_scorecard`, Vishal 22-Aug-2026)
 *"If you can't measure, you can't improve"* — scores DECISIONS, not the market, from
