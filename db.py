@@ -415,8 +415,12 @@ def mark_as_sold(holding_id: int, selling_price: float, sale_date: date,
                 reason=reason,
                 notes=notes,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # Still never blocks the sell — but a journal entry that silently fails
+            # to save is an exit the 30/60/90-day audit never scores (09-Oct-2026:
+            # an invalid reason dropped 8 exits without a word). Say so.
+            print(f"⚠️ [db] trade journal entry NOT saved for {r['stock_name']} "
+                  f"(reason {reason!r}; allowed {JOURNAL_REASONS}): {type(e).__name__}: {e}")
 
     _bust()
 
