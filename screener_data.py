@@ -184,7 +184,11 @@ def _identity_ok(page: str, expected_name: str) -> bool:
     if not expected_name:
         return True
     page_name = _page_company(page).upper()
-    want = {w for w in re.split(r"[^A-Z0-9]+", expected_name.upper())
+    # Apostrophes are dropped, not split on: "VENKY'S" must match screener's
+    # "Venkys" (it was split into VENKY + S and rejected, 12-Oct-2026).
+    _apos = lambda x: re.sub(r"['’`]", "", x)
+    page_name = _apos(page_name)
+    want = {w for w in re.split(r"[^A-Z0-9]+", _apos(expected_name.upper()))
             if len(w) >= 3 and w not in _STOPWORDS}
     # WHOLE-WORD match, never substring. A plain `w in page_name` accepted
     # "Innovana Thinklabs" as "Innova Captab" (INNOVA sits inside INNOVANA) —

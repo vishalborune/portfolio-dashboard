@@ -3644,6 +3644,16 @@ def _shp_events(row: dict) -> list:
     return out
 
 
+def _period_age_days(kind: str) -> int:
+    """Days since the end of the quarter in 'SHP_PROMO:Sep 2026' (999 if unparseable)."""
+    try:
+        d = datetime.strptime(kind.split(":", 1)[1].strip(), "%b %Y")
+        nxt = date(d.year + (d.month == 12), d.month % 12 + 1, 1)
+        return (date.today() - nxt).days + 1
+    except Exception:
+        return 999
+
+
 def run_shareholding_alerts():
     """ONE Telegram message to Lakshmi's group listing holdings (📌) and watchlist
     names (👀) whose pledge level changed or whose promoter holding fell. Silent
@@ -3651,8 +3661,9 @@ def run_shareholding_alerts():
     SHP_PROMO:<quarter>), written only after the send succeeds.
 
     First run: stocks ALREADY pledged are announced once (that is the 'check
-    before you buy' the course asks for). Promoter drops in the quarter already
-    on file are recorded silently — that news is months old."""
+    before you buy' the course asks for). Promoter drops from a quarter that ended
+    more than 60 days ago are recorded silently — that news is months old; a
+    just-filed quarter (e.g. Sep, filed in Oct) is still sent."""
     client = sb()
     lak = {p for p, g in PF_GROUP.items() if g == "lakshmi"}
     hold_names, watch_names = {}, {}
@@ -3695,8 +3706,8 @@ def run_shareholding_alerts():
         for kind, text in _shp_events(r):
             if (tk, kind) in seen:
                 continue
-            if first_run and kind.startswith("SHP_PROMO"):
-                silent.append((tk, kind))
+            if first_run and kind.startswith("SHP_PROMO") and _period_age_days(kind) > 60:
+                silent.append((tk, kind))          # an old quarter's news — record only
                 continue
             nm = hold_names.get(tk) or watch_names.get(tk) or tk
             line = f"• <b>{html.escape(nm)}</b> — {text}"
