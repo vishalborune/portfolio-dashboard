@@ -399,6 +399,15 @@ switch sources without disclosure.
   (House Rule #3). Found when a correctly-caught "column does not exist" error killed a local
   dry-run. Render is UTF-8, so this only ever bit local runs — which is exactly where
   `dryrun.py` lives.
+- **Board-meeting NOTICES render as calendar items (Vishal 12-Oct-2026).** E2E's "Board
+  Meeting to be held on 16-Oct to consider Unaudited Financial results" went out as a
+  plain 📢 headline and read like the results themselves, unsummarised (it is an XBRL
+  prior intimation — no PDF, nothing to summarise). `alerts._upcoming_meeting` (=
+  `_parse_board_meeting` minus any "Outcome of…" headline, since an outcome filed on the
+  meeting day parses as a today-dated meeting) → `_calendar_body`: "📅 <co> — Results:
+  board meeting on Fri 16 Oct · Notice only, no numbers yet", original headline echoed
+  below. Same-day notices drop the "on that day's 08:30 brief" line (the brief has gone).
+  Outcomes and the results PDFs keep the normal 📢 format + summary.
 - **Morning 5/10-DMA order levels (`alerts.run_morning_levels`, Lakshmi 11-Aug-2026)**:
   ~08:45 IST **weekdays** (it exists to place orders — pointless Sat/Sun), ONE Telegram
   message listing Lakshmi+Abinaya HOLDINGS (📌) and WATCHLIST (👀) names that are

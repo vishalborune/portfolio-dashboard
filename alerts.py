@@ -2462,6 +2462,37 @@ def _parse_board_meeting(headline):
     return ev.isoformat(), (", ".join(tags) or "board meeting")
 
 
+def _upcoming_meeting(headline):
+    """(event_date_iso, purpose) when `headline` ANNOUNCES a board meeting still to
+    come, else None. An 'Outcome of Board Meeting held on <today>' is the RESULT of
+    a meeting, not a notice of one, and must keep its normal filing format."""
+    if "outcome" in (headline or "").lower():
+        return None
+    return _parse_board_meeting(headline)
+
+
+def _calendar_body(name, headline, meeting, gist, filed, link):
+    """Telegram text for a board-meeting NOTICE, styled as a calendar item so it is
+    never mistaken for the results themselves (Vishal 12-Oct-2026: E2E's 'board
+    meeting to consider unaudited results' looked like the results, unsummarised)."""
+    esc = html.escape
+    d = date.fromisoformat(meeting[0])
+    today = d == date.today()
+    when = d.strftime("%a %d %b").replace(" 0", " ")
+    when = f"TODAY ({when})" if today else f"on {when}"
+    purpose = meeting[1]
+    what = ("Board meeting" if purpose == "board meeting"
+            else f"{purpose[0].upper()}{purpose[1:]}: board meeting")
+    # A same-day notice arrives after that morning's 08:30 brief has gone out.
+    brief = "" if today else " It is also on that day's 08:30 brief."
+    return (f"📅 <b>{esc(name)}</b> — {esc(what)} <b>{esc(when)}</b>\n"
+            f"<i>Notice only, no numbers yet. The filing itself will be alerted "
+            f"{'and summarised ' if 'result' in purpose else ''}when it comes.{brief}</i>\n"
+            f"↳ {esc(headline[:300])}"
+            + (f"\n\n{gist}" if gist else "")
+            + f"\n{esc(filed or '')} · {link}")
+
+
 def _capture_event(client, ticker, headline, source_date):
     """Store a board-meeting intimation in scheduled_events (idempotent upsert).
     Never raises — a missing table or a non-intimation just means no capture."""
@@ -2591,10 +2622,15 @@ def run_filings(nse_only: bool = False):
             # Full headline (was double-truncated to 200 → cut mid-word); for a
             # filing we can't summarize, the headline IS the payload. Link never
             # dead: non-PDF NSE filings route to the stock's NSE page.
-            body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b>: "
-                    f"{esc(a['headline'][:500])}"
-                    + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
-                    + f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
+            meeting = _upcoming_meeting(a["headline"])
+            if meeting:
+                body = _calendar_body(e["name"], a["headline"], meeting, gist,
+                                      a["date"], _filing_link(url, e["exch"], sym))
+            else:
+                body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b>: "
+                        f"{esc(a['headline'][:500])}"
+                        + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
+                        + f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
             fps = [fp]
             if is_xml and enabled and gist:      # summary already in THIS msg —
                 fps.append(fp_sum)               # record fp_sum too, no follow-up
