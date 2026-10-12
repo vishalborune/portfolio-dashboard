@@ -1255,6 +1255,61 @@ Weekly trail for pf1: 11-Sep ₹7.73L · 18-Sep ₹7.72L · 25-Sep ₹8.53L · 0
 (tracker); the first 20 only cancelled the dip." And the ₹51L "bought" / ₹42L "sold" are
 TURNOVER (the same rupees recycled ~4-5×), not capital — fresh money added = ₹9.2L.
 
+## Promoter pledge early warning + "Who's buying?" panel (Vishal 12-Oct-2026)
+From his course's n8n "hacks" sheet. Evaluated all five; built the two that fit.
+- **SCREENER HEADER REDESIGN BROKE ALL FUNDAMENTALS (found 12-Oct-2026).** The `<h1>`
+  now wraps a logo `<span>`/`<img>` around the company name, so
+  `_identity_ok`'s `<h1>([^<]+)</h1>` matched nothing → every page read as '' → every
+  ticker REJECTED. The nightly job logged **"stored 0/55"** (09-Oct) / "0/60" (05-Oct)
+  and exited green; the dashboard kept showing the last good values, so nobody noticed.
+  Fix: `screener_data._page_company` (h1 text with tags stripped, `<title>` fallback).
+  **`fundamentals.py` now exits 1 when < `MIN_STORED_SHARE` (50%) of tickers store**, so
+  GitHub marks the run red and emails the owner — a 0/55 can never be silent again.
+- **Screener no longer prints a "Pledged percentage" row** in the shareholding table.
+  Pledge appears only in its auto 'Cons' list: *"Promoters have pledged 56.0% of their
+  holding."* — ONE current value. `screener_data.shareholding` parses that (absent =
+  'not flagged', never 0 — House Rule #2). The thesis scorecard's pledge check had been
+  reading nothing since the change; same fix repairs it.
+- **We keep our own pledge history**: `fundamentals.shareholding_payload` appends
+  `[date, pct]` to `shp_trend.pledge_hist` whenever the value changes (one bulk read of
+  yesterday's trends per run, not per ticker). `fundamentals.tracked_tickers` now covers
+  the WATCHLIST too (pledge matters most before you buy).
+- **`alerts.run_shareholding_alerts`** (CLI `shareholding`, dry-run `shareholding`): one
+  Telegram to the Lakshmi group after the nightly fundamentals step (`if: always()`).
+  Events: pledge appeared / up ≥`PLEDGE_CHANGE_PTS` 2 / down / no longer flagged, and
+  promoter holding down ≥`PROMOTER_DROP_PTS` 2 in a quarter. Dedup in entry_alert_log
+  kinds `SHP_PLG:<date>` / `SHP_PROMO:<quarter>`, written only after delivery. First run
+  announces existing pledges once, records last quarter's promoter drops SILENTLY (stale).
+  FLAGS ONLY — the course's "sell 50% immediately" is deliberately not automated.
+- **Dashboard, speed-neutral (Vishal: "I don't want these additions to add slowness")**:
+  `Promoter %` / `Pledge %` ride the EXISTING cached `get_fundamentals` query (falls back
+  to the old column list if the migration is missing). Watchlist gets `Pledge %` next to
+  Verdict via the same 6h-cached read. **`render_smart_money`** (holdings + watchlist) is
+  behind an `st.toggle`, OFF by default — nothing under it runs until switched on: FII/DII/
+  promoter latest + QoQ Δ from `shp_trend`, plus bulk/block deals and SAST/pledge filings
+  already in `filings_seen` (no live NSE call). **Information only, never an alert.**
+- **WHY the panel is info-only (measured 12-Oct-2026):** NSE's Reg-29 archive
+  (`www.nseindia.com/api/corporate-sast-reg29`, answers from a home IP, NOT Render) had
+  2,814 filings Apr→Oct; Indian-MF BUY filings in small/micro names ≈3.5/week, filed a
+  median 6 days after the trade. 20 trading days AFTER the filing they did +0.0 pts vs the
+  SC250 (48% beat, n=73); all institutional buys −1.4 (41%); sells +0.9 (39%). Public fund
+  buying carried no edge, so it is context, not a trigger. 126 of those filings were
+  lenders' trustees taking/releasing pledged shares — a pledge signal, not a fund one.
+- **Not built:** sector rotation by PE (mean-reversion — buys falling sectors, the exact
+  weak-state buy the 10-Oct review found loses −7 to −11 pts); the course's monthly
+  MF-portfolio diff (12 days–3½ months stale, top-25 of flex-caps misses smallcaps,
+  weights confuse price rises with buying). Tax-loss harvesting report: planned for Feb.
+- **Needs a one-time migration:**
+  ```sql
+  alter table fundamentals_daily
+    add column if not exists pledge_pct numeric,
+    add column if not exists promoter_pct numeric,
+    add column if not exists fii_pct numeric,
+    add column if not exists dii_pct numeric,
+    add column if not exists shp_period text,
+    add column if not exists shp_trend jsonb;
+  ```
+
 ## Trading scorecard (`metrics.py` + `app.tab_scorecard`, Vishal 22-Aug-2026)
 *"If you can't measure, you can't improve"* — scores DECISIONS, not the market, from
 CLOSED trades only. Lives in its own module so the dashboard and the digest can never

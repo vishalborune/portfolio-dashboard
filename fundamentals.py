@@ -64,13 +64,22 @@ def _client():
 
 
 def tracked_tickers(client) -> dict:
-    """{screener_symbol: dashboard_ticker} for every non-SME holding.
-    screener.in's URL slug is almost always the NSE trading symbol (even
+    """{screener_symbol: dashboard_ticker} for every Indian holding AND watchlist
+    name. screener.in's URL slug is almost always the NSE trading symbol (even
     for BSE-only stocks it's usually the same root), so we strip the
-    .NS/.BO suffix and try that first."""
-    res = client.table("holdings").select("stock_name").execute()
+    .NS/.BO suffix and try that first.
+
+    Watchlist names joined 12-Oct-2026 for the pledge early warning: a pledge on
+    a stock you are ABOUT to buy matters more than one you already hold. US names
+    never match the XNSE/XBOM pattern, so they stay out (usfundamentals owns them)."""
+    rows = list(client.table("holdings").select("stock_name").execute().data or [])
+    try:
+        rows += client.table("watchlist").select("stock_name").execute().data or []
+    except Exception as e:
+        print(f"  [fundamentals] watchlist read failed ({type(e).__name__}: {e}) "
+              f"— holdings only this run")
     out = {}
-    for row in (res.data or []):
+    for row in rows:
         name = str(row.get("stock_name") or "")
         m = re.search(r"\((?:XNSE|XBOM):([^)]+)\)", name)
         if not m:
@@ -111,6 +120,8 @@ def fetch_one(symbol: str, expected_name: str = "") -> dict:
         "cmp": r.get("cmp"),
     }
     out.update(screener_data.ttm_metrics(snap))
+    # Promoter / FII / DII / pledge trend — off the SAME page, no extra request.
+    out["shareholding"] = snap.get("shareholding") or {}
 
     # A company that STARTED consolidated reporting recently (E2E, caught
     # 02-Sep-2026) can have a consolidated page whose quarterly table is live
@@ -143,7 +154,61 @@ def fetch_one(symbol: str, expected_name: str = "") -> dict:
     return out
 
 
-def store(client, ticker: str, data: dict, cmp_price: float = None):
+# Shareholding columns (12-Oct-2026). Kept separate so a database that has not
+# had the migration yet still stores everything it stored before.
+SHP_COLS = ("pledge_pct", "promoter_pct", "fii_pct", "dii_pct", "shp_period", "shp_trend")
+_SHP_MISSING = False      # set once the table says the columns do not exist
+
+
+def _num_list(xs):
+    """Plain floats/None for a JSON column (House Rule #6: no numpy types)."""
+    out = []
+    for x in xs or []:
+        try:
+            out.append(None if x is None else round(float(x), 2))
+        except (TypeError, ValueError):
+            out.append(None)
+    return out
+
+
+def _last(xs):
+    vals = [x for x in (xs or []) if x is not None]
+    return vals[-1] if vals else None
+
+
+def shareholding_payload(sh: dict, prev_trend: dict = None, today: str = None) -> dict:
+    """Latest promoter/FII/DII/pledge plus the quarterly trend.
+
+    pledge_pct stays NULL when screener does not flag a pledge — 'absent' means
+    'not flagged here', not a verified 0% (House Rule #2). The alert treats NULL
+    that way too.
+
+    Screener now gives pledge as ONE current value (no quarterly row), so we keep
+    our own history in shp_trend['pledge_hist'] = [[date, pct|None], ...], adding
+    a point only when the value changes. That is what lets the alert see 'pledge
+    went 20% -> 35%' within a day of screener updating, instead of a quarter."""
+    if not sh or not sh.get("periods"):
+        return {}
+    from datetime import date as _date
+    pledge_now = _last(_num_list(sh.get("pledge_pct")))
+    hist = [list(x) for x in ((prev_trend or {}).get("pledge_hist") or [])]
+    if not hist or hist[-1][1] != pledge_now:
+        hist.append([today or _date.today().isoformat(), pledge_now])
+    trend = {"periods": [str(p) for p in sh.get("periods") or []],
+             "promoters": _num_list(sh.get("promoters")),
+             "fiis": _num_list(sh.get("fiis")),
+             "diis": _num_list(sh.get("diis")),
+             "pledge_hist": hist[-12:]}
+    return {"pledge_pct": pledge_now,
+            "promoter_pct": _last(trend["promoters"]),
+            "fii_pct": _last(trend["fiis"]),
+            "dii_pct": _last(trend["diis"]),
+            "shp_period": trend["periods"][-1] if trend["periods"] else None,
+            "shp_trend": trend}
+
+
+def store(client, ticker: str, data: dict, cmp_price: float = None,
+          prev_trend: dict = None):
     # P/B needs a price. It used to come from Yahoo's fast_info, which House Rule
     # #1 says is exactly what gets blocked from datacenter IPs — so on Render it
     # returned nothing and `pb` was stored NULL for EVERY ticker (0 of 112 when
@@ -169,21 +234,46 @@ def store(client, ticker: str, data: dict, cmp_price: float = None):
         "ebitda_ttm_cr": data.get("ebitda_ttm_cr"),
         "opm_ttm_pct": data.get("opm_ttm_pct"),
     }
+    global _SHP_MISSING
+    shp = {} if _SHP_MISSING else shareholding_payload(data.get("shareholding"), prev_trend)
     try:
-        client.table("fundamentals_daily").upsert(payload, on_conflict="ticker").execute()
+        client.table("fundamentals_daily").upsert({**payload, **shp},
+                                                  on_conflict="ticker").execute()
     except Exception as e:
-        print(f"  [fundamentals] store failed for {ticker}: {e}")
+        if shp and any(c in str(e) for c in SHP_COLS):
+            # Migration not run yet: say so ONCE, keep storing what we always did.
+            _SHP_MISSING = True
+            print("  [fundamentals] shareholding columns missing in fundamentals_daily "
+                  "— run the 12-Oct-2026 migration in CLAUDE.md; storing the rest")
+            try:
+                client.table("fundamentals_daily").upsert(payload, on_conflict="ticker").execute()
+            except Exception as e2:
+                print(f"  [fundamentals] store failed for {ticker}: {e2}")
+        else:
+            print(f"  [fundamentals] store failed for {ticker}: {e}")
 
 
 def update_all(client):
     tracked = tracked_tickers(client)
     if not tracked:
-        print("[fundamentals] no non-SME holdings found — nothing to fetch")
+        print("[fundamentals] no Indian holdings or watchlist names found — nothing to fetch")
         return
 
     # No Yahoo call here any more: the price used for P/B comes off the same
     # screener page we already fetch (see store()). That removes the one
     # datacenter-IP-blocked dependency this job had.
+    # Yesterday's shareholding trend for every ticker, in ONE query, so the pledge
+    # history can be extended (see shareholding_payload). Missing column (no
+    # migration yet) just means no history — never a failed run.
+    prev = {}
+    try:
+        for r in client.table("fundamentals_daily").select("ticker, shp_trend").execute().data or []:
+            if r.get("shp_trend"):
+                prev[r["ticker"]] = r["shp_trend"]
+    except Exception as e:
+        print(f"  [fundamentals] previous shareholding not readable ({type(e).__name__}) "
+              f"— pledge history starts fresh")
+
     ok, failed = 0, []
     for ticker, meta in tracked.items():
         data = fetch_one(meta["slug"], expected_name=meta["display"])
@@ -193,13 +283,26 @@ def update_all(client):
             failed.append(ticker)
             time.sleep(1.5)
             continue
-        store(client, ticker, data)
+        store(client, ticker, data, prev_trend=prev.get(ticker))
         ok += 1
         time.sleep(1.5)   # polite pacing on screener.in (429s at 0.5s)
     print(f"[fundamentals] stored {ok}/{len(tracked)} tickers"
           + (f" — failed: {failed}" if failed else ""))
+    return ok, len(tracked)
 
+
+# Below this share of tickers stored, the run is broken, not unlucky. Screener's
+# Oct-2026 header redesign made EVERY identity check fail and the job printed
+# 'stored 0/55' night after night while exiting green — nobody saw it, and the
+# dashboard quietly kept stale fundamentals. A failed exit makes GitHub mark the
+# job red and email the repo owner.
+MIN_STORED_SHARE = 0.5
 
 if __name__ == "__main__":
     client = _client()
-    update_all(client)
+    stored, total = update_all(client) or (0, 0)
+    if total and stored < max(1, int(total * MIN_STORED_SHARE)):
+        print(f"🚨 [fundamentals] only {stored}/{total} tickers stored — the screener "
+              f"parse is broken (layout change? identity check? rate limit?). Exiting "
+              f"with an error so this run shows as FAILED.")
+        sys.exit(1)

@@ -606,7 +606,8 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
                     "Market Cap (Cr)": np.nan, "PE (live)": np.nan,
                     "P/B": np.nan, "Book Value": np.nan,
                     "Revenue (TTM Cr)": np.nan, "EBITDA (TTM Cr)": np.nan,
-                    "OPM %": np.nan, "ROCE %": np.nan, "ROE %": np.nan}
+                    "OPM %": np.nan, "ROCE %": np.nan, "ROE %": np.nan,
+                    "Promoter %": np.nan, "Pledge %": np.nan}
     if not tickers:
         return pd.DataFrame(columns=["Ticker", *row_defaults])
     try:
@@ -632,13 +633,116 @@ def fetch_fundamentals(tickers: tuple) -> pd.DataFrame:
                 for col, key in (("Revenue (TTM Cr)", "revenue_ttm_cr"),
                                  ("EBITDA (TTM Cr)", "ebitda_ttm_cr"),
                                  ("OPM %", "opm_ttm_pct"),
-                                 ("ROCE %", "roce"), ("ROE %", "roe")):
+                                 ("ROCE %", "roce"), ("ROE %", "roe"),
+                                 ("Promoter %", "promoter_pct"),
+                                 ("Pledge %", "pledge_pct")):
                     if pd.notna(r.get(key)):
                         row[col] = r[key]
                 if r.get("sector"):
                     row["Sector"] = r["sector"]
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def color_pledge(val):
+    """Pledged promoter shares: amber under 20%, red from 20% (the course's
+    'caution' line). A blank is 'not flagged', so it stays uncoloured."""
+    if pd.isna(val) or not val:
+        return ""
+    return "color: #ef4444; font-weight: 600;" if val >= 20 else "color: #f59e0b;"
+
+
+@st.cache_data(ttl=INFO_CACHE_TTL, show_spinner=False)
+def fetch_shareholding_trends(tickers: tuple) -> pd.DataFrame:
+    return db.get_shareholding_trends(tickers)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fund_activity(symbols: tuple) -> pd.DataFrame:
+    return db.get_fund_activity(symbols)
+
+
+def _qoq(series):
+    """(latest, change vs previous quarter) from a list with possible Nones."""
+    vals = [v for v in (series or []) if v is not None]
+    if not vals:
+        return np.nan, np.nan
+    return vals[-1], (vals[-1] - vals[-2]) if len(vals) >= 2 else np.nan
+
+
+def _activity_label(headline: str) -> str:
+    h = headline or ""
+    if re.match(r"^(BULK|BLOCK) ", h):
+        return h.title().replace("Buy", "BUY").replace("Sell", "SELL")
+    if re.search(r"encumbr|pledge|Regulation 31|Reg\. ?31", h, re.I):
+        return "pledge / encumbrance filing"
+    return "stake disclosure (SAST)"
+
+
+def render_smart_money(names: dict, key: str):
+    """'Who's buying?' — promoter / FII / DII trend + recent fund activity.
+
+    INFORMATION ONLY (Vishal 12-Oct-2026: browse it, never act on it — a
+    6-month check found fund-buying disclosures beat the index only ~48% of the
+    time AFTER they became public). Off by default, and nothing below the toggle
+    runs until it is switched on, so it adds zero cost to a normal page load."""
+    if not names:
+        return
+    if not st.toggle("🏦 Who's buying? — promoter / FII / DII trend and fund activity",
+                     value=False, key=key):
+        return
+    tickers = tuple(sorted(t for t in names if isinstance(t, str) and t))
+    sh = fetch_shareholding_trends(tickers)
+    if sh.empty or "shp_trend" not in sh.columns:
+        st.info("No shareholding data yet. It fills in after the nightly update "
+                "(the one-time database step must have been run).")
+        return
+    symbols = tuple(sorted({t.rsplit(".", 1)[0] for t in tickers}))
+    act = fetch_fund_activity(symbols)
+    acts = {}
+    if not act.empty:
+        for _, r in act.iterrows():
+            d = str(r.get("filing_date") or r.get("created_at") or "")[:10]
+            try:
+                d = datetime.strptime(d, "%Y-%m-%d").strftime("%d %b")
+            except ValueError:
+                pass
+            line = f"{d} · {_activity_label(r['headline'])}"
+            if line not in acts.setdefault(r["ticker"], []):
+                acts[r["ticker"]].append(line)
+    rows = []
+    for _, r in sh.iterrows():
+        t = r.get("shp_trend") or {}
+        pr, pr_d = _qoq(t.get("promoters"))
+        fi, fi_d = _qoq(t.get("fiis"))
+        di, di_d = _qoq(t.get("diis"))
+        rows.append({
+            "Stock": names.get(r["ticker"], r["ticker"]),
+            "Quarter": r.get("shp_period") or "—",
+            "Promoter %": pr, "Promoter Δ": pr_d,
+            "FII %": fi, "FII Δ": fi_d, "DII %": di, "DII Δ": di_d,
+            "Pledge %": r.get("pledge_pct"),
+            "Fund activity (4 months)": " | ".join(
+                acts.get(r["ticker"].rsplit(".", 1)[0], [])[:3]) or "—",
+        })
+    if not rows:
+        st.info("No shareholding data for these stocks yet.")
+        return
+    df = pd.DataFrame(rows)
+    df["_inst"] = df[["FII Δ", "DII Δ"]].fillna(0).sum(axis=1)
+    df = df.sort_values("_inst", ascending=False).drop(columns="_inst")
+    delta = ["Promoter Δ", "FII Δ", "DII Δ"]
+    st.dataframe(
+        df.style.format({"Promoter %": "{:.2f}%", "FII %": "{:.2f}%", "DII %": "{:.2f}%",
+                         "Promoter Δ": "{:+.2f}", "FII Δ": "{:+.2f}", "DII Δ": "{:+.2f}",
+                         "Pledge %": "{:.1f}%"}, na_rep="—")
+          .map(color_pnl, subset=delta).map(color_pledge, subset=["Pledge %"]),
+        width="stretch", hide_index=True)
+    st.caption("Information only — never an alert or a buy signal. Shareholding is from "
+               "the latest quarterly filing (via Screener); Δ = change in percentage points "
+               "vs the previous quarter; sorted by FII + DII change, biggest buyers first. "
+               "DII is mostly mutual funds and insurers. Fund activity = bulk/block deals "
+               "and stake disclosures our filing alerts recorded for the stock.")
 
 
 @st.cache_data(ttl=INFO_CACHE_TTL)
@@ -985,7 +1089,7 @@ def tab_holdings(enriched: pd.DataFrame):
             "🔬 Fundamentals view": [
                 "Short Name", "Ticker", "CMP", "Sector", "Market Cap (Cr)",
                 "PE (live)", "P/B", "Revenue (TTM Cr)", "EBITDA (TTM Cr)",
-                "OPM %", "ROCE %", "ROE %", "Allocation %",
+                "OPM %", "ROCE %", "ROE %", "Promoter %", "Pledge %", "Allocation %",
             ],
             "🗂 Everything": [
                 "Short Name", "Ticker", "State Display", "% from 10wEMA",
@@ -995,6 +1099,7 @@ def tab_holdings(enriched: pd.DataFrame):
                 "Day Change %", "Current Value", "P&L", "P&L %", "Allocation %",
                 "Sector", "Market Cap (Cr)", "PE (live)", "P/B",
                 "Revenue (TTM Cr)", "EBITDA (TTM Cr)", "OPM %", "ROCE %", "ROE %",
+                "Promoter %", "Pledge %",
             ],
         }
 
@@ -1075,7 +1180,10 @@ def tab_holdings(enriched: pd.DataFrame):
             "PE (live)": "{:.2f}", "P/B": "{:.2f}",
             "Revenue (TTM Cr)": "{:,.0f}", "EBITDA (TTM Cr)": "{:,.0f}",
             "OPM %": "{:.1f}%", "ROCE %": "{:.1f}%", "ROE %": "{:.1f}%",
+            "Promoter %": "{:.1f}%", "Pledge %": "{:.1f}%",
         }, na_rep="—")
+        if "Pledge %" in view.columns:
+            styled = styled.map(color_pledge, subset=["Pledge %"])
         if pnl_cols:
             styled = styled.map(color_pnl, subset=pnl_cols)
         if ema_cols:
@@ -1098,7 +1206,9 @@ def tab_holdings(enriched: pd.DataFrame):
             "**—** in Deliv %, EBITDA or 52W High: not published for that stock "
             "(SME and very recent listings often have none). · "
             "**—** in Minor/Major Support or Target: not entered yet — set them in "
-            "the watchlist levels grid."
+            "the watchlist levels grid. · "
+            "**—** in Pledge %: Screener flags no promoter pledge for that stock "
+            "(not a verified zero)."
         )
         if is_us_pf():
             st.caption("**US book units:** Market Cap, Revenue (TTM) and EBITDA (TTM) are in "
@@ -1123,6 +1233,10 @@ def tab_holdings(enriched: pd.DataFrame):
                 detail = detail.reset_index(drop=True)
                 # st.table wraps long text; st.dataframe clips it inside expanders
                 st.table(detail)
+
+        if not is_us_pf():
+            render_smart_money(dict(zip(enriched["Ticker"], enriched["Short Name"])),
+                               key="sm_holdings")
 
     if not can_edit_holdings():
         st.caption("🔒 Read-only view (logged in as friend)")
@@ -1458,7 +1572,15 @@ def tab_watchlist():
                     wl_view[f"% vs {_label}"] = (
                         (wl_view["CMP"] - wl_view[_col]) / wl_view[_col] * 100)
 
-        cols = ["Short Name", "Score", "Verdict", "Ticker", "CMP", "Entry Advice",
+        # Pledge % next to the verdict: a pledge matters most BEFORE you buy
+        # (course rule: check pledge before any new stock). Same 6-hour-cached
+        # fundamentals read the holdings tab uses: one small query, no web call.
+        if tickers and not is_us_pf():
+            _f = fetch_fundamentals(tickers)
+            if not _f.empty and "Pledge %" in _f.columns:
+                wl_view = wl_view.merge(_f[["Ticker", "Pledge %"]], on="Ticker", how="left")
+
+        cols = ["Short Name", "Score", "Verdict", "Pledge %", "Ticker", "CMP", "Entry Advice",
                 "% vs 5DMA", "% vs 10DMA", "% vs 21DMA", "52W High", "% vs 52WH", "Day Change %",
                 "target_buy_price", "Distance to Target %",
                 "Minor Sup", "% vs Minor Sup", "Major Sup", "% vs Major Sup",
@@ -1475,9 +1597,15 @@ def tab_watchlist():
                 "52W High": cur() + "{:,.2f}", "% vs 52WH": "{:+.1f}%",
                 "Minor Sup": cur() + "{:,.2f}", "% vs Minor Sup": "{:+.1f}%",
                 "Major Sup": cur() + "{:,.2f}", "% vs Major Sup": "{:+.1f}%",
+                "Pledge %": "{:.1f}%",
             }, na_rep="—").map(color_pnl, subset=["Day Change %"])
         )
+        if "Pledge %" in cols:
+            styled = styled.map(color_pledge, subset=["Pledge %"])
         st.dataframe(styled, width="stretch", hide_index=True, height=420)
+        if not is_us_pf():
+            render_smart_money(dict(zip(wl_view["Ticker"], wl_view["Short Name"])),
+                               key="sm_watchlist")
 
         # The table above is display-only (st.dataframe never accepts typing).
         # Lakshmi went straight to clicking into the Minor/Major Sup cells and

@@ -490,13 +490,56 @@ def get_fundamentals(tickers: tuple) -> pd.DataFrame:
     gracefully, same as every other optional data layer in this codebase."""
     if not tickers:
         return pd.DataFrame()
+    base = ("ticker, market_cap_cr, pe, pb, book_value, sector, roce, roe, "
+            "revenue_ttm_cr, ebitda_ttm_cr, opm_ttm_pct")
+    # Promoter % / Pledge % (12-Oct-2026) ride the SAME query — no extra round
+    # trip. If the migration hasn't been run, fall back to the old column list
+    # rather than blanking every fundamental on the page.
+    for cols in (base + ", promoter_pct, pledge_pct", base):
+        try:
+            res = (_client().table("fundamentals_daily").select(cols)
+                   .in_("ticker", list(tickers)).execute())
+            return pd.DataFrame(res.data or [])
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
+def get_shareholding_trends(tickers: tuple) -> pd.DataFrame:
+    """Quarterly promoter/FII/DII trend + pledge history per ticker, for the
+    on-demand 'Who's buying?' panel only (never on the default page load).
+    Empty df if the migration hasn't been run or the read fails."""
+    if not tickers:
+        return pd.DataFrame()
     try:
         res = (_client().table("fundamentals_daily")
-               .select("ticker, market_cap_cr, pe, pb, book_value, sector, roce, roe, revenue_ttm_cr, ebitda_ttm_cr, opm_ttm_pct")
+               .select("ticker, pledge_pct, promoter_pct, fii_pct, dii_pct, shp_period, shp_trend")
                .in_("ticker", list(tickers)).execute())
         return pd.DataFrame(res.data or [])
     except Exception:
         return pd.DataFrame()
+
+
+def get_fund_activity(symbols: tuple, days: int = 120) -> pd.DataFrame:
+    """Bulk/block deals and stake disclosures (SEBI SAST Reg 29 / 31) already seen
+    by the alert engine for these symbols — read from filings_seen, so there is
+    no live NSE call. Info for the 'Who's buying?' panel, newest first."""
+    if not symbols:
+        return pd.DataFrame()
+    since = (date.today() - timedelta(days=days)).isoformat()
+    try:
+        res = (_client().table("filings_seen")
+               .select("ticker, headline, filing_date, created_at")
+               .in_("ticker", list(symbols)).gte("created_at", since)
+               .order("created_at", desc=True).limit(1000).execute())
+        df = pd.DataFrame(res.data or [])
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    pat = (r"^(?:BULK|BLOCK) |Regulation 29|Regulation 31|Reg\. ?29|Reg\. ?31|SAST|"
+           r"Substantial Acquisition|encumbr|pledge")
+    return df[df["headline"].fillna("").str.contains(pat, case=False, regex=True)]
 
 
 def get_delivery_pct(tickers: tuple) -> pd.DataFrame:

@@ -438,6 +438,17 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      # Promoter pledge early warning (12-Oct-2026): reads what fundamentals.py
+      # just stored. `always()` so a red fundamentals run (it now fails loudly
+      # when most tickers don't store) doesn't also silence this step.
+      - run: python alerts.py shareholding
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   delivery-backfill:
     # ONE-TIME job: ~6 weeks of delivery history so the 4-week rolling

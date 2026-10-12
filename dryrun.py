@@ -73,6 +73,7 @@ else:
         "reconcile": alerts.run_reconcile,
         "morning-brief": alerts.run_morning_brief,
         "morning-levels": alerts.run_morning_levels,
+        "shareholding": alerts.run_shareholding_alerts,
         "eod-entries": alerts.run_eod_entries,
     }.get(mode, alerts.run_states)()
 

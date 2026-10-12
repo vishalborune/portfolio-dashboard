@@ -162,11 +162,28 @@ def _series(rows: dict, cols: list, label: str) -> list:
 # page fetch + identity gate
 # ---------------------------------------------------------------------------
 
+def _page_company(page: str) -> str:
+    """The company name the page is about.
+
+    Screener redesigned its header (~Oct 2026): the <h1> now wraps a logo <span>
+    and <img> around the name, so the old `<h1>([^<]+)</h1>` matched nothing,
+    every page read as '' and EVERY ticker failed identity — the nightly job
+    logged 'stored 0/55' while the dashboard kept showing the last good values.
+    Now: the h1's text with tags stripped, falling back to the <title> ('HFCL Ltd
+    share price | ...'). Still blank → the caller rejects, as it should."""
+    m = re.search(r"<h1[^>]*>(.*?)</h1>", page or "", re.S)
+    name = _strip(re.sub(r"<[^>]+>", " ", m.group(1))) if m else ""
+    if not name:
+        t = re.search(r"<title>(.*?)</title>", page or "", re.S)
+        if t:
+            name = _strip(re.split(r"\s+share price\b|\s*\|", t.group(1), 1)[0])
+    return name
+
+
 def _identity_ok(page: str, expected_name: str) -> bool:
     if not expected_name:
         return True
-    m = re.search(r"<h1[^>]*>([^<]+)</h1>", page)
-    page_name = _strip(m.group(1) if m else "").upper()
+    page_name = _page_company(page).upper()
     want = {w for w in re.split(r"[^A-Z0-9]+", expected_name.upper())
             if len(w) >= 3 and w not in _STOPWORDS}
     # WHOLE-WORD match, never substring. A plain `w in page_name` accepted
@@ -402,9 +419,10 @@ def top_ratios(page: str) -> dict:
 def shareholding(page: str, keep: int = 6) -> dict:
     """Promoter / FII / DII trend and pledge.
 
-    PLEDGE: screener prints a 'Pledged percentage' row ONLY when it is non-zero.
-    Absent therefore means 'not disclosed here', NOT 'zero' — we return None and
-    let the research step confirm. Reporting an unverified 0% on a governance
+    PLEDGE: screener used to print a 'Pledged percentage' row only when non-zero;
+    since ~Oct 2026 the figure appears only in its 'Cons' list (see below), as a
+    single CURRENT value. Absent therefore means 'not flagged here', NOT 'zero' —
+    we return None and let the research step confirm. Reporting an unverified 0% on a governance
     pillar would be precisely the wrong-number-beats-blank failure (House Rule #2)."""
     seg = _section(page, "shareholding")
     if not seg:
@@ -421,6 +439,17 @@ def shareholding(page: str, keep: int = 6) -> dict:
         return None
 
     pledge = pick("Pledged percentage", "Pledged Percentage", "Pledged")
+    if pledge is None:
+        # Screener's shareholding table no longer carries a pledge row (checked
+        # 12-Oct-2026 on Sical 56% / Orient Green 100% pledged — neither had one).
+        # The figure now lives only in its auto-generated 'Cons' list:
+        #   "Promoters have pledged 56.0% of their holding."
+        # That is the CURRENT value only — callers that need a trend must keep
+        # their own history (fundamentals.py does). Absent stays None, never 0.
+        m = re.search(r"Promoters have pledged\s+([\d.]+)\s*%\s+of their holding",
+                      _strip(page))
+        if m:
+            pledge = [float(m.group(1))]
     return {
         "periods": cols[-keep:],
         "promoters": pick("Promoters"),
@@ -625,8 +654,8 @@ def quality_flags(snap: dict) -> list:
     if pledge:
         flags.append(f"🚨 PLEDGED promoter shares disclosed — latest {pledge[-1]:.2f}%.")
     elif shp:
-        flags.append("ℹ️ No pledge row on Screener (it prints one only when pledging is "
-                     "non-zero) — treat as 'not disclosed here', not as a verified zero.")
+        flags.append("ℹ️ Screener flags no promoter pledge (it lists one in its 'Cons' "
+                     "only when present) — treat as 'not flagged here', not as a verified zero.")
 
     # 6. Base effect — a tiny year-ago quarter flattering the YoY %.
     d = snap.get("derived") or {}

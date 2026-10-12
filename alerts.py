@@ -3600,6 +3600,141 @@ def run_morning_brief():
 
 
 # ---------------------------------------------------------------------------
+# PROMOTER PLEDGE EARLY WARNING (Vishal 12-Oct-2026, from his course's sheet).
+# Runs right after the nightly fundamentals job, which stores pledge % (with our
+# own change history — screener only shows the CURRENT value) and the quarterly
+# promoter trend. FLAGS ONLY: the course says "sell 50% immediately"; here the
+# human decides, same stance as delivery %. Real-time pledge/encumbrance FILINGS
+# still arrive through run_filings — this adds the standing level + its changes.
+PLEDGE_CHANGE_PTS = 2.0     # pledge (% of promoter shares) up/down by this much
+PROMOTER_DROP_PTS = 2.0     # promoter holding down this much in one quarter
+
+
+def _shp_events(row: dict) -> list:
+    """[(kind, text)] for one fundamentals_daily row. kind carries the date or
+    quarter it refers to, so each change is reported exactly once."""
+    t = row.get("shp_trend") or {}
+    out = []
+    hist = t.get("pledge_hist") or []
+    if hist:
+        when, cur = hist[-1][0], hist[-1][1]
+        prev = hist[-2][1] if len(hist) >= 2 else "first"
+        if prev == "first":
+            if cur:
+                out.append((f"SHP_PLG:{when}",
+                            f"🔐 promoters have pledged <b>{cur:.1f}%</b> of their shares"))
+        elif cur and not prev:
+            out.append((f"SHP_PLG:{when}",
+                        f"🚨 NEW pledge: <b>{cur:.1f}%</b> of promoter shares"))
+        elif prev and not cur:
+            out.append((f"SHP_PLG:{when}",
+                        f"✅ pledge no longer flagged (was {prev:.1f}%)"))
+        elif cur - prev >= PLEDGE_CHANGE_PTS:
+            out.append((f"SHP_PLG:{when}",
+                        f"🚨 pledge UP {prev:.1f}% → <b>{cur:.1f}%</b> of promoter shares"))
+        elif prev - cur >= PLEDGE_CHANGE_PTS:
+            out.append((f"SHP_PLG:{when}",
+                        f"✅ pledge down {prev:.1f}% → {cur:.1f}%"))
+    pr = [(p, v) for p, v in zip(t.get("periods") or [], t.get("promoters") or [])
+          if v is not None]
+    if len(pr) >= 2 and pr[-2][1] - pr[-1][1] >= PROMOTER_DROP_PTS:
+        out.append((f"SHP_PROMO:{pr[-1][0]}",
+                    f"⚠️ promoter holding down {pr[-2][1]:.2f}% → <b>{pr[-1][1]:.2f}%</b> "
+                    f"({html.escape(str(pr[-1][0]))} quarter)"))
+    return out
+
+
+def run_shareholding_alerts():
+    """ONE Telegram message to Lakshmi's group listing holdings (📌) and watchlist
+    names (👀) whose pledge level changed or whose promoter holding fell. Silent
+    when nothing changed. Dedup in entry_alert_log (kind SHP_PLG:<date> /
+    SHP_PROMO:<quarter>), written only after the send succeeds.
+
+    First run: stocks ALREADY pledged are announced once (that is the 'check
+    before you buy' the course asks for). Promoter drops in the quarter already
+    on file are recorded silently — that news is months old."""
+    client = sb()
+    lak = {p for p, g in PF_GROUP.items() if g == "lakshmi"}
+    hold_names, watch_names = {}, {}
+    for _, h in get_holdings(client).iterrows():
+        if int(h.get("portfolio_id", 1)) in lak:
+            t = extract_yf_ticker(h["stock_name"])
+            if t:
+                hold_names[t] = short_name(h["stock_name"])
+    try:
+        for r in _wl(client, "stock_name, portfolio_id"):
+            if int(r.get("portfolio_id", 1)) in lak:
+                t = extract_yf_ticker(r.get("stock_name"))
+                if t and t not in hold_names:
+                    watch_names[t] = short_name(r["stock_name"])
+    except Exception:
+        pass
+    all_t = sorted(set(hold_names) | set(watch_names))
+    if not all_t:
+        return
+    try:
+        rows = client.table("fundamentals_daily").select("ticker, shp_trend") \
+            .in_("ticker", all_t).execute().data or []
+    except Exception as e:
+        print(f"(shareholding alerts: cannot read shp_trend — has the 12-Oct-2026 "
+              f"migration been run? {type(e).__name__}: {e})")
+        return
+    try:
+        logged = client.table("entry_alert_log").select("ticker, kind") \
+            .eq("grp", "lakshmi").like("kind", "SHP_%").in_("ticker", all_t) \
+            .order("alert_date", desc=True).execute().data or []
+    except Exception as e:
+        print(f"(shareholding alerts: dedup read failed — not sending: {e})")
+        return
+    seen = {(r["ticker"], r["kind"]) for r in logged}
+    first_run = not logged
+
+    hold_lines, watch_lines, to_mark, silent = [], [], [], []
+    for r in rows:
+        tk = r["ticker"]
+        for kind, text in _shp_events(r):
+            if (tk, kind) in seen:
+                continue
+            if first_run and kind.startswith("SHP_PROMO"):
+                silent.append((tk, kind))
+                continue
+            nm = hold_names.get(tk) or watch_names.get(tk) or tk
+            line = f"• <b>{html.escape(nm)}</b> — {text}"
+            (hold_lines if tk in hold_names else watch_lines).append(line)
+            to_mark.append((tk, kind))
+
+    def _mark(pairs):
+        for tk, kind in pairs:
+            try:
+                client.table("entry_alert_log").upsert({
+                    "ticker": tk, "grp": "lakshmi",
+                    "alert_date": date.today().isoformat(), "kind": kind}).execute()
+            except Exception as e:
+                print(f"⚠️ shareholding dedup write failed for {tk}: {e}")
+
+    if silent:
+        _mark(silent)
+        print(f"(shareholding alerts: first run — {len(silent)} promoter change(s) from the "
+              f"quarter already on file recorded without sending)")
+    if not to_mark:
+        print(f"(shareholding alerts: no pledge or promoter changes across {len(rows)} name(s))")
+        return
+    parts = ["🔐 <b>Promoter pledge &amp; holding check</b>"]
+    if hold_lines:
+        parts.append("📌 <b>Holdings</b>\n" + "\n".join(sorted(hold_lines)))
+    if watch_lines:
+        parts.append("👀 <b>Watchlist</b>\n" + "\n".join(sorted(watch_lines)))
+    parts.append("<i>Information, not an instruction. Pledge % from Screener; promoter "
+                 "holding from the quarterly shareholding filing.</i>")
+    chat = chat_id_for_group("lakshmi")
+    if chat and send_telegram("\n\n".join(parts)[:4000], chat_id=chat):
+        _mark(to_mark)
+        print(f"Shareholding alert sent: {len(to_mark)} item(s).")
+    else:
+        print("⚠️ shareholding alert NOT delivered — will retry on the next run")
+
+
+# ---------------------------------------------------------------------------
 # VALUATION CROSS-CHECK (08-Aug-2026, Vishal).
 # The digest and the dashboard price holdings through DIFFERENT code paths, and
 # they drifted apart twice in one day: (a) a weekly-close reconcile bug knocked
@@ -4517,5 +4652,6 @@ if __name__ == "__main__":
          "reconcile": run_reconcile,
          "morning-brief": run_morning_brief,
          "morning-levels": run_morning_levels,
+         "shareholding": run_shareholding_alerts,
          "snapshot-refresh": run_snapshot_refresh,
          "eod-entries": run_eod_entries}.get(mode, run_states)()
