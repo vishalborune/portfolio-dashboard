@@ -1295,6 +1295,15 @@ From his course's n8n "hacks" sheet. Evaluated all five; built the two that fit.
   SC250 (48% beat, n=73); all institutional buys −1.4 (41%); sells +0.9 (39%). Public fund
   buying carried no edge, so it is context, not a trigger. 126 of those filings were
   lenders' trustees taking/releasing pledged shares — a pledge signal, not a fund one.
+- **Bulk-deal "smart money" scanner: measured, NOT built (12-Oct-2026).** NSE's archive
+  (`/api/historicalOR/bulk-block-short-deals?optionType=bulk_deals&from=&to=&csv=true` —
+  the JSON form silently caps at 70 rows; `csv=true` is complete; home IP only) gave
+  19,158 deals Apr→Oct. Institutional BUYS in small/micro names (prop/HFT excluded):
+  382, ~14/week. 20 sessions after (from the NEXT close — deals publish EOD): all +0.4
+  pts vs SC250, median −1.0, 46% beat (n=212 priced); Indian MF/insurer −0.6 (37%);
+  the course's ≥₹10 Cr filter −0.1 (43%); "bought again within 2 weeks" −2.2 (45%).
+  No edge after the deal is public. The existing held/watched deal alerts stay (info),
+  and the deals show in the "Who's buying?" panel.
 - **Not built:** sector rotation by PE (mean-reversion — buys falling sectors, the exact
   weak-state buy the 10-Oct review found loses −7 to −11 pts); the course's monthly
   MF-portfolio diff (12 days–3½ months stale, top-25 of flex-caps misses smallcaps,
