@@ -514,6 +514,25 @@ switch sources without disclosure.
   for Friday, so next week's WoW compares against the corrected book. Can be triggered
   headlessly from Vishal's PC via the GitHub REST `dispatches` endpoint using the token
   `git credential fill` returns (no `gh` CLI installed).
+- **Digest add-ons (Vishal 12-Oct-2026, "for the weekly debrief")** — three boxes built
+  by pure helpers in alerts.py (`_digest_fy_box`, `_digest_scorecard_box`,
+  `_digest_sales_box`), each wrapped so a failure omits the box, never the digest:
+  (1) **🎯 Financial-year progress** at the TOP — per book FY return, this week's move,
+  the FY return at the last 4 snapshot Fridays → now (`fy_tracker.compute` at each
+  `digest_history` value), index same period, target status / growth mode. (The per-book
+  FY block inside each section stays; Vishal hadn't spotted it there.)
+  (2) **💼 Sales this week** — from REALISED (so a sale with no journal entry still shows,
+  flagged "no reason logged" in amber): sold on, qty, sold at, the week-end close
+  (`fy_tracker.close_on` — works for names no longer held), since-sale % (green = fell
+  after the sale), P&L on the trade, journal reason + notes. The old one-line "sold @"
+  entries left the journal box, which is now "📓 Exit audits" (30/60/90-day verdicts).
+  (3) **🧮 Trading scorecard** — `metrics.trade_stats` on FY closed trades. Avg win/loss
+  show % AND rupees because Win ÷ loss is RUPEE-based: 36.9%/8.2% = 4.5 visibly
+  disagreed with the ₹ ratio 3.4× until both were shown. `_fmt_rs` prints exact rupees
+  under ₹1L (Vishal's trades rounded to "₹-0.0 L" in lakh form).
+  Preview without sending: scratchpad `digest_preview.py` pattern — ALERTS_DRY_RUN=1,
+  monkeypatch `alerts.send_email` to write HTML, `DIGEST_RECONCILE_MODE=warn` on a
+  weekday (mid-week live prices legitimately disagree with the exchange file).
 - **Friday 21:00 IST**: weekly digest (moved from Sunday per Lakshmi's
   request — he plans portfolio strategy on Saturdays)
 - Manual tick-boxes on `workflow_dispatch`: bhavcopy-backfill,

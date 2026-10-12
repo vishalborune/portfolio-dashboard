@@ -3372,6 +3372,230 @@ def _box(title, inner_html, accent="#1e3a8a", bg="#ffffff"):
             f"</div>")
 
 
+# ---------------------------------------------------------------------------
+# DIGEST ADD-ONS (Vishal 12-Oct-2026): "by the end of the week ... track what's
+# going on". Three sections, each a pure function of the database so the email
+# and the dashboard can't drift: FY progress (fy_tracker), the trading scorecard
+# (metrics.trade_stats) and every sale made this week with the Friday close and
+# the reason it was sold. Each returns '' when it has nothing to say, and a
+# failure inside one never takes the digest down (logged, section omitted).
+_TD = "padding:5px 8px;border-bottom:1px solid #e2e8f0;"
+_TH = "padding:6px 8px;text-align:left;background:#f1f5f9;color:#334155;font-weight:600;"
+
+
+def _tbl(head, rows, right=(), nowrap=()):
+    """Small inline-styled table. `right` = column indexes to right-align (these
+    never wrap); `nowrap` = other columns that must stay on one line."""
+    th = "".join(f"<th style='{_TH}{'text-align:right;' if i in right else ''}'>{h}</th>"
+                 for i, h in enumerate(head))
+    trs = "".join("<tr>" + "".join(
+        f"<td style='{_TD}{'text-align:right;white-space:nowrap;' if i in right else ''}"
+        f"{'white-space:nowrap;' if i in nowrap else ''}'>{c}</td>"
+        for i, c in enumerate(r)) + "</tr>" for r in rows)
+    return (f"<table style='border-collapse:collapse;width:100%;font-size:13px'>"
+            f"<tr>{th}</tr>{trs}</table>")
+
+
+def _fmt_rs(x):
+    """Exact rupees under Rs 1 lakh ('−₹4,569', not '₹-0.0 L'), else the usual
+    lakh/crore form. Trade-level money in Vishal's book is mostly a few thousand."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return "—"
+    if market() == "US" or abs(x) >= 1e5:
+        return _fmt_l(x)
+    return f"{'−' if x < 0 else ''}₹{abs(x):,.0f}"
+
+
+def _digest_fy_box(client, pf_ids, fy_by_pf, today) -> str:
+    """Per book: FY return now, this week's move, the last few Fridays' readings,
+    and where it stands against its target (or 'growth mode' for Vishal)."""
+    import fy_tracker
+    rows, trail_dates = [], []
+    for pf in pf_ids:
+        fr = fy_by_pf.get(pf)
+        if not fr:
+            continue
+        name = html.escape(str(PF_NAME.get(pf, pf)))
+        if fr.get("status") != "OK":
+            rows.append([name, "<span style='color:#d97706'>paused — "
+                         + html.escape("; ".join(fr.get("problems") or [])) + "</span>",
+                         "", "", "", ""])
+            continue
+        trail = []
+        try:
+            snaps = (client.table("digest_history").select("snap_date,current_value")
+                     .eq("portfolio_id", pf).gt("snap_date", fr["start"].isoformat())
+                     .lt("snap_date", today.isoformat()).order("snap_date", desc=True)
+                     .limit(4).execute().data or [])
+            for sn in reversed(snaps):
+                d = date.fromisoformat(str(sn["snap_date"])[:10])
+                past = fy_tracker.compute(client, pf, v_end=float(sn["current_value"]), end=d)
+                if past.get("status") == "OK":
+                    trail.append((d, past["ret"]))
+        except Exception as ex:
+            print(f"(digest: FY trail failed for pf {pf}: {ex})")
+        trail.append((today, fr["ret"]))
+        if len(trail) > len(trail_dates):
+            trail_dates = [d for d, _ in trail]
+        wk = trail[-1][1] - trail[-2][1] if len(trail) >= 2 else None
+        wk_txt = "—" if wk is None else (
+            f"<span style='color:{'#16a34a' if wk >= 0 else '#dc2626'}'>{wk:+.1f} pts</span>")
+        trend = " → ".join(f"{r:+.1f}" for _, r in trail)
+        if fr.get("target_pct") is None:
+            status = "<span style='color:#0f766e'>growth mode — no fixed target</span>"
+        else:
+            col, words = fy_tracker.verdict(fr)
+            status = (f"<span style='color:{col};font-weight:600'>{html.escape(words)}</span>"
+                      f"<br><span style='color:#64748b;font-size:12px'>on-pace mark "
+                      f"{fr['pace_now']:+.1f}% · window target {fr['window_target']:.1f}%</span>")
+        idx = (f"{fr['index']['ret']:+.1f}%" if fr.get("index") else "—")
+        rows.append([name, f"<b>{fr['ret']:+.1f}%</b><br><span style='color:#64748b;"
+                           f"font-size:12px'>{_fmt_l(fr['pnl'])}</span>",
+                     wk_txt, trend + "%", idx, status])
+    if not rows:
+        return ""
+    when = ", ".join(d.strftime("%d %b") for d in trail_dates)
+    return (_tbl(["Book", "FY return so far", "This week", "Trend (Fridays → now)",
+                  "Index same period", "Where it stands"], rows, right=(1, 2, 4))
+            + f"<p style='margin:6px 0 0;color:#94a3b8;font-size:11px'>Trend = the FY return "
+              f"at {when}. Money-weighted (Modified Dietz), not annualised — the same "
+              f"numbers as the dashboard's FY card.</p>")
+
+
+def _digest_scorecard_box(client, pf_ids, today) -> str:
+    """Closed trades this financial year, per book: the numbers that judge the
+    DECISIONS rather than the market (metrics.trade_stats — the dashboard's own)."""
+    import metrics
+    fy_start = date(today.year if today.month >= 4 else today.year - 1, 4, 1)
+    rows, notes = [], []
+    for pf in pf_ids:
+        try:
+            rz = _fetch_all_rows(client, "realised",
+                                 "stock_name,gain_loss,amount_invested,no_of_days,sale_date",
+                                 portfolio_id=int(pf))
+        except Exception as ex:
+            print(f"(digest: scorecard read failed for pf {pf}: {ex})")
+            continue
+        rz = [r for r in rz if fy_start.isoformat() <= str(r.get("sale_date") or "")[:10]
+              <= today.isoformat()]
+        st_ = metrics.trade_stats(pd.DataFrame(rz)) if rz else {}
+        if not st_:
+            continue
+        def avg(p_, rs):
+            # % on the money invested, plus the RUPEE average the ratio is built from —
+            # without it, 36.9% ÷ 8.2% (4.5) visibly disagrees with a ₹-based 3.4×.
+            return ("—" if p_ is None else f"{p_:+.1f}%") + (
+                f"<br><span style='color:#64748b;font-size:12px'>{_fmt_rs(rs)}</span>" if rs else "")
+        days = lambda v: "—" if v is None else f"{v:.0f}"
+        rows.append([html.escape(str(PF_NAME.get(pf, pf))), str(st_["n_trades"]),
+                     f"{st_['win_rate']:.0f}%", avg(st_.get("avg_win_pct"), st_.get("avg_win_rs")),
+                     avg(st_.get("avg_loss_pct"), st_.get("avg_loss_rs")),
+                     "—" if not st_.get("payoff") else f"{st_['payoff']:.1f}×",
+                     f"{days(st_.get('avg_hold_win'))} / {days(st_.get('avg_hold_loss'))}",
+                     f"<span style='color:{'#16a34a' if st_['net_rs'] >= 0 else '#dc2626'}'>"
+                     f"{_fmt_rs(st_['net_rs'])}</span>"])
+        note = metrics.discipline_note(st_)
+        if note:
+            notes.append(f"<b>{html.escape(str(PF_NAME.get(pf, pf)))}:</b> {html.escape(note)}")
+    if not rows:
+        return ""
+    return (_tbl(["Book", "Trades", "Win rate", "Avg win", "Avg loss", "Win ÷ loss (₹)",
+                  "Days held win / loss", "Net booked"], rows, right=(1, 2, 3, 4, 5, 6, 7))
+            + "".join(f"<p style='margin:6px 0 0;font-size:12px;color:#475569'>{n}</p>"
+                      for n in notes)
+            + f"<p style='margin:6px 0 0;color:#94a3b8;font-size:11px'>Closed trades since "
+              f"{fy_start:%d %b %Y}. Win ÷ loss = average rupee win ÷ average rupee loss. "
+              f"Win rate and win ÷ loss only mean something together: "
+              f"a 40% win rate with 4× bigger wins is a healthy trend-following book.</p>")
+
+
+def _digest_sales_box(client, pf_ids, today) -> str:
+    """Every sale in the last 7 days: when, at what price, the close at the end of
+    the week, the profit booked and the REASON (from the trade journal). Built
+    from the realised table, so a sale with no journal entry still shows — with
+    'no reason logged' in amber, which is the nudge to add one."""
+    import fy_tracker
+    wk_from = today - timedelta(days=7)
+    reasons = {}
+    try:
+        for j in _fetch_all_rows(client, "trade_journal",
+                                 "portfolio_id,ticker,exit_date,reason,notes"):
+            if int(j.get("portfolio_id") or 0) not in pf_ids:
+                continue
+            k = (int(j["portfolio_id"]), fy_tracker.ticker_of(j.get("ticker")),
+                 str(j.get("exit_date") or "")[:10])
+            reasons.setdefault(k, (j.get("reason"), j.get("notes")))
+    except Exception as ex:
+        print(f"(digest: journal read failed: {ex})")
+    sales = []
+    for pf in pf_ids:
+        try:
+            rz = _fetch_all_rows(client, "realised",
+                                 "stock_name,quantity,selling_price,gain_loss,amount_invested,sale_date",
+                                 portfolio_id=int(pf))
+        except Exception as ex:
+            print(f"(digest: sales read failed for pf {pf}: {ex})")
+            continue
+        for r in rz:
+            d = str(r.get("sale_date") or "")[:10]
+            if not (wk_from.isoformat() < d <= today.isoformat()):
+                continue
+            if "opening balance" in str(r.get("stock_name", "")).lower():
+                continue
+            sales.append((pf, r))
+    if not sales:
+        return ""
+    multi = len({pf for pf, _ in sales}) > 1
+    rows, booked, missing = [], 0.0, 0
+    for pf, r in sorted(sales, key=lambda x: (str(x[1]["sale_date"]), short_name(x[1]["stock_name"]))):
+        tk = fy_tracker.ticker_of(r["stock_name"])
+        d = date.fromisoformat(str(r["sale_date"])[:10])
+        sp = float(r.get("selling_price") or 0)
+        close = fy_tracker.close_on(client, tk, today) if tk else None
+        if close and sp:
+            ch = (close / sp - 1) * 100
+            since = (f"<span style='color:{'#16a34a' if ch <= 0 else '#d97706'}'>{ch:+.1f}%</span>")
+            close_txt = f"{_cur()}{close:,.2f}"
+        else:
+            since, close_txt = "—", "—"
+        gl = float(r.get("gain_loss") or 0)
+        inv = float(r.get("amount_invested") or 0)
+        booked += gl
+        pnl = (f"<span style='color:{'#16a34a' if gl >= 0 else '#dc2626'}'>{_fmt_rs(gl)}"
+               + (f" ({gl / inv * 100:+.1f}%)" if inv > 0 else "") + "</span>")
+        why = reasons.get((int(pf), tk, d.isoformat()))
+        if why and why[0]:
+            reason = html.escape(str(why[0]))
+            if why[1]:
+                reason += f"<br><i style='color:#64748b;font-size:12px'>{html.escape(str(why[1])[:160])}</i>"
+        else:
+            missing += 1
+            reason = "<span style='color:#d97706'>no reason logged</span>"
+        row = [html.escape(short_name(r["stock_name"])), d.strftime("%d %b"),
+               f"{float(r.get('quantity') or 0):g}", f"{_cur()}{sp:,.2f}", close_txt, since, pnl, reason]
+        if multi:
+            row.insert(0, html.escape(str(PF_NAME.get(pf, pf))))
+        rows.append(row)
+    head = ["Stock", "Sold on", "Qty", "Sold at", f"Close {today:%d %b}", "Since sale",
+            "P&amp;L on the trade", "Reason"]
+    right, nowrap = (2, 3, 4, 5, 6), (1,)
+    if multi:
+        head.insert(0, "Book")
+        right = tuple(i + 1 for i in right)
+        nowrap = tuple(i + 1 for i in nowrap)
+    foot = (f"{len(rows)} sale(s) this week · profit booked "
+            f"<b style='color:{'#16a34a' if booked >= 0 else '#dc2626'}'>{_fmt_rs(booked)}</b>"
+            + (f" · <span style='color:#d97706'>{missing} without a reason — add it on the "
+               f"dashboard's journal</span>" if missing else ""))
+    return (_tbl(head, rows, right=right, nowrap=nowrap)
+            + f"<p style='margin:6px 0 0;font-size:12px;color:#475569'>{foot}</p>"
+            + "<p style='margin:4px 0 0;color:#94a3b8;font-size:11px'>Since sale: "
+              "<span style='color:#16a34a'>green</span> = the stock fell after you sold "
+              "(good exit), <span style='color:#d97706'>amber</span> = it rose.</p>")
+
+
 def _bench_html(xirr, bench):
     """Alpha verdict per Lakshmi's rule: beating the Nifty Smallcap 100 by
     5+ pts = clearly worth it; 2-5 = marginal; below 2 = the index would
@@ -4458,7 +4682,6 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
         wk_ago = (today - timedelta(days=7)).isoformat()
         jr = client.table("trade_journal").select("*") \
             .in_("portfolio_id", [int(p) for p in pf_ids]).execute().data or []
-        entries = [j for j in jr if str(j.get("exit_date", "")) >= wk_ago]
         verdicts = []
         for j in jr:
             for w in (30, 60, 90):
@@ -4467,14 +4690,29 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
                     verdict = "saved" if chg < 0 else "cost"
                     verdicts.append(f"{short_name(j['ticker'])} +{w}d: exit "
                                     f"<b>{verdict} {abs(chg):.1f}%</b>")
-        lines = []
-        for j in entries:
-            lines.append(f"{short_name(j['ticker'])} sold @ {_cur()}{float(j['exit_price']):,.1f} "
-                         f"({j['reason']})" + (f" — <i>{j['notes']}</i>" if j.get("notes") else ""))
-        if lines or verdicts:
-            journal_html = "<br>".join(lines + verdicts)
+        # This week's SALES (price, date, reason) now live in the fuller
+        # "Sales this week" table below; this box keeps the 30/60/90-day audits.
+        if verdicts:
+            journal_html = "<br>".join(verdicts)
     except Exception:
         pass
+
+    # ---- FY progress, trading scorecard, sales this week (12-Oct-2026) ----
+    fy_box_html = score_html = sales_html = ""
+    for _nm, _fn in (("FY progress", lambda: _digest_fy_box(client, pf_ids, fy_by_pf, today)),
+                     ("scorecard", lambda: _digest_scorecard_box(client, pf_ids, today)),
+                     ("sales", lambda: _digest_sales_box(client, pf_ids, today))):
+        try:
+            _out = _fn()
+        except Exception as ex:
+            print(f"(digest: {_nm} section failed — omitted: {type(ex).__name__}: {ex})")
+            _out = ""
+        if _nm == "FY progress":
+            fy_box_html = _out
+        elif _nm == "scorecard":
+            score_html = _out
+        else:
+            sales_html = _out
 
     # ---- delivery conviction ----
     deliv_html = ""
@@ -4532,11 +4770,14 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
 
       {recon_box}
       {action_box}
+      {_box("🎯 Financial-year progress", fy_box_html, accent="#0f766e")}
       {''.join(pf_sections)}
 
+      {_box("💼 Sales this week", sales_html, accent="#b45309")}
+      {_box("🧮 Trading scorecard — closed trades this FY", score_html, accent="#4338ca")}
       {_box("💤 Dead money watch — 90+ days sideways", dead_html, accent="#64748b")}
       {_box("🏛 Conviction moves — healthy state + 60%+ delivery", deliv_html, accent="#0891b2")}
-      {_box("📓 Journal &amp; audits this week", journal_html, accent="#7c3aed")}
+      {_box("📓 Exit audits this week (30/60/90 days after a sale)", journal_html, accent="#7c3aed")}
 
       <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;
                   padding:16px 18px;margin:14px 0">
