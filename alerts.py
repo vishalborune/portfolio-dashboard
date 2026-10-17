@@ -3281,7 +3281,7 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
         i1 = _level_on(series, today) if series is not None else None
         if not i0 or not i1:
             return (f"<p>Our week: <b>{pf_ret:+.2f}%</b> "
-                    f"({_fmt_l(gain)}) — index unavailable for comparison</p>", None)
+                    f"({_fmt_rs(gain)}) — index unavailable for comparison</p>", None)
         idx_ret = (i1 / i0 - 1) * 100
         alpha = pf_ret - idx_ret
         # If the index level had to walk back from the snapshot date, the two
@@ -3322,7 +3322,7 @@ def _weekly_vs_index(client, pf, prev, val, unreal, today):
             f"<tr><td style='padding:3px 0;color:#64748b;width:52%'>Our week "
             f"(realised + unrealised)</td>"
             f"<td style='padding:3px 0;font-weight:700'>{pf_ret:+.2f}% "
-            f"<span style='font-weight:400;color:#64748b'>({_fmt_l(gain)})</span></td></tr>"
+            f"<span style='font-weight:400;color:#64748b'>({_fmt_rs(gain)})</span></td></tr>"
             f"<tr><td style='padding:3px 0;color:#64748b'>{_BENCH_LABEL}</td>"
             f"<td style='padding:3px 0;font-weight:700'>{idx_ret:+.2f}%{idx_note}</td></tr>"
             f"{idx2_html}"
@@ -4355,10 +4355,12 @@ def run_digest(only=None):
     results = []
     if not hl.empty and only in (None, "lakshmi"):
         results.append(_digest_for(client, hl, tg_pf_ids=lak,
-                                   label="Lakshmi & Abinaya", telegram=True))
+                                   label="Lakshmi & Abinaya", telegram=True,
+                                   asof=SNAPSHOT_DATE_OVERRIDE))
     if not hv.empty and only in (None, "vishal"):
         results.append(_digest_for(client, hv, tg_pf_ids=[],
-                                   label="Vishal", telegram=False))
+                                   label="Vishal", telegram=False,
+                                   asof=SNAPSHOT_DATE_OVERRIDE))
     # True only when every email we tried actually left the building. A digest the
     # reconciliation guard blocked returns None, which correctly counts as not-sent.
     ok = bool(results) and all(r is True for r in results)
