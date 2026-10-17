@@ -961,7 +961,16 @@ def run_eod_entries():
     """Evening pass (after the 20:00 bhavcopy): entry/add-zone alerts off the
     latest DAILY close for EVERY tracked name. This is the ONLY entry check for
     SME stocks (Lakshmi: SME at day-end is fine) and a final authoritative pass
-    for mainboard. Reuses the proven check_* functions with price_fn=None."""
+    for mainboard. Reuses the proven check_* functions with price_fn=None.
+
+    Weekdays only (17-Oct-2026). Its dedup is per DAY, and this job also runs on
+    ANY manual GitHub dispatch — so a Saturday digest re-send would have re-fired
+    Friday's entry/stop alerts to Lakshmi under a new date. No session on Sat/Sun
+    means there is nothing new to evaluate; Friday evening already did it."""
+    from zoneinfo import ZoneInfo
+    if datetime.now(ZoneInfo("Asia/Kolkata")).weekday() >= 5:
+        print("[eod-entries] weekend — no market session, skipping (Friday's pass covered it)")
+        return
     client = sb()
     print("[eod-entries] evening entry/add pass (EOD closes)…")
     try:
@@ -3427,7 +3436,10 @@ def _digest_fy_box(client, pf_ids, fy_by_pf, today) -> str:
         try:
             snaps = (client.table("digest_history").select("snap_date,current_value")
                      .eq("portfolio_id", pf).gt("snap_date", fr["start"].isoformat())
-                     .lt("snap_date", today.isoformat()).order("snap_date", desc=True)
+                     # exclusive of the snapshot THIS run writes (Friday, on a
+                     # weekend re-send) — otherwise "this week" = a 1-day move
+                     .lt("snap_date", _snapshot_date(today).isoformat())
+                     .order("snap_date", desc=True)
                      .limit(4).execute().data or [])
             for sn in reversed(snaps):
                 d = date.fromisoformat(str(sn["snap_date"])[:10])
@@ -4316,7 +4328,22 @@ def run_digest(only=None):
     the delivery marker — that marker means "this week's digest reached everyone".
 
     Returns True only if EVERY email was actually delivered — the caller uses that
-    to decide whether to mark this week as done."""
+    to decide whether to mark this week as done.
+
+    WEEKEND RE-SENDS (17-Oct-2026): Vishal enters the week's trades on Saturday and
+    asks for his digest again. Run as-is, that stored a SATURDAY-dated snapshot —
+    the 6-day Sat→Fri baseline that run_snapshot_refresh exists to prevent — and
+    the 06:30 re-stamp had already run before the trades were in. So a one-book
+    re-send on Sat/Sun stamps its snapshot as last Friday, exactly like the
+    re-stamp does, and replaces that week's stale row."""
+    global SNAPSHOT_DATE_OVERRIDE
+    if only and SNAPSHOT_DATE_OVERRIDE is None and date.today().weekday() >= 5:
+        SNAPSHOT_DATE_OVERRIDE = last_friday()
+        print(f"[digest] weekend re-send — snapshot stamped as Friday {SNAPSHOT_DATE_OVERRIDE}")
+        try:
+            return run_digest(only=only)
+        finally:
+            SNAPSHOT_DATE_OVERRIDE = None
     client = sb()
     all_holdings = get_holdings(client)
     if all_holdings.empty:
