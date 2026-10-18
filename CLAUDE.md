@@ -258,7 +258,14 @@ verified present in the real BSE bhavcopy before adding (rule #5).
 bars would make junk EMAs/peaks, so bhavcopy only WINS once it has real history;
 until then Yahoo's daily bars are used (they're fine — it's the LIVE quote that
 lies). **After adding a ticker here, run the bhavcopy backfill** or it stays on
-Yahoo. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
+Yahoo. **`python bhavcopy.py backfill [TICKER ...]` (fixed 18-Oct-2026):** `backfill()`
+used to call `extract_prices_for_date` with NO universe, which silently fell back to the
+16 curated `SME_STOCKS` — so every backfill since the 01-Sep full run (which was done via
+a script passing the universe) re-wrote those 16 and gave newly added holdings/watchlist
+names NOTHING (6 new watchlist names: 0 rows after a full 9-min run). It now uses
+`tracked_universe(client)`; pass tickers to load only new names (still ~9 min — it reads
+every day's file). A BSE SME name can be added by scrip code (`XBOM:544773`) and
+`tracked_universe` resolves it with no `SME_STOCKS` entry. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
 Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)

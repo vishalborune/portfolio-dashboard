@@ -678,16 +678,34 @@ def report_health(client, notify: bool = True) -> list:
     return findings
 
 
-def backfill(client, days: int = 730):
+def backfill(client, days: int = 730, only: list = None):
     """One-time backfill of ~2 years so the weekly EMA system has enough
     history. Skips weekends outright; genuine holidays just come back empty
-    and are silently skipped (no crash, no wasted retries)."""
+    and are silently skipped (no crash, no wasted retries).
+
+    Covers the FULL tracked universe (holdings + watchlist + SME_STOCKS), the
+    same set the nightly job stores. It used to call extract_prices_for_date
+    with no universe, which silently fell back to the 16 curated SME_STOCKS —
+    so "add a ticker, then run the backfill" re-wrote those 16 and gave the new
+    name nothing (found 18-Oct-2026: 6 new watchlist names, 0 rows after a full
+    run). `only` restricts it to specific tickers, e.g. names just added."""
+    universe = tracked_universe(client)
+    if only:
+        missing = [t for t in only if t not in universe]
+        if missing:
+            print(f"⚠️ [bhavcopy backfill] not in the tracked universe (add them to holdings/"
+                  f"watchlist first): {missing}")
+        universe = {t: v for t, v in universe.items() if t in only}
+    if not universe:
+        print("[bhavcopy backfill] nothing to backfill")
+        return
+    print(f"[bhavcopy backfill] {len(universe)} ticker(s), {days} days")
     start = date.today() - timedelta(days=days)
     d = start
     done, found = 0, 0
     while d <= date.today():
         if d.weekday() < 5:  # Mon-Fri only
-            prices = extract_prices_for_date(d)
+            prices = extract_prices_for_date(d, universe)
             if prices:
                 store_prices(client, d, prices)
                 found += 1
@@ -721,7 +739,8 @@ if __name__ == "__main__":
         report_health(client, notify=False)
         sys.exit(0)
     if mode == "backfill":
-        backfill(client)
+        # python bhavcopy.py backfill [TICKER ...]  — no tickers = everything tracked
+        backfill(client, only=sys.argv[2:] or None)
     elif mode == "index-backfill":
         index_backfill(client)
     else:
