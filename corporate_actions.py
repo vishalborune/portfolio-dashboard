@@ -96,6 +96,30 @@ CORPORATE_ACTIONS = [
                 "The detector HAD flagged it nightly, but its Telegram goes only to "
                 "Lakshmi's group and its local run crashed on cp1252 before printing.",
     },
+    {
+        "ticker": "524632.BO",
+        "ex_date": "2025-03-21",     # price stepped this day in BSE's own file
+        "action": "1:10 split",      # face value ₹10 -> ₹1
+        "price_divisor": 10.0,       # 10x shares outstanding -> prices /10
+        "note": "Shukra Pharmaceuticals (BSE 524632; Vishal holds it as XBOM:524632, "
+                "Lakshmi as XBOM:SHUKRAPHAR — both tickers carry the same raw series). "
+                "Raw BSE step ₹236.00 (20-Mar-2025) -> ₹24.05 (21-Mar); record/ex-date "
+                "21-Mar-2025, FV ₹10 -> ₹1, new ISIN INE551C01044 (Business Standard, "
+                "Goodreturns, Trendlyne). Flagged by the gap detector 18-Oct-2026 after "
+                "the fixed backfill run; it had sat unregistered since the 02-Sep backfill.",
+    },
+    {
+        "ticker": "SHUKRAPHAR.BO",
+        "ex_date": "2025-03-21",     # price stepped this day in BSE's own file
+        "action": "1:10 split",      # face value ₹10 -> ₹1
+        "price_divisor": 10.0,       # 10x shares outstanding -> prices /10
+        "note": "Shukra Pharmaceuticals (BSE 524632; Vishal holds it as XBOM:524632, "
+                "Lakshmi as XBOM:SHUKRAPHAR — both tickers carry the same raw series). "
+                "Raw BSE step ₹236.00 (20-Mar-2025) -> ₹24.05 (21-Mar); record/ex-date "
+                "21-Mar-2025, FV ₹10 -> ₹1, new ISIN INE551C01044 (Business Standard, "
+                "Goodreturns, Trendlyne). Flagged by the gap detector 18-Oct-2026 after "
+                "the fixed backfill run; it had sat unregistered since the 02-Sep backfill.",
+    },
 ]
 
 GAP_THRESHOLD_PCT = 25.0   # a >25% overnight close move == probable split/bonus

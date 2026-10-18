@@ -122,6 +122,12 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    as no detector** — when the nightly health Telegram flags an unadjusted gap, that
    is the day to register it. The 25-Sep digest (both books) still shows E2E as EXIT;
    the next states run self-heals with "E2E → MAINTAIN/ADD (was EXIT)".
+   **Fourth event, registered 18-Oct-2026 — Shukra Pharmaceuticals 1:10 split, ex/record
+   21-Mar-2025 (BSE ₹236.00 → ₹24.05), divisor 10, for BOTH `524632.BO` (Vishal) and
+   `SHUKRAPHAR.BO` (Lakshmi) — same raw series under two tickers.** Unadjusted it lifted
+   the 40wEMA to ₹44.25 vs ₹42.40 adjusted; state MAINTAIN/ADD either way, so no false
+   signal — but it had sat unregistered since the 02-Sep backfill. Verified vs Business
+   Standard / Goodreturns / Trendlyne and our own raw step (House Rule #5).
 
 ## Dashboard performance: `db._bust()` must NOT clear market caches (01-Sep-2026)
 It used to call `st.cache_data.clear()`, which drops EVERY cache in the app — including
