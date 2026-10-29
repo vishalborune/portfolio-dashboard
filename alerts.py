@@ -1552,12 +1552,16 @@ def summarize_filing(company: str, headline: str, pdf_url: str, ticker: str = No
             return _summarize_generic(company, headline, pdf_b64, api_key)
         pdf_b64, trimmed = _results_pdf_b64(pdf, api_key)
         typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
+        if typed is None:
+            return ""                 # verifier unavailable: "Summary pending", retried
         if not typed and trimmed and _RESULTS_NO_STATEMENT:
             # The selected pages held no statement (SSWL 15-Jul: the page locator
             # picked a notes page). One retry on the whole PDF beats losing the table.
             print(f"  [filings] {company}: no statement on the selected pages — reading the full PDF")
             pdf_b64 = base64.standard_b64encode(pdf).decode()
             typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
+            if typed is None:
+                return ""
         if typed:
             return typed
         # A results PDF's prose gist quotes numbers too — same strong reader.
@@ -1765,6 +1769,100 @@ def _period_checks(cols, cur, prev_q, year_ago, _n, _is_qtr) -> str:
     return ""
 
 
+# --- Second, independent reader (Vishal 30-Oct-2026: "₹2-3 a filing to validate") --
+# The arithmetic checks can't catch a misread that still adds up (one revenue
+# digit, gross vs net revenue). A different model reads the SAME pages with a plain
+# prompt; the table goes out only if both agree on every figure shown.
+# Sonnet 5, measured on the 88 verified filings (30-Oct-2026): agreed on 80, ₹1.70 a
+# filing; every disagreement was its own slip, cleared by a second read. Haiku
+# disagreed on 31/88 (its own misreads) — too noisy to be the check.
+VERIFY_MODEL = "claude-sonnet-5"
+_VERIFY_PROMPT = (
+    "This is an Indian listed company's financial results statement. Use the "
+    "CONSOLIDATED statement of profit and loss (standalone only if there is no "
+    "consolidated one). Report three QUARTER columns (3 months each — never a "
+    "half-year, nine-month or year column): the latest quarter, the immediately "
+    "preceding quarter, and the same quarter one year earlier.\n"
+    "For each: revenue = the revenue-from-operations figure that is added into Total "
+    "income (if a net figure is printed after a deduction, the net one); pbt = the LAST "
+    "'profit before tax' line, the one tax is deducted from; pat = the TOTAL profit for "
+    "the period after tax and after any share of associates/joint ventures (the line "
+    "other comprehensive income is added to), never 'attributable to owners'; eps = "
+    "basic EPS. Copy digits exactly as printed: remove every comma (Indian grouping "
+    "'70,81.63' is 7081.63), parentheses mean negative, null if not shown.\n"
+    'Reply with ONLY one line of JSON: {"current":{"revenue":0,"pbt":0,"pat":0,"eps":0},'
+    '"preceding":{...},"year_ago":{...}}')
+_VERIFY_FIELDS = (("revenue", "revenue_from_operations", "Revenue"), ("pbt", "pbt", "PBT"),
+                  ("pat", "pat", "PAT"), ("eps", "basic_eps", "EPS"))
+_VERIFY_PERIODS = (("current", "current", "this quarter"), ("preceding", "prev_q", "previous quarter"),
+                   ("year_ago", "year_ago", "year-ago quarter"))
+
+
+def _verify_read(api_key: str, pdf_b64: str, model: str):
+    """One independent read -> {period: {metric: value}}, or None if unusable."""
+    import json
+    raw = _anthropic_pdf_call(api_key, pdf_b64, _VERIFY_PROMPT, max_tokens=12000, model=model)
+    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    try:
+        return json.loads(m.group(0)) if m else None
+    except Exception:
+        return None
+
+
+def _verify_disputes(data: dict, read: dict) -> list:
+    """Figures we would SHOW that the independent read doesn't confirm, exactly."""
+    out = []
+    for vk, dk, label in _VERIFY_FIELDS:
+        for pk, dpk, plabel in _VERIFY_PERIODS:
+            ours = (data.get(dk) or {}).get(dpk)
+            if ours is None:
+                continue
+            theirs = (read.get(pk) or {}).get(vk)
+            if not isinstance(theirs, (int, float)) or abs(ours - theirs) > max(
+                    0.0001 * max(abs(ours), abs(theirs)), 0.011):
+                out.append((label, plabel, ours, theirs))
+    return out
+
+
+def _verify_results(company: str, pdf_b64: str, api_key: str, data: dict):
+    """(ok, disputes). An independent VERIFY_MODEL read must match every figure we
+    show. On a disagreement a SECOND independent read decides: a figure stands only
+    if that read confirms our value exactly. Never Opus checking Opus. ok=None means
+    no usable verifier answer (API trouble) — the caller retries on a later poll."""
+    global _SUMMARY_RETRYABLE
+    first = _verify_read(api_key, pdf_b64, VERIFY_MODEL) or _verify_read(api_key, pdf_b64, VERIFY_MODEL)
+    if first is None:
+        print(f"  [filings] {company}: verifier gave no usable answer — will retry")
+        _SUMMARY_RETRYABLE = True
+        return None, []
+    disputes = _verify_disputes(data, first)
+    if not disputes:
+        return True, []
+    second = _verify_read(api_key, pdf_b64, VERIFY_MODEL)
+    unconfirmed = ({(x[0], x[1]) for x in _verify_disputes(data, second)} if second is not None
+                   else {(d[0], d[1]) for d in disputes})
+    still = [d for d in disputes if (d[0], d[1]) in unconfirmed]
+    print(f"  [filings] {company}: verifier disagreed on {len(disputes)} figure(s); "
+          f"second read left {len(still)} unresolved")
+    return (not still), still
+
+
+def _withheld_body(company: str, unit, disputes: list) -> str:
+    def fmt(label, v):
+        if v is None or not isinstance(v, (int, float)):
+            return "not read"
+        if label == "EPS":
+            return f"₹{v:,.2f}"
+        cr = _to_cr(v, unit)
+        return f"₹{cr:,.1f} Cr" if cr is not None else f"{v:,.2f}"
+    lines = [f"📊 <b>{html.escape(str(company))}</b> — results filed; figures table withheld",
+             "⚠️ Two independent reads of the statement disagree, so no numbers are "
+             "shown as fact. Please check the filing before acting:"]
+    for label, plabel, ours, theirs in disputes[:6]:
+        lines.append(f"• {label} ({plabel}): {fmt(label, ours)} vs {fmt(label, theirs)}")
+    return "\n".join(lines)
+
+
 def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = None) -> str:
     """Typed results summary, or '' to fall back to the generic gist. Assembles
     the current/prev-quarter/year-ago trios from the model's per-column transcript
@@ -1926,6 +2024,28 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
             "other_income": trio("other_income"),
             "ebitda_reported": trio("ebitda_reported"),
         }
+        # SECOND READER (30-Oct-2026): nothing goes out unless an independent read
+        # agrees on every figure shown. None = verifier unavailable -> retry later.
+        ok, disputes = _verify_results(company, pdf_b64, api_key, data)
+        if ok is None:
+            return None
+        if not ok:
+            core = {(d[0], d[1]) for d in disputes}
+            if {("Revenue", "this quarter"), ("PBT", "this quarter"), ("PAT", "this quarter")} <= core:
+                return _withheld_body(company, obj.get("unit"), disputes)
+            # Blank ONLY the disputed figures (Shringar 30-Oct test: a smudged EPS row
+            # shouldn't hide confirmed revenue/PBT/PAT). Anything derived from a blank
+            # (EBITDA from PBT, margin, the % changes) blanks with it.
+            fkey = {lab: dk for _, dk, lab in _VERIFY_FIELDS}
+            pkey = {lab: dpk for _, dpk, lab in _VERIFY_PERIODS}
+            for label, plabel, _, _ in disputes:
+                data[fkey[label]][pkey[plabel]] = None
+            text = _format_results(company, data)
+            if not text:
+                return _withheld_body(company, obj.get("unit"), disputes)
+            shown = "; ".join(f"{d[0]} {d[1]}" for d in disputes[:4])
+            return text + (f"\n⚠️ Not shown — two independent reads disagree on: "
+                           f"{html.escape(shown)}. Check the filing for these.")
         return _format_results(company, data)
     except Exception as e:
         print(f"  [filings] results extract failed for {company}: {e}")

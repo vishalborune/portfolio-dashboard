@@ -963,6 +963,15 @@ recomputed from the lots still held — not the stale blended avg.
     (5) Opus max_tokens is 16000 (8000 truncated Bliss's 12-column rotated scan).
     (6) The Haiku page locator gets 300 tokens (60 truncated it).
 
+    **SECOND READER before every results alert (`_verify_results`, Vishal 30-Oct-2026: "₹2-3 a filing to validate is good").**
+    The arithmetic checks can't catch a misread that still adds up (one revenue digit, gross vs net revenue), so:
+    - **How it works:** `VERIFY_MODEL` (Sonnet 5) reads the SAME pages with a plain prompt (`_VERIFY_PROMPT`, which pins each line's definition). Every figure we show must match it exactly. On a disagreement, a SECOND Sonnet read decides: a figure stands only if that read confirms our value. Never Opus checking Opus.
+    - **Disputed figures are blanked**, along with anything derived from them (EBITDA from PBT, margin, %s), plus a ⚠️ "not shown — two reads disagree" line. The whole table is withheld (`_withheld_body`) only when this quarter's revenue, PBT and PAT are all disputed.
+    - **No verifier answer** returns None, so the alert goes out as "Summary pending" and is retried.
+    - **Measured on the 88 verified filings:** Sonnet agreed on 80 at ₹1.70 a filing. Every disagreement was its own slip, cleared by the second read. Haiku disagreed on 31/88 and was rejected as the checker.
+    - **End-to-end cost:** about ₹7 per results filing (Opus ~₹5 + Sonnet ~₹1.7).
+    - **Planted test:** Strides revenue 14,297.34 → 14,927.34 passes every arithmetic check (half-year only 2.3% off) and is CAUGHT; the revenue line is dropped.
+    - Vishal declined the weekly self-audit and a permanent test set (cost).
     **Before changing the results prompt or checks again, re-run this audit.** A prompt tweak can shift other filings; every change above was validated on all 93 before pushing.
     **Prompt:** with two "profit before tax" lines, use the LAST one (after the JV/associate share).
     **Page trimmer:** prefers pages printing the revenue line (whitespace-insensitive, since OCR printed "ope rations"); it skips notes pages that only mention PBT, and adds the next page for EPS per statement page.
