@@ -1351,6 +1351,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 # those would just pay again for the same answer.
 _SUMMARY_RETRYABLE = False
 _SUMMARY_ATTEMPTS = {}   # fp_pdf -> follow-up tries in this process (worker: cap 3)
+_RESULTS_NO_STATEMENT = False   # last _summarize_results found no statement at all
 
 
 def _download_pdf(url: str):
@@ -1419,7 +1420,9 @@ def _statement_pages_text(pdf_bytes: bytes) -> list:
 
 def _statement_pages_haiku(api_key: str, pdf_b64: str, n_pages: int) -> list:
     import json
-    raw = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=60, prompt=(
+    # 300, not 60: Haiku sometimes explains before the array; 60 truncated it
+    # (GAEL, Texmaco in the 29-Oct audit) and the whole PDF went to Opus instead.
+    raw = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=300, prompt=(
         "This is an Indian listed company's financial results filing. Which pages "
         "(1-based) hold the statement of profit and loss table (Revenue from "
         "operations, Total income, Profit before tax, EPS)? Give the CONSOLIDATED "
@@ -1434,8 +1437,9 @@ def _statement_pages_haiku(api_key: str, pdf_b64: str, n_pages: int) -> list:
     return got[:3]
 
 
-def _results_pdf_b64(pdf_bytes: bytes, api_key: str) -> str:
-    """Base64 of just the statement pages (whole PDF if they can't be found)."""
+def _results_pdf_b64(pdf_bytes: bytes, api_key: str):
+    """(base64, trimmed): just the statement pages, or the whole PDF (trimmed=False)
+    when they can't be found."""
     import base64
     import io
     full = base64.standard_b64encode(pdf_bytes).decode()
@@ -1445,20 +1449,20 @@ def _results_pdf_b64(pdf_bytes: bytes, api_key: str) -> str:
         n = len(reader.pages)
     except Exception as e:
         print(f"  [filings] can't split PDF ({type(e).__name__}: {e}) — sending it whole")
-        return full
+        return full, False
     pages, how = _statement_pages_text(pdf_bytes), "text layer"
     if not pages:
         pages, how = _statement_pages_haiku(api_key, full, n), "Haiku locator"
     if not pages or len(pages) >= n:
         print(f"  [filings] statement pages not found — sending all {n} pages")
-        return full
+        return full, False
     w = pypdf.PdfWriter()
     for i in pages:
         w.add_page(reader.pages[i])
     buf = io.BytesIO()
     w.write(buf)
     print(f"  [filings] results: sending pages {[i + 1 for i in pages]} of {n} ({how})")
-    return base64.standard_b64encode(buf.getvalue()).decode()
+    return base64.standard_b64encode(buf.getvalue()).decode(), True
 
 
 def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int,
@@ -1541,22 +1545,25 @@ def summarize_filing(company: str, headline: str, pdf_url: str, ticker: str = No
         print(f"  [filings] PDF fetch failed (headline-only): {pdf_url[:90]}")
         return ""
     import base64
+    pdf_b64 = ""
     try:
-        if _is_results_filing(headline):
-            pdf_b64 = _results_pdf_b64(pdf, api_key)
-        else:
+        if not _is_results_filing(headline):
             pdf_b64 = base64.standard_b64encode(pdf).decode()
+            return _summarize_generic(company, headline, pdf_b64, api_key)
+        pdf_b64, trimmed = _results_pdf_b64(pdf, api_key)
+        typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
+        if not typed and trimmed and _RESULTS_NO_STATEMENT:
+            # The selected pages held no statement (SSWL 15-Jul: the page locator
+            # picked a notes page). One retry on the whole PDF beats losing the table.
+            print(f"  [filings] {company}: no statement on the selected pages — reading the full PDF")
+            pdf_b64 = base64.standard_b64encode(pdf).decode()
+            typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
+        if typed:
+            return typed
+        # A results PDF's prose gist quotes numbers too — same strong reader.
+        return _summarize_generic(company, headline, pdf_b64, api_key, model=RESULTS_MODEL)
     finally:
         del pdf
-    try:
-        if _is_results_filing(headline):
-            typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
-            if typed:
-                return typed          # else fall through to the generic summary
-            # A results PDF's prose gist quotes numbers too — same strong reader.
-            return _summarize_generic(company, headline, pdf_b64, api_key, model=RESULTS_MODEL)
-        return _summarize_generic(company, headline, pdf_b64, api_key)
-    finally:
         # FREE the base64 (~1.33x the PDF) + let gc reclaim the transient request-body
         # copy PROMPTLY. Up to MAX_SUMMARIES_PER_RUN of these run per filings cycle on
         # the 512 MB Render worker; without this the big strings linger and the peak
@@ -1635,17 +1642,26 @@ _RESULTS_JSON_PROMPT = (
     "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
     "(after exceptional items if any); if more than one 'profit before tax' line is "
     "printed, use the LAST one, the line that tax is deducted from (after any share of "
-    "profit/loss of joint ventures or associates); pat='profit for the period' after tax. "
+    "profit/loss of joint ventures or associates); pat = the TOTAL profit for the period "
+    "after tax AND after any share of associates/joint ventures (the line other "
+    "comprehensive income is added to), never the 'attributable to owners' line. "
     "exceptional_items = the 'Exceptional items' line if the statement has one, "
+    "PLUS any other one-off gain/loss line printed between that subtotal and profit "
+    "before tax (e.g. 'Profit on sale of shares of associate/investment'), "
     "SIGNED so pbt = (profit before exceptional & tax) + exceptional_items: "
     "POSITIVE for an exceptional GAIN/income, NEGATIVE for a charge/expense; "
-    "0 if there is no exceptional-items line.\n"
+    "0 if there is no such line. "
+    "profit_before_exceptional = the printed 'profit before exceptional items and tax' "
+    "subtotal, null if not printed. share_of_jv = the share of profit/(loss) of "
+    "associates / joint ventures (signed) ONLY when it is added before the pbt you "
+    "reported; 0 when it is absent or added after tax.\n"
     "Return ONLY a JSON object on ONE line, no indentation or spaces between "
     "tokens — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
     '"columns":[{"period_end":"as printed","months":3,"is_quarter":true,'
     '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'
     '"other_income":n,"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
+    '"profit_before_exceptional":n,"share_of_jv":n,'
     '"pbt":n,"exceptional_items":n,"pat":n,"basic_eps":n}]}\n'
     "If this is NOT a quarterly results statement, return {\"basis\":null}."
 )
@@ -1754,18 +1770,23 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
     the current/prev-quarter/year-ago trios from the model's per-column transcript
     by DATE (so the period mapping is deterministic Python, not the model)."""
     try:
-        # 8000: Opus 5 thinks before answering and that counts against max_tokens
+        # 16000: Opus 5 thinks before answering and that counts against max_tokens;
+        # 8000 truncated Bliss GVS (12-column rotated scan, 29-Oct audit)
         # (a 6-column statement's JSON alone is ~1.5k). Only what's used is billed.
+        global _RESULTS_NO_STATEMENT
+        _RESULTS_NO_STATEMENT = False
         raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT,
-                                  max_tokens=8000, model=RESULTS_MODEL)
+                                  max_tokens=16000, model=RESULTS_MODEL)
         if not raw:
             return ""
         import json
         m = re.search(r"\{.*\}", raw, re.DOTALL)   # tolerate stray prose/fences
         if not m:
+            _RESULTS_NO_STATEMENT = True
             return ""
         obj = json.loads(m.group(0))
         if not obj.get("basis"):
+            _RESULTS_NO_STATEMENT = True
             return ""
         cols = obj.get("columns") or []
         for c in cols:
@@ -1860,12 +1881,27 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
             return t
 
         def _resid(c):
+            # The 93-filing audit (29-Oct-2026) showed every remaining false block
+            # came from lines BETWEEN income − expenses and PBT: the share of JV /
+            # associate profit (Welspun, Engineers India, Astra Microwave, Texmaco,
+            # Mukka, Optiemus) or a currency-impact line (Black Box). JV share is
+            # extracted and allowed for; otherwise the statement's own printed
+            # chain — profit before exceptional → + exceptional (+ JV) → PBT — is
+            # accepted when that subtotal sits near income − expenses.
             pbt = _n(c, "pbt")
             if pbt is None:
                 return None
-            pre = pbt - (_n(c, "exceptional_items") or 0.0)
-            rs = [abs(pre - t) / max(abs(t), 0.02 * abs(_n(c, "total_income") or 0), 1.0)
-                  for t in (_target(c, False), _target(c, True)) if t is not None]
+            exc, jv = _n(c, "exceptional_items") or 0.0, _n(c, "share_of_jv") or 0.0
+            tgts = [t for t in (_target(c, False), _target(c, True)) if t is not None]
+            ti = abs(_n(c, "total_income") or 0)
+
+            def den(t):
+                return max(abs(t), 0.02 * ti, 1.0)
+            pres = (pbt - exc, pbt - exc - jv)
+            rs = [abs(p - t) / den(t) for t in tgts for p in pres]
+            pbe = _n(c, "profit_before_exceptional")
+            if pbe is not None and tgts and min(abs(pbe - t) / den(t) for t in tgts) <= 0.25:
+                rs.append(min(abs(p - pbe) for p in pres) / den(pbe))
             return min(rs) if rs else None
 
         for c, label in ((cur, "current"), (prev_q, "preceding"), (year_ago, "year-ago")):

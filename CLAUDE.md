@@ -944,6 +944,26 @@ recomputed from the lots still held — not the stale blended avg.
     **RE-ANCHOR REMOVED: VERIFY, NEVER MOVE (Strides 29-Oct-2026).** Lakshmi's 18:46 Strides alert printed PBT/PAT/EPS with QoQ and YoY SWAPPED. The model had read EVERY column correctly (replayed: even Haiku). Our own July "re-anchor" step MOVED the profit rows between columns: it compared raw PBT with TotalIncome − TotalExpenses (pre-exceptional), and June's ₹63 Cr one-off gain made June look like Sep-2025.
     The step is gone. Python never moves a number the model read. Each shown quarter's PBT (net of its own exceptional) must match its own income − expenses within 10%; otherwise the typed template is BLOCKED and the gist is sent. A deliberately swapped Strides is now blocked.
     **Lesson: a "correction" step that rearranges model output is itself a source of wrong numbers. Checks may reject, never rewrite.**
+    **93-FILING AUDIT (29/30-Oct-2026, Vishal: "run the last 100, self-validate").**
+    Every NSE results PDF since 1-Jul for all tracked India names was read three ways:
+    - NEW = production;
+    - OLD = the code before 29-Oct 20:12;
+    - REF = Sonnet 5 on the full PDF with a separate plain prompt.
+
+    Every NEW-vs-REF disagreement was settled against the printed page (text layer, or the scanned image read by eye).
+    - **Result: NEW was right in every dispute**, including Bliss, PGIL and Optiemus digits; JTL, Indo-MIM and OneSource period order; Shivalik and Mukka revenue line; UFLEX and Krishna final PAT. The one exception is a smudged EPS digit on Shringar. REF itself slipped ~10 times.
+    - **OLD had wrong numbers in 36 alerts, 25 of them major** (quarters swapped, 10–100× magnitude, wrong year-ago column).
+    - **Cost:** ~$58 total for the audit. Production averages ₹5.8 per results filing.
+
+    Fixes from the audit:
+    (1) The reconcile allows the **share of JV/associate profit** (`share_of_jv`) and the statement's own printed chain via `profit_before_exceptional`. These had falsely blocked Welspun, Engineers India, Astra, Texmaco, Mukka, Optiemus and Black Box: blocks went 13 → 3, and the 3 left are letters or non-statements.
+    (2) One-off lines such as "profit on sale of shares of associate" count as exceptional (Welspun).
+    (3) **pat = TOTAL profit after the associate/JV share**, never "attributable to owners". Opus has no temperature control and had flipped between the two (UFLEX).
+    (4) When the trimmed pages hold no statement, it retries once on the full PDF (SSWL).
+    (5) Opus max_tokens is 16000 (8000 truncated Bliss's 12-column rotated scan).
+    (6) The Haiku page locator gets 300 tokens (60 truncated it).
+
+    **Before changing the results prompt or checks again, re-run this audit.** A prompt tweak can shift other filings; every change above was validated on all 93 before pushing.
     **Prompt:** with two "profit before tax" lines, use the LAST one (after the JV/associate share).
     **Page trimmer:** prefers pages printing the revenue line (whitespace-insensitive, since OCR printed "ope rations"); it skips notes pages that only mention PBT, and adds the next page for EPS per statement page.
     Verified on Strides, Shadowfax, Menon, Indegene (every figure matches each company's own release) and Aeroflex (scanned).
