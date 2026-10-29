@@ -1316,7 +1316,16 @@ def run_states():
 # block the alert itself.
 
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
-MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, headline-only
+# RESULTS filings get the strongest reader (29-Oct-2026, Lakshmi's Shadowfax + Menon
+# alerts). Haiku misread both statements on the same day: it took Shadowfax's
+# HALF-YEAR column as the year-ago quarter (revenue "-15% YoY" when the truth was
+# +57%) and read Menon's lakh-grouped "98,33.06" as 98.33 (revenue shown 100x too
+# small, ₹1.0 Cr). Sonnet 5 and Opus 5 both read every figure right on the same
+# PDFs. Opus 5 was faster (17-23s) at ~$0.21 per results filing (~$0.04 on Haiku);
+# ~100 tracked names ≈ $20 a results season. Other filings stay on Haiku — their
+# gist is qualitative and Python never computes from it.
+RESULTS_MODEL = "claude-opus-5"
+MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, the summary is retried next poll
 
 
 MAX_PDF_BYTES = 15 * 1024 * 1024  # was 8 MB (SKIPPED scanned results ~9-12 MB, e.g.
@@ -1335,49 +1344,79 @@ MAX_PDF_BYTES = 15 * 1024 * 1024  # was 8 MB (SKIPPED scanned results ~9-12 MB, 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 
+# True when the last summarize_filing() failed for a reason worth retrying
+# (download failed, API error/timeout) — nothing usable was billed. False when the
+# model answered but nothing passed, or the PDF is over the size cap: retrying
+# those would just pay again for the same answer.
+_SUMMARY_RETRYABLE = False
+_SUMMARY_ATTEMPTS = {}   # fp_pdf -> follow-up tries in this process (worker: cap 3)
+
+
 def _download_pdf_b64(url: str):
     """Filing PDF as base64, or None. Size-capped: giant documents (annual
     reports, investor decks) fall back to headline-only rather than burning
     tokens on 300 pages nobody asked to summarize."""
+    global _SUMMARY_RETRYABLE
     try:
         import base64
-        r = requests.get(url, headers=HEADERS, timeout=30)
+        r = requests.get(url, headers=HEADERS, timeout=60)
         if r.status_code != 200 or not r.content[:5].startswith(b"%PDF"):
+            print(f"  [filings] PDF fetch HTTP {r.status_code}, {len(r.content)} bytes, "
+                  f"starts {r.content[:20]!r}")
+            _SUMMARY_RETRYABLE = True
             return None
         if len(r.content) > MAX_PDF_BYTES:
             print(f"  [filings] PDF too large ({len(r.content)//1024} KB) — headline-only")
             return None
         return base64.standard_b64encode(r.content).decode()
-    except Exception:
+    except Exception as e:
+        print(f"  [filings] PDF fetch failed: {type(e).__name__}: {e}")
+        _SUMMARY_RETRYABLE = True
         return None
 
 
-def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int) -> str:
+def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int,
+                        model: str = SUMMARY_MODEL) -> str:
     """POST a PDF + prompt to Claude, return the text response ('' on failure)."""
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"},
-        json={
-            "model": SUMMARY_MODEL, "max_tokens": max_tokens,
-            # temperature 0 — this is TRANSCRIPTION, not writing. The API defaults
-            # to 1.0 (maximum sampling randomness), which is why the same results
-            # PDF extracted different comparison-column figures on consecutive runs
-            # (Krishival 11-Aug-2026: prev-quarter margin read 10.0% one run and
-            # 11.2% the next, and one run dropped the preceding-quarter column
-            # entirely). Reading numbers off a table has exactly one right answer,
-            # so there is nothing to sample — pin it.
-            "temperature": 0,
-            "messages": [{"role": "user", "content": [
-                {"type": "document",
-                 "source": {"type": "base64", "media_type": "application/pdf",
-                            "data": pdf_b64}},
-                {"type": "text", "text": prompt}]}],
-        }, timeout=90)
-    if r.status_code != 200:
-        print(f"  [filings] summary API {r.status_code}: {r.text[:120]!r}")
+    body = {
+        "model": model, "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": [
+            {"type": "document",
+             "source": {"type": "base64", "media_type": "application/pdf",
+                        "data": pdf_b64}},
+            {"type": "text", "text": prompt}]}],
+    }
+    if model == SUMMARY_MODEL:
+        # temperature 0 — this is TRANSCRIPTION, not writing. The API defaults
+        # to 1.0 (maximum sampling randomness), which is why the same results
+        # PDF extracted different comparison-column figures on consecutive runs
+        # (Krishival 11-Aug-2026: prev-quarter margin read 10.0% one run and
+        # 11.2% the next, and one run dropped the preceding-quarter column
+        # entirely). Reading numbers off a table has exactly one right answer,
+        # so there is nothing to sample — pin it. Opus 5 / Sonnet 5 REJECT the
+        # parameter with a 400, so it rides the Haiku call only.
+        body["temperature"] = 0
+    # 180s (was 90): a 13-page scanned statement is ~35k input tokens, and Menon's
+    # 12.8 MB PDF went out headline-only on 29-Oct-2026 with no other explanation.
+    global _SUMMARY_RETRYABLE
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json=body, timeout=180)
+    except Exception as e:
+        print(f"  [filings] summary API call failed ({model}): {type(e).__name__}: {e}")
+        _SUMMARY_RETRYABLE = True
         return ""
-    blocks = r.json().get("content", [])
+    if r.status_code != 200:
+        print(f"  [filings] summary API {r.status_code} ({model}): {r.text[:160]!r}")
+        _SUMMARY_RETRYABLE = True
+        return ""
+    j = r.json()
+    if j.get("stop_reason") == "max_tokens":
+        print(f"  [filings] {model} hit max_tokens={max_tokens} — output truncated")
+    blocks = j.get("content", [])
     return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
 
 
@@ -1398,11 +1437,15 @@ def _is_results_filing(headline: str) -> bool:
                               or "q3" in h or "q4" in h or "fy" in h)
 
 
-def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
+def summarize_filing(company: str, headline: str, pdf_url: str, ticker: str = None) -> str:
     """Gist of a filing via Claude reading the PDF NATIVELY (scanned or digital).
     RESULTS filings get Lakshmi's typed template (consolidated Revenue/EBITDA/
-    PBT/PAT/EPS with QoQ & YoY %); everything else gets the generic bullet gist.
-    '' on any failure -> the alert falls back to the headline."""
+    PBT/PAT/EPS with QoQ & YoY %) read by RESULTS_MODEL; everything else gets the
+    generic bullet gist. `ticker` (yf form, e.g. MENONBE.NS) enables the size
+    check against our own TTM revenue. '' on any failure -> headline only, with
+    _SUMMARY_RETRYABLE saying whether trying again later could help."""
+    global _SUMMARY_RETRYABLE
+    _SUMMARY_RETRYABLE = False
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("  [filings] ANTHROPIC_API_KEY not set — filing goes out headline-only")
@@ -1413,9 +1456,11 @@ def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
         return ""
     try:
         if _is_results_filing(headline):
-            typed = _summarize_results(company, pdf_b64, api_key)
+            typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
             if typed:
                 return typed          # else fall through to the generic summary
+            # A results PDF's prose gist quotes numbers too — same strong reader.
+            return _summarize_generic(company, headline, pdf_b64, api_key, model=RESULTS_MODEL)
         return _summarize_generic(company, headline, pdf_b64, api_key)
     finally:
         # FREE the base64 (~1.33x the PDF) + let gc reclaim the transient request-body
@@ -1426,9 +1471,12 @@ def summarize_filing(company: str, headline: str, pdf_url: str) -> str:
         gc.collect()
 
 
-def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str) -> str:
+def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str,
+                       model: str = SUMMARY_MODEL) -> str:
     try:
-        out = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=350, prompt=(
+        # Opus 5 thinks before answering and that counts against max_tokens.
+        out = _anthropic_pdf_call(api_key, pdf_b64, model=model,
+                                  max_tokens=350 if model == SUMMARY_MODEL else 4000, prompt=(
             f"This is an Indian stock-exchange filing by {company} "
             f"(subject: {headline}). Read the ACTUAL document and summarize it so "
             f"an investor can decide whether it matters WITHOUT opening the PDF.\n"
@@ -1479,10 +1527,14 @@ _RESULTS_JSON_PROMPT = (
     "Two columns often share the same end date (e.g. Q4 and the full year both end "
     "31-03): return BOTH as separate objects. Do NOT omit the preceding quarter — "
     "dropping it silently loses every quarter-on-quarter comparison.\n"
-    "For each column give period_end (the date exactly as printed) and is_quarter "
-    "(true for a single ~3-month quarter, false for a full-year/'year ended' column).\n"
-    "Numbers exactly as printed: strip commas; parentheses mean NEGATIVE; null if "
-    "absent. Keep the statement's own unit. total_income = the 'Total income' "
+    "For each column give period_end (the date exactly as printed), months (the "
+    "length of the period from its column HEADER: 3 for 'Quarter/Three months ended', "
+    "6 for 'Half year/Six months ended', 9 for 'Nine months ended', 12 for 'Year "
+    "ended') and is_quarter (true only when months is 3). A half-year column and "
+    "the quarter column often share the same end date — the header decides.\n"
+    "Numbers exactly as printed: remove EVERY comma, including Indian lakh grouping "
+    "('70,81.63' is 7081.63, '1,05,234' is 105234 — never 70.81); parentheses mean "
+    "NEGATIVE; null if absent. Keep the statement's own unit. total_income = the 'Total income' "
     "line; total_expenses = the 'Total expenses' line; ebitda_reported = the "
     "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
     "(after exceptional items if any); pat='profit for the period' after tax. "
@@ -1492,7 +1544,7 @@ _RESULTS_JSON_PROMPT = (
     "0 if there is no exceptional-items line.\n"
     "Return ONLY a JSON object — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
-    '"columns":[{"period_end":"as printed","is_quarter":true,'
+    '"columns":[{"period_end":"as printed","months":3,"is_quarter":true,'
     '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'
     '"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
     '"pbt":n,"exceptional_items":n,"pat":n,"basic_eps":n}]}\n'
@@ -1543,15 +1595,70 @@ def _parse_stmt_date(s):
     return None
 
 
-def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
+def _quarterly_revenue_cr(ticker: str):
+    """Our own TTM revenue / 4 in ₹ Cr (screener, nightly), or None. An
+    independent yardstick for the extracted quarter's MAGNITUDE."""
+    if not ticker:
+        return None
+    try:
+        rows = (sb().table("fundamentals_daily").select("revenue_ttm_cr")
+                .eq("ticker", ticker).limit(1).execute().data or [])
+        v = rows[0].get("revenue_ttm_cr") if rows else None
+        return float(v) / 4.0 if v and float(v) > 0 else None
+    except Exception as e:
+        print(f"  [filings] TTM revenue lookup failed for {ticker}: {e}")
+        return None
+
+
+def _period_checks(cols, cur, prev_q, year_ago, _n, _is_qtr) -> str:
+    """'' when the chosen periods hang together, else the reason they don't.
+    Uses only the statement's own arithmetic, so no model can talk its way past it."""
+    def rev(c):
+        return _n(c, "revenue_from_operations") if c else None
+
+    def ytd(c):                      # a half-year / nine-month / full-year column
+        m = c.get("months")
+        if isinstance(m, (int, float)) and int(m) in (3, 6, 9, 12):
+            return int(m) != 3
+        return c.get("is_quarter") is False or not _is_qtr(c)
+
+    # 1. The preceding quarter really is the one before (a dropped column would
+    #    otherwise pair this quarter with an older one and every QoQ would lie).
+    if prev_q:
+        gap = (cur["_d"][0] - prev_q["_d"][0]) * 12 + cur["_d"][1] - prev_q["_d"][1]
+        if gap != 3:
+            return f"'preceding quarter' ends {gap} months before the current one"
+    # 2. Half-year cross-foot: this quarter + the preceding one = the half-year
+    #    column the company printed (Shadowfax 1,537.70 + 1,358.12 = 2,895.82).
+    h1 = [c for c in cols if c is not cur and c["_d"] == cur["_d"] and c.get("months") == 6]
+    if h1 and prev_q and None not in (rev(cur), rev(prev_q), rev(h1[0])) and rev(h1[0]):
+        off = abs(rev(cur) + rev(prev_q) - rev(h1[0])) / abs(rev(h1[0]))
+        if off > 0.03:
+            return (f"quarter {rev(cur):,.2f} + preceding {rev(prev_q):,.2f} ≠ half-year "
+                    f"{rev(h1[0]):,.2f} ({off:.1%} off)")
+    # 3. Year-ago quarter vs the prior year-to-date column. A statement that
+    #    prints a current year-to-date column prints the prior one too; if the model
+    #    returned none, its 'year-ago quarter' is probably that column mislabelled
+    #    (Haiku on Shadowfax: H1 FY26 ₹1,806 Cr posed as Q2 FY26, truly ₹982 Cr).
+    if year_ago and any(ytd(c) for c in cols if c is not cur and c["_d"] == cur["_d"]):
+        prior = [c for c in cols if c is not year_ago and c["_d"] == year_ago["_d"] and ytd(c)]
+        if not prior:
+            return "no prior-year year-to-date column, so the year-ago quarter is ambiguous"
+        ya, yp = rev(year_ago), rev(prior[0])
+        if ya is not None and yp and ya >= 0.95 * yp:
+            return f"year-ago 'quarter' {ya:,.2f} ≈ the prior year-to-date {yp:,.2f}"
+    return ""
+
+
+def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = None) -> str:
     """Typed results summary, or '' to fall back to the generic gist. Assembles
     the current/prev-quarter/year-ago trios from the model's per-column transcript
     by DATE (so the period mapping is deterministic Python, not the model)."""
     try:
-        # 2000 (was 900): the per-column JSON is bigger than the old flat schema
-        # and 900 could TRUNCATE it mid-object -> unparseable -> silent fall-back
-        # to the generic gist (seen in the 31-Jul audit). Headroom for ~4 columns.
-        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT, max_tokens=2000)
+        # 8000: Opus 5 thinks before answering and that counts against max_tokens
+        # (a 6-column statement's JSON alone is ~1.5k). Only what's used is billed.
+        raw = _anthropic_pdf_call(api_key, pdf_b64, _RESULTS_JSON_PROMPT,
+                                  max_tokens=8000, model=RESULTS_MODEL)
         if not raw:
             return ""
         import json
@@ -1582,8 +1689,20 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
         # gets Q4 vs full-year wrong — both end 31-Mar, Banswara 31-Jul-2026).
         # CURRENT = latest date; on a tie the SMALLER-revenue column (a single
         # quarter, not the YTD/full-year column sharing that date).
+        # Period LENGTH from the column header (29-Oct-2026). When the model gives
+        # it for every column, it decides quarter vs half-year/YTD outright —
+        # Shadowfax's half-year (₹1,806 Cr) is under 3x a quarter, so the revenue
+        # rule below alone let it pose as the year-ago quarter.
+        def _mo(c):
+            v = c.get("months")
+            return int(v) if isinstance(v, (int, float)) and int(v) in (3, 6, 9, 12) else None
+        have_months = all(_mo(c) for c in cols)
+
         maxd = max(c["_d"] for c in cols)
-        cur = min([c for c in cols if c["_d"] == maxd], key=_rev)
+        at_max = [c for c in cols if c["_d"] == maxd]
+        if have_months and any(_mo(c) == 3 for c in at_max):
+            at_max = [c for c in at_max if _mo(c) == 3]
+        cur = min(at_max, key=_rev)
         # Only compare against SINGLE-QUARTER columns: a period whose revenue is
         # >3x the current quarter is a full-year / YTD column, never a quarter
         # (Banswara's statement lists 'year ended' as the middle column, ~40x a
@@ -1591,6 +1710,8 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
         cur_rev = _n(cur, "revenue_from_operations")
 
         def _is_qtr(c):
+            if have_months:
+                return _mo(c) == 3
             r = _n(c, "revenue_from_operations")
             return cur_rev is None or r is None or r <= 3.0 * cur_rev
 
@@ -1604,6 +1725,19 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str) -> str:
         other = sorted({c["_d"] for c in before if c["_d"] != year_ago.get("_d")}, reverse=True)
         if other:
             prev_q = min([c for c in before if c["_d"] == other[0]], key=_rev)
+
+        # CROSS-CHECKS THAT DON'T TRUST THE MODEL (29-Oct-2026). Each one rejects
+        # the typed template rather than print a number we can't stand behind.
+        why = _period_checks(cols, cur, prev_q, year_ago, _n, _is_qtr)
+        if not why:
+            q_own = _quarterly_revenue_cr(ticker)
+            q_cr = _to_cr(cur_rev, obj.get("unit"))
+            if q_own and q_cr is not None and not (0.2 <= q_cr / q_own <= 5.0):
+                why = (f"quarter revenue ₹{q_cr:,.1f} Cr is {q_cr / q_own:.2f}x our TTM/4 "
+                       f"(₹{q_own:,.1f} Cr) — unit or digits misread")
+        if why:
+            print(f"  [filings] results check failed for {company}: {why} — falling back to gist")
+            return ""
 
         # RE-ANCHOR PBT/PAT/EPS to the right column (31-Jul-2026). The model
         # reliably transcribes the TOP rows (revenue/finance/depreciation/EBITDA)
@@ -1867,6 +2001,10 @@ def _format_results(company: str, data: dict) -> str:
     parts = [header] + rows
     if warn:
         parts.append(html.escape(warn))
+    # PBT = PAT is right for a company with no tax charge (Shadowfax 29-Oct-2026,
+    # carried-forward losses) but reads like a copy error — say it's real.
+    if pbt[0] and pat[0] is not None and abs(pbt[0] - pat[0]) <= 0.005 * abs(pbt[0]):
+        parts.append("<i>No tax charged this quarter, so PAT = PBT (as printed).</i>")
     if take:
         parts.append(f"<b>Take:</b> {html.escape(take)}")
     parts.append(footer)
@@ -2268,11 +2406,19 @@ def _parse_rss_strict(text: str) -> list:
 
 
 def _parse_rss_lenient(text: str) -> list:
-    """Regex-recover complete <item>…</item> blocks — survives a truncated tail."""
+    """Regex-recover complete <item>…</item> blocks — survives a truncated tail.
+    Each field is XML-unescaped ONCE, exactly as ElementTree does in the strict
+    parser. Without that, the two parsers yielded different text for the same item
+    ('&amp;#8377;' vs '&#8377;') → a different fingerprint → Shadowfax's press
+    release alerted twice on 29-Oct-2026, and '&amp;' broke name matching for any
+    '&' company on runs that fell back here."""
     out = []
     def field(block, tag):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.DOTALL | re.IGNORECASE)
-        return re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1), flags=re.DOTALL).strip() if m else ""
+        if not m:
+            return ""
+        cdata = re.fullmatch(r"\s*<!\[CDATA\[(.*?)\]\]>\s*", m.group(1), flags=re.DOTALL)
+        return (cdata.group(1) if cdata else html.unescape(m.group(1))).strip()
     for block in re.findall(r"<item>(.*?)</item>", text, re.DOTALL | re.IGNORECASE):
         out.append(_rss_item(field(block, "title"), field(block, "description"),
                              field(block, "link"), field(block, "pubDate")))
@@ -2647,6 +2793,37 @@ def run_filings(nse_only: bool = False):
             is_pdf = url.lower().endswith(".pdf")
             is_xml = url.lower().endswith(".xml")
             fp_sum = _fingerprint(sym, a["headline"], a["date"], "xbrlsummary")
+            # PDF whose summary failed for a retryable reason (29-Oct-2026, Menon's
+            # results went out headline-only and nothing ever tried again): fp_owed
+            # is recorded with the headline, fp_pdf once the follow-up is delivered.
+            fp_owed = _fingerprint(sym, a["headline"], a["date"], "pdfowed")
+            fp_pdf = _fingerprint(sym, a["headline"], a["date"], "pdfsummary")
+            yf_t = f"{sym}.NS" if e["exch"] == "XNSE" else f"{sym}.BO"
+
+            if (fp in seen and fp_owed in seen and fp_pdf not in seen and fp_pdf not in fp_meta
+                    and is_pdf and enabled and summaries_done < MAX_SUMMARIES_PER_RUN
+                    and _SUMMARY_ATTEMPTS.get(fp_pdf, 0) < 3):
+                _SUMMARY_ATTEMPTS[fp_pdf] = _SUMMARY_ATTEMPTS.get(fp_pdf, 0) + 1
+                gist = summarize_filing(e["name"], a["headline"], url, ticker=yf_t)
+                if gist:
+                    summaries_done += 1
+                    body = (f"🔁 <b>{esc(e['name'])}</b> — summary now available\n"
+                            f"<i>↳ earlier: {esc(html.unescape(a['headline'])[:160])}</i>\n\n{gist}"
+                            f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
+                    fp_meta[fp_pdf] = (sym, a["headline"] + " [pdf summary]", a["date"])
+                    for g in enabled:
+                        alerts_by_group.setdefault(g, []).append(([fp_pdf], body))
+                elif not _SUMMARY_RETRYABLE:
+                    # The model answered and nothing usable came out — paying again
+                    # would buy the same answer. Close it, loudly.
+                    print(f"  [filings] {sym}: summary still unusable on retry — giving up")
+                    try:
+                        client.table("filings_seen").insert({
+                            "fingerprint": fp_pdf, "ticker": sym, "filing_date": a["date"] or None,
+                            "headline": (a["headline"] + " [summary gave up]")[:300]}).execute()
+                    except Exception as ex:
+                        print(f"⚠️ filings_seen write failed for {sym}: {ex}")
+                continue
 
             # Headline ALREADY sent. For XBRL, NSE often publishes the machine
             # file minutes-to-hours LATER, so retry the parse each poll and send a
@@ -2661,7 +2838,7 @@ def run_filings(nse_only: bool = False):
                         # the original headline so the two are unmistakably linked.
                         body = (f"🔁 <b>{esc(e['name'])}</b> — filing update "
                                 f"(summary now available)\n"
-                                f"<i>↳ earlier: {esc(a['headline'][:160])}</i>\n\n{gist}"
+                                f"<i>↳ earlier: {esc(html.unescape(a['headline'])[:160])}</i>\n\n{gist}"
                                 f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
                         fp_meta[fp_sum] = (sym, a["headline"] + " [xbrl summary]", a["date"])
                         for g in enabled:
@@ -2671,11 +2848,14 @@ def run_filings(nse_only: bool = False):
             # FIRST sighting: send the headline now. PDF -> summarize via Claude
             # (capped); XBRL -> parse now if already published (else '' and the
             # follow-up above catches it once NSE posts the file).
-            gist = ""
+            gist, owed = "", False
             if enabled and is_pdf and summaries_done < MAX_SUMMARIES_PER_RUN:
-                gist = summarize_filing(e["name"], a["headline"], url)
+                gist = summarize_filing(e["name"], a["headline"], url, ticker=yf_t)
                 if gist:
                     summaries_done += 1
+                owed = not gist and _SUMMARY_RETRYABLE
+            elif enabled and is_pdf:
+                owed = True                    # over this run's cap — next poll does it
             elif enabled and is_xml:
                 gist = _summarize_xbrl(url)
             # Full headline (was double-truncated to 200 → cut mid-word); for a
@@ -2686,13 +2866,19 @@ def run_filings(nse_only: bool = False):
                 body = _calendar_body(e["name"], a["headline"], meeting, gist,
                                       a["date"], _filing_link(url, e["exch"], sym))
             else:
+                # unescape for DISPLAY only — the fingerprint keeps the raw text
                 body = (f"{'⭐📢' if starred else '📢'} <b>{esc(e['name'])}</b>: "
-                        f"{esc(a['headline'][:500])}"
+                        f"{esc(html.unescape(a['headline'])[:500])}"
+                        + ("\n<i>Summary pending — it follows when the PDF can be read.</i>"
+                           if owed else "")
                         + (f"\n\n{gist}" if gist else "")          # gist may be typed HTML
                         + f"\n{esc(a['date'] or '')} · {_filing_link(url, e['exch'], sym)}")
             fps = [fp]
             if is_xml and enabled and gist:      # summary already in THIS msg —
                 fps.append(fp_sum)               # record fp_sum too, no follow-up
+            if owed:
+                fps.append(fp_owed)
+                fp_meta[fp_owed] = (sym, a["headline"] + " [summary owed]", a["date"])
             fp_meta[fp] = (sym, a["headline"], a["date"])
             # Capture a board-meeting PRIOR INTIMATION for the morning agenda brief
             # (idempotent; ticker in yf form so it matches holdings later).

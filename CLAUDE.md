@@ -23,8 +23,9 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 - **CI/CD**: GitHub Actions, single workflow `.github/workflows/alerts.yml`
 - **App**: Streamlit (`app.py`), Python throughout
 - **Alerting**: Telegram (bot + group chat), email via Resend
-- **AI summaries**: Claude Haiku (claude-haiku-4-5-20251001) reads filing PDFs
-  natively via the API's document block — no OCR/text-extraction pipeline
+- **AI summaries**: Claude reads filing PDFs natively via the API's document block
+  — no OCR/text-extraction pipeline. **RESULTS filings: Opus 5 (`RESULTS_MODEL`,
+  29-Oct-2026); every other filing: Haiku 4.5 (`SUMMARY_MODEL`).**
 
 ## Files (repo root unless noted)
 | File | Purpose |
@@ -913,6 +914,27 @@ recomputed from the lots still held — not the stale blended avg.
     (identical). This applies to EVERY filing summary — results, XBRL and the generic
     gist — so the whole summary pipeline is now reproducible. Any future
     "the alert said something different last time" is a real bug, not sampling noise.
+    (Opus 5 REJECTS `temperature` with a 400, so it now rides the Haiku call only.)
+  - **RESULTS MOVED TO OPUS 5 + model-independent checks (29-Oct-2026, Lakshmi:
+    Shadowfax numbers wrong, Menon Bearings unsummarised).** Haiku misread both on one
+    day:
+    - **Shadowfax:** it took the H1-FY26 column (₹1,806 Cr) as the Sep-25 quarter (₹982 Cr), so "revenue −15% YoY" went out when the truth was +57%.
+    - **Menon:** it read the lakh-grouped "98,33.06" as 98.33, so revenue showed as ₹1.0 Cr, 100× too small.
+
+    (Shadowfax PBT = PAT is REAL: there was zero tax. The template now says so.)
+
+    Sonnet 5 and Opus 5 both read every figure right. Opus 5 was faster (17–23s) at ~$0.21 per results filing (Haiku ~$0.04), about $20 a results season.
+
+    **Checks that run on any model** (`_period_checks` + TTM yardstick). Each one REJECTS the typed template and falls back to the gist:
+    (a) the model returns `months` per column from the HEADER, which decides quarter vs YTD;
+    (b) the preceding quarter must end exactly 3 months earlier;
+    (c) quarter + preceding quarter must equal the printed half-year, within 3%;
+    (d) a current YTD column requires a prior-year YTD column, and the year-ago quarter must be under 95% of it;
+    (e) quarter revenue must be 0.2–5× our own `fundamentals_daily.revenue_ttm_cr`/4.
+
+    Replayed Haiku's two bad extractions: both rejected.
+    **Retry:** a PDF whose summary failed for a RETRYABLE reason sends the headline with "Summary pending" and records `pdfowed`. Later polls retry it (max 3 per process) and send a 🔁 follow-up (`pdfsummary`). Retryable means: download failed, API error or timeout, or the per-run cap was hit. A model answer that failed the checks is NOT retried, since paying again buys the same answer.
+    **Duplicate fix:** the lenient RSS parser now XML-unescapes exactly like the strict one. Before, `&amp;#8377;` vs `&#8377;` made two fingerprints, so Shadowfax's press release alerted twice. Verified: all 1,880 feed items are now identical under both parsers.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were
   silently never alerting. The NSE RSS `title` is the COMPANY NAME, not the
   symbol, but the code matched `^SYMBOL` against the title → 0 hits for any stock
