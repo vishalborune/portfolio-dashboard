@@ -2148,9 +2148,54 @@ def _parse_nse_date(pub: str) -> str:
 
 def _norm_name(s: str) -> str:
     """Squash a company name for fuzzy matching: drop Ltd/Limited/Pvt/The and all
-    non-alphanumerics. 'South West Pinnacle Exploration Limited' -> 'southwestpinnacleexploration'."""
-    s = re.sub(r"\b(limited|ltd|private|pvt|the)\b", "", (s or "").lower())
+    non-alphanumerics; '&' reads as 'and'. 'South West Pinnacle Exploration Limited'
+    -> 'southwestpinnacleexploration'."""
+    s = (s or "").lower().replace("&", " and ")
+    s = re.sub(r"\b(limited|ltd|private|pvt|the)\b", "", s)
     return re.sub(r"[^a-z0-9]", "", s)
+
+
+_NSE_OFFICIAL = None          # (fetched_at, {SYMBOL: official company name})
+_NSE_OFFICIAL_WARNED = set()
+
+
+def nse_official_names() -> dict:
+    """{SYMBOL: company name} from NSE's own equity masters (mainboard + SME).
+
+    WHY (29-Oct-2026, Lakshmi's AGI Greenpac results never alerted): the filings
+    matcher compared the feed's company name with the name WE typed. AGI was
+    stored as 'AGI GreenpacK' and NSE stamps its files with its old name 'HSIL',
+    so neither signal ever matched — 18 filings since 1 Sep went nowhere, silently.
+    The NSE-published name is the exchange's own spelling of the feed title, so
+    it matches regardless of how a holding was typed (House Rule #5). The same
+    portfolio audit found Engineers India / Great Eastern / Sunflag typed
+    differently too, matching only when the link token happened to be the symbol
+    (it is often an NSE staff upload id like TEAM_SANDESHC). Refreshed daily."""
+    global _NSE_OFFICIAL
+    if _NSE_OFFICIAL and time.time() - _NSE_OFFICIAL[0] < 86400:
+        return _NSE_OFFICIAL[1]
+    import csv, io
+    out = {}
+    for url in ("https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
+                "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"):
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                             timeout=25)
+            if r.status_code != 200:
+                print(f"  (NSE equity master {url.rsplit('/', 1)[-1]}: HTTP {r.status_code}, "
+                      f"{len(r.content)} bytes)")
+                continue
+            for row in csv.DictReader(io.StringIO(r.content.decode("utf-8-sig", "replace"))):
+                row = {(k or "").strip().replace("_", " "): (v or "").strip() for k, v in row.items()}
+                if row.get("SYMBOL") and row.get("NAME OF COMPANY"):
+                    out[row["SYMBOL"].upper()] = row["NAME OF COMPANY"]
+        except Exception as e:
+            print(f"  (NSE equity master {url.rsplit('/', 1)[-1]} failed: {type(e).__name__}: {e})")
+    if out:
+        _NSE_OFFICIAL = (time.time(), out)
+    elif _NSE_OFFICIAL:
+        return _NSE_OFFICIAL[1]                # keep yesterday's list over none
+    return out
 
 
 def fetch_nse_rss() -> list:
@@ -2245,7 +2290,12 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
     with normalised company-name containment as a fallback for the rare item
     whose link has no parseable symbol."""
     sym_u = (symbol or "").upper()
-    cnorm = _norm_name(company_name) if company_name else ""
+    official = nse_official_names()
+    if official and sym_u not in official and sym_u not in _NSE_OFFICIAL_WARNED:
+        _NSE_OFFICIAL_WARNED.add(sym_u)
+        print(f"  ⚠️ {sym_u} is not in NSE's equity master — filings match on our stored "
+              f"name only; check the symbol")
+    names = {n for n in (_norm_name(company_name), _norm_name(official.get(sym_u, ""))) if n}
     out = []
     for it in fetch_nse_rss():
         # Match on EITHER exact signal — never a substring. Substring matching
@@ -2257,7 +2307,7 @@ def fetch_nse_announcements(symbol: str, company_name: str = None) -> list:
         # company-name match is the reliable anchor; the link-symbol is a
         # second exact chance when the stored name differs from NSE's.
         matched = (bool(it.get("sym")) and it["sym"] == sym_u) \
-            or (bool(cnorm) and _norm_name(it["title"]) == cnorm)
+            or (bool(names) and _norm_name(it["title"]) in names)
         if not matched:
             continue
         out.append({

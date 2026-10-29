@@ -928,6 +928,16 @@ recomputed from the lots still held — not the stale blended avg.
     companies' filings mis-attributed). NSE's filing-link token is often NOT the
     trading symbol (NEWGEN→NEWGEN2, CENTENKA→CENTURYENKA, NORTHARC→NACL2020,
     VIYASH→SEQUENT1), so the exact company NAME is the reliable anchor.
+  - **Name match now uses NSE's OFFICIAL company name (29-Oct-2026, Lakshmi's AGI Greenpac
+    results never alerted).** AGI matched on NEITHER signal:
+    - it was stored as "AGI Green**pack**" (NSE: "AGI Greenpac");
+    - its filing links carry its old name **HSIL**.
+
+    So all 18 filings since 1 Sep went nowhere, with no log line. `alerts.nse_official_names()` reads NSE's
+    `EQUITY_L.csv` + `SME_EQUITY_L.csv` (archives host, refreshed daily) and the matcher accepts
+    the feed title against EITHER our stored name or NSE's own. `_norm_name` reads "&" as "and".
+    **Link tokens are unreliable as a primary key:** an audit of all 64 NSE names found many filings uploaded under NSE staff ids (`TEAM_SANDESHC`, `TEAM_BBODADE`). It also found AEROFLEXINDIA, EMILTD, NETWEB1234, TIPSINDLTD, RENTMOJO, and a phone number for Shadowfax. Engineers India, Great Eastern and Sunflag were typed differently from NSE, so they matched only when the token happened to be the symbol, and partly missed.
+    A tracked symbol absent from NSE's master now prints a ⚠️ (fail-visible). Audit script pattern: NSE `api/corporate-announcements?symbol=` (home IP only) for each name's real tokens + `sm_name`.
   - **Filter is a BLACKLIST, not a whitelist (23-Jul-2026).** We used to alert
     only on `MATERIAL_KEYWORDS`; a whitelist can only catch what we thought of in
     advance, and it silently dropped Solara's **press release** and its **"Change
