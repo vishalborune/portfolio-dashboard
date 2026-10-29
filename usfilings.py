@@ -51,6 +51,8 @@ SEC_MIN_GAP = 0.15                 # seconds between SEC requests (<= ~8/s)
 LOOKBACK_DAYS = 3                  # first sighting window; dedup covers the rest
 MAX_GISTS_PER_RUN = 6              # Haiku cost guard; beyond this, headline-only
 MAX_DOC_CHARS = 14000
+COVER_CHARS = 4000                 # 8-K cover page: item headings only
+MAX_EXHIBIT_CHARS = 30000          # EX-99.1 press release (~$0.01/gist on Haiku)
 CACHE_DIR = ".cache"
 
 ROUTINE_FORMS = {"144", "144/A", "3", "3/A", "5", "5/A", "S-8", "S-8 POS", "11-K", "SD",
@@ -241,18 +243,55 @@ def _fmt_insider(sym: str, f: dict, link: str) -> str | None:
 # 8-K gist (Haiku, temperature 0)
 # ---------------------------------------------------------------------------
 
-def _doc_text(cik: int, acc: str, doc: str) -> str:
-    r = _sec_get(doc_url(cik, acc, doc))
-    if r.status_code != 200:
-        return ""
-    txt = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", r.text, flags=re.S | re.I)
+def _clean_html(raw: str) -> str:
+    # <ix:header> is the hidden inline-XBRL fact block at the top of every iXBRL
+    # filing. Left in, it filled the whole text budget with tags and dates, and
+    # Microsoft's 8-K came out as "raw XML/XBRL data" (29-Oct-2026).
+    txt = re.sub(r"<ix:header>.*?</ix:header>", " ", raw, flags=re.S | re.I)
+    txt = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", txt, flags=re.S | re.I)
     txt = re.sub(r"<[^>]+>", " ", txt)
     txt = html.unescape(txt)
-    txt = re.sub(r"\s+", " ", txt).strip()
-    return txt[:MAX_DOC_CHARS]
+    return re.sub(r"\s+", " ", txt).strip()
 
 
-def gist(company: str, form: str, items_label: str, text: str) -> str:
+def _doc_text(cik: int, acc: str, doc: str, limit: int = MAX_DOC_CHARS) -> str:
+    r = _sec_get(doc_url(cik, acc, doc))
+    if r.status_code != 200:
+        print(f"  [usfilings] {acc} {doc}: HTTP {r.status_code} ({len(r.content)} bytes)")
+        return ""
+    return _clean_html(r.text)[:limit]
+
+
+def exhibits(cik: int, acc: str) -> list[tuple[str, str]]:
+    """[(type, filename)] of the filing's EX-99.x attachments, EX-99.1 first.
+
+    An 8-K is a cover page; its substance (the earnings press release, the deal
+    announcement) is attached as Exhibit 99.x. Summarising the cover alone gave
+    "results announced, figures not disclosed" for every US results filing
+    (Alphabet, Microsoft, INNIO — 29-Oct-2026)."""
+    r = _sec_get(index_url(cik, acc))
+    if r.status_code != 200:
+        print(f"  [usfilings] {acc} index: HTTP {r.status_code} ({len(r.content)} bytes)")
+        return []
+    out = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", r.text, flags=re.S | re.I):
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.S | re.I)
+        if len(cells) < 4:
+            continue
+        typ = _clean_html(cells[3]).upper()
+        m = re.search(r'href="[^"]*/([^/"]+)"', cells[2])
+        if m and typ.startswith("EX-99") and m.group(1).lower().endswith((".htm", ".html", ".txt")):
+            out.append((typ, m.group(1)))
+    return sorted(out)
+
+
+# A model with nothing to summarise says so — and that sentence used to go to
+# Telegram as the "summary". Anything matching these is dropped (headline only).
+_NO_GIST = ("i cannot", "i can't", "i'm unable", "i am unable", "would need the",
+            "not included in the text", "no actual financial")
+
+
+def gist(company: str, form: str, items_label: str, text: str, results: bool = False) -> str:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key or not text:
         return ""
@@ -260,23 +299,44 @@ def gist(company: str, form: str, items_label: str, text: str) -> str:
         from alerts import SUMMARY_MODEL as model
     except Exception:
         model = "claude-haiku-4-5-20251001"
-    prompt = (f"This is the text of an SEC {form} filed by {company} ({items_label}). "
-              "Write 2-3 short bullet points (max 45 words total) with the concrete facts an "
-              "investor needs: what happened, amounts/percentages, dates, names. Then one line "
-              "'Why it matters:' (max 20 words). Plain text, no markdown, no preamble.\n\n" + text)
+    if results:
+        # Numbers are QUOTED, never computed — same rule as the Indian results
+        # template (House Rule #2): a US release prints its own YoY %s.
+        prompt = (f"This is an SEC 8-K results filing by {company} including its earnings press "
+                  "release. Report the quarter using ONLY numbers and percentages printed in the "
+                  "text; never calculate, convert or estimate. One line each, skip any line the "
+                  "text does not print:\nPeriod:\nRevenue: $X (±Y% YoY)\nOperating income:\n"
+                  "Net income:\nEPS (diluted): GAAP, and adjusted if given\n"
+                  "Key driver: one line (segment or product that moved most)\n"
+                  "Guidance: one line, or 'none given'\n"
+                  "Then 'Take:' one line (max 20 words) on what stands out. Plain text, no "
+                  "markdown, no preamble. If the text contains no results figures, reply exactly NONE."
+                  "\n\n" + text)
+        max_tokens = 450
+    else:
+        prompt = (f"This is the text of an SEC {form} filed by {company} ({items_label}). "
+                  "Write 2-3 short bullet points (max 45 words total) with the concrete facts an "
+                  "investor needs: what happened, amounts/percentages, dates, names. Then one line "
+                  "'Why it matters:' (max 20 words). Plain text, no markdown, no preamble. If the "
+                  "text contains no concrete facts, reply exactly NONE.\n\n" + text)
+        max_tokens = 300
     try:
         r = requests.post("https://api.anthropic.com/v1/messages",
                           headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                                    "content-type": "application/json"},
-                          json={"model": model, "max_tokens": 300, "temperature": 0,
-                                "messages": [{"role": "user", "content": prompt}]}, timeout=60)
+                          json={"model": model, "max_tokens": max_tokens, "temperature": 0,
+                                "messages": [{"role": "user", "content": prompt}]}, timeout=90)
         if r.status_code != 200:
             print(f"  [usfilings] gist HTTP {r.status_code}: {r.text[:120]}")
             return ""
-        return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
+        g = "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
     except Exception as e:
         print(f"  [usfilings] gist failed: {type(e).__name__}: {e}")
         return ""
+    if g.upper().startswith("NONE") or any(p in g.lower() for p in _NO_GIST):
+        print(f"  [usfilings] gist dropped for {company} (nothing usable): {g[:80]!r}")
+        return ""
+    return re.sub(r"\n\s*\n+", "\n", g)
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +395,19 @@ def run(client, send: bool = True) -> int:
                 star = "⭐ " if any("⭐" in l for l in labels) else ""
                 flag = "🚨 " if any("🚨" in l for l in labels) else ""
                 head = f"{tag}{flag or star}<b>{html.escape(title)}</b> — 8-K: {html.escape(', '.join(labels))}"
-                g = ""
+                g, ex_link = "", ""
                 if gists < MAX_GISTS_PER_RUN:
-                    g = gist(title, form, ", ".join(labels), _doc_text(cik, f["acc"], f["doc"]))
+                    text = _doc_text(cik, f["acc"], f["doc"], limit=COVER_CHARS)
+                    ex = exhibits(cik, f["acc"])
+                    if ex:
+                        ex_txt = _doc_text(cik, f["acc"], ex[0][1], limit=MAX_EXHIBIT_CHARS)
+                        if ex_txt:
+                            text += f"\n\n--- {ex[0][0]} ---\n" + ex_txt
+                            ex_link = f" · <a href=\"{doc_url(cik, f['acc'], ex[0][1])}\">press release</a>"
+                    g = gist(title, form, ", ".join(labels), text, results="2.02" in items)
                     gists += 1 if g else 0
-                body = head + (f"\n{html.escape(g)}" if g else "") + f"\n<a href=\"{link}\">filing</a> · {f['date']}"
+                body = (head + (f"\n{html.escape(g)}" if g else "")
+                        + f"\n<a href=\"{link}\">filing</a>{ex_link} · {f['date']}")
             else:
                 star = "⭐ " if form in STAR_FORMS else ""
                 desc = f" — {html.escape(f['desc'])}" if f["desc"] and f["desc"].upper() != form else ""

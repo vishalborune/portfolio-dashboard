@@ -625,7 +625,13 @@ holding, shares after; award/exercise/withholding codes (A M F G ...) are routin
 **8-K** item codes decoded (`ITEM_LABELS`: 2.02 results ⭐, 4.01 auditor change 🚨,
 4.02 restatement 🚨, 5.02 officer change ...) + a Haiku gist of the document text
 (temperature 0, `MAX_GISTS_PER_RUN`=6, `MAX_DOC_CHARS`=14k). 10-Q/10-K/13D/G/S-3 = ⭐
-headline + link. Dedup = `filings_seen` fingerprint `us|<accession>` (same table as
+headline + link.
+**8-K gists read the EX-99.1 EXHIBIT (fixed 29-Oct-2026, Vishal).** Before the fix, every US results alert said "results announced, figures not disclosed". The 8-K primary document is a cover page; the numbers live in the attached press release, which `usfilings.exhibits()` now finds from the filing index (`{acc}-index.htm`, type EX-99.x).
+- **Inputs:** cover (4k chars) + EX-99.1 (30k chars, about $0.01 a gist on Haiku).
+- **Item 2.02** gets a typed results template: Period / Revenue / Op income / Net income / EPS / Key driver / Guidance / Take. Numbers are QUOTED from the release, never computed (House Rule #2).
+- **iXBRL `<ix:header>` is stripped.** It had filled Microsoft's text budget with raw tags.
+- **Refusal guard:** a "NONE" or "I cannot…" reply is dropped instead of being sent as the summary.
+- **Verified** on MSFT (results + 8.01), GOOGL and INIO: every figure appears verbatim in the release. Dedup = `filings_seen` fingerprint `us|<accession>` (same table as
 India; marked seen only AFTER a successful send). Earnings brief = Finnhub calendar,
 next 7 days, once a day 18:30 IST (marker `__us_earnings__`). Worker: EDGAR poll every
 15 min, 7 days; GitHub cron `27 * * * *` hourly backstop; tick-box `us_filings_now`.
