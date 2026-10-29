@@ -923,7 +923,9 @@ recomputed from the lots still held — not the stale blended avg.
 
     (Shadowfax PBT = PAT is REAL: there was zero tax. The template now says so.)
 
-    Sonnet 5 and Opus 5 both read every figure right. Opus 5 was faster (17–23s) at ~$0.21 per results filing (Haiku ~$0.04), about $20 a results season.
+    Sonnet 5 and Opus 5 both read every figure right.
+    **Cost: only the statement pages go to Opus** (`_results_pdf_b64`, Vishal: "₹19 per news is high, sub-₹10"). The whole 13-page PDF was ~35k tokens, ~$0.21 = ₹19. Tier 1: pypdf's text layer finds the consolidated P&L page (+ the next page if it has no "per share", i.e. EPS spilled over). Tier 2, for scanned PDFs: Haiku names the pages (~₹3). Only if both fail does Opus read the whole PDF. Output is asked as one-line JSON.
+    Measured 29-Oct-2026, same figures as the full-PDF read: Shadowfax **₹4.7**, Menon **₹6.0** (2 pages), Aeroflex scanned **₹8.2** (Haiku locator ₹3.2 + Opus ₹5). `pypdf` is now in requirements.txt.
 
     **Checks that run on any model** (`_period_checks` + TTM yardstick). Each one REJECTS the typed template and falls back to the gist:
     (a) the model returns `months` per column from the HEADER, which decides quarter vs YTD;

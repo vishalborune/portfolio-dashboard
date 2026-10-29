@@ -1321,8 +1321,9 @@ SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 # HALF-YEAR column as the year-ago quarter (revenue "-15% YoY" when the truth was
 # +57%) and read Menon's lakh-grouped "98,33.06" as 98.33 (revenue shown 100x too
 # small, ₹1.0 Cr). Sonnet 5 and Opus 5 both read every figure right on the same
-# PDFs. Opus 5 was faster (17-23s) at ~$0.21 per results filing (~$0.04 on Haiku);
-# ~100 tracked names ≈ $20 a results season. Other filings stay on Haiku — their
+# PDFs. Opus 5 reading the whole PDF cost ~$0.21 (₹19) a filing — too much
+# (Vishal) — so it now reads ONLY the statement pages (_results_pdf_b64): measured
+# ₹4-6 a filing, ~₹8 for a scanned one. Other filings stay on Haiku — their
 # gist is qualitative and Python never computes from it.
 RESULTS_MODEL = "claude-opus-5"
 MAX_SUMMARIES_PER_RUN = 10   # cost guard: beyond this, the summary is retried next poll
@@ -1352,13 +1353,12 @@ _SUMMARY_RETRYABLE = False
 _SUMMARY_ATTEMPTS = {}   # fp_pdf -> follow-up tries in this process (worker: cap 3)
 
 
-def _download_pdf_b64(url: str):
-    """Filing PDF as base64, or None. Size-capped: giant documents (annual
+def _download_pdf(url: str):
+    """Filing PDF bytes, or None. Size-capped: giant documents (annual
     reports, investor decks) fall back to headline-only rather than burning
     tokens on 300 pages nobody asked to summarize."""
     global _SUMMARY_RETRYABLE
     try:
-        import base64
         r = requests.get(url, headers=HEADERS, timeout=60)
         if r.status_code != 200 or not r.content[:5].startswith(b"%PDF"):
             print(f"  [filings] PDF fetch HTTP {r.status_code}, {len(r.content)} bytes, "
@@ -1368,11 +1368,89 @@ def _download_pdf_b64(url: str):
         if len(r.content) > MAX_PDF_BYTES:
             print(f"  [filings] PDF too large ({len(r.content)//1024} KB) — headline-only")
             return None
-        return base64.standard_b64encode(r.content).decode()
+        return r.content
     except Exception as e:
         print(f"  [filings] PDF fetch failed: {type(e).__name__}: {e}")
         _SUMMARY_RETRYABLE = True
         return None
+
+
+# --- Send Opus only the statement pages (Vishal 29-Oct-2026: "₹19 per news is
+# high, sub-₹10 is ok"). A 13-page results filing is ~35k input tokens and the
+# figures sit on ONE page; cover letters, notes and audit reports are the rest.
+# Tier 1: the PDF's own text layer names the consolidated P&L page (free).
+# Tier 2 (scanned PDFs have no text): Haiku reads the whole file and names the
+# pages (~₹3). Only if both fail does Opus read the full PDF.
+_PL_MARK = re.compile(r"profit\s*/?\s*\(?loss\)?\s*before\s*(?:exceptional|tax)|"
+                      r"profit before tax|revenue from operation|total income", re.I)
+
+
+def _statement_pages_text(pdf_bytes: bytes) -> list:
+    """0-based pages of the P&L statement from the text layer, consolidated
+    preferred; [] when the text layer can't say (scanned / unreadable)."""
+    try:
+        import io
+        import pypdf
+        pages = pypdf.PdfReader(io.BytesIO(pdf_bytes)).pages
+        texts = [(p.extract_text() or "").lower() for p in pages]
+    except Exception as e:
+        print(f"  [filings] text layer unreadable ({type(e).__name__}: {e})")
+        return []
+    pl = [i for i, t in enumerate(texts) if len(_PL_MARK.findall(t)) >= 2]
+    cons = [i for i in pl if "consolidated" in texts[i]]
+    # No consolidated P&L page found: fine only if the filing has no consolidated
+    # results at all — otherwise it's probably a scanned page we can't see.
+    got = cons or (pl if pl and not any("consolidated" in t for t in texts) else [])
+    got = got[:2]
+    # A statement that runs over a page break leaves EPS on the next one (Menon
+    # 29-Oct-2026: page 7 ends at share capital, EPS is on page 8).
+    if got and "per share" not in texts[got[-1]] and got[-1] + 1 < len(texts):
+        got.append(got[-1] + 1)
+    return got
+
+
+def _statement_pages_haiku(api_key: str, pdf_b64: str, n_pages: int) -> list:
+    import json
+    raw = _anthropic_pdf_call(api_key, pdf_b64, max_tokens=60, prompt=(
+        "This is an Indian listed company's financial results filing. Which pages "
+        "(1-based) hold the statement of profit and loss table (Revenue from "
+        "operations, Total income, Profit before tax, EPS)? Give the CONSOLIDATED "
+        "statement's pages; only if there is no consolidated statement, the "
+        "standalone one. Reply with ONLY a JSON array of integers, e.g. [4]."))
+    try:
+        got = [int(x) - 1 for x in json.loads(re.search(r"\[[\d,\s]*\]", raw).group(0))]
+    except Exception:
+        print(f"  [filings] page locator gave no usable answer: {raw[:80]!r}")
+        return []
+    got = sorted({i for i in got if 0 <= i < n_pages})
+    return got[:3]
+
+
+def _results_pdf_b64(pdf_bytes: bytes, api_key: str) -> str:
+    """Base64 of just the statement pages (whole PDF if they can't be found)."""
+    import base64
+    import io
+    full = base64.standard_b64encode(pdf_bytes).decode()
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        n = len(reader.pages)
+    except Exception as e:
+        print(f"  [filings] can't split PDF ({type(e).__name__}: {e}) — sending it whole")
+        return full
+    pages, how = _statement_pages_text(pdf_bytes), "text layer"
+    if not pages:
+        pages, how = _statement_pages_haiku(api_key, full, n), "Haiku locator"
+    if not pages or len(pages) >= n:
+        print(f"  [filings] statement pages not found — sending all {n} pages")
+        return full
+    w = pypdf.PdfWriter()
+    for i in pages:
+        w.add_page(reader.pages[i])
+    buf = io.BytesIO()
+    w.write(buf)
+    print(f"  [filings] results: sending pages {[i + 1 for i in pages]} of {n} ({how})")
+    return base64.standard_b64encode(buf.getvalue()).decode()
 
 
 def _anthropic_pdf_call(api_key: str, pdf_b64: str, prompt: str, max_tokens: int,
@@ -1450,10 +1528,18 @@ def summarize_filing(company: str, headline: str, pdf_url: str, ticker: str = No
     if not api_key:
         print("  [filings] ANTHROPIC_API_KEY not set — filing goes out headline-only")
         return ""
-    pdf_b64 = _download_pdf_b64(pdf_url)
-    if not pdf_b64:
+    pdf = _download_pdf(pdf_url)
+    if not pdf:
         print(f"  [filings] PDF fetch failed (headline-only): {pdf_url[:90]}")
         return ""
+    import base64
+    try:
+        if _is_results_filing(headline):
+            pdf_b64 = _results_pdf_b64(pdf, api_key)
+        else:
+            pdf_b64 = base64.standard_b64encode(pdf).decode()
+    finally:
+        del pdf
     try:
         if _is_results_filing(headline):
             typed = _summarize_results(company, pdf_b64, api_key, ticker=ticker)
@@ -1542,7 +1628,8 @@ _RESULTS_JSON_PROMPT = (
     "SIGNED so pbt = (profit before exceptional & tax) + exceptional_items: "
     "POSITIVE for an exceptional GAIN/income, NEGATIVE for a charge/expense; "
     "0 if there is no exceptional-items line.\n"
-    "Return ONLY a JSON object — no prose, no markdown fences:\n"
+    "Return ONLY a JSON object on ONE line, no indentation or spaces between "
+    "tokens — no prose, no markdown fences:\n"
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
     '"columns":[{"period_end":"as printed","months":3,"is_quarter":true,'
     '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'

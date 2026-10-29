@@ -8,3 +8,4 @@ supabase>=2.0
 scipy>=1.11
 requests>=2.31
 anthropic>=0.69
+pypdf>=4.0
