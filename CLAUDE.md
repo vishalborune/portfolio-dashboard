@@ -923,6 +923,11 @@ recomputed from the lots still held — not the stale blended avg.
 
     (Shadowfax PBT = PAT is REAL: there was zero tax. The template now says so.)
 
+    **EBITDA NOW EXCLUDES OTHER INCOME (Lakshmi 29-Oct-2026):** EBITDA = PBT + finance + depreciation − exceptional − other income. On Indegene, other income halved (₹29 → ₹15 Cr), so the old formula read EBITDA −1.2% QoQ while the company reported +4.3%.
+    Now: ₹185.7 Cr, +32.1% YoY, vs the company's ₹187.3 Cr, +32.0%.
+    The prompt extracts `other_income` per column (0 when no such line); unknown other income BLANKS that period's EBITDA rather than leaving it in.
+    PBT/PAT/EPS stay exactly as reported. Shadowfax's 6.7% vs its own "Adj. EBITDA 5.0%" is the company's own adjustment, not ours.
+
     Sonnet 5 and Opus 5 both read every figure right.
     **Cost: only the statement pages go to Opus** (`_results_pdf_b64`, Vishal: "₹19 per news is high, sub-₹10"). The whole 13-page PDF was ~35k tokens, ~$0.21 = ₹19. Tier 1: pypdf's text layer finds the consolidated P&L page (+ the next page if it has no "per share", i.e. EPS spilled over). Tier 2, for scanned PDFs: Haiku names the pages (~₹3). Only if both fail does Opus read the whole PDF. Output is asked as one-line JSON.
     Measured 29-Oct-2026, same figures as the full-PDF read: Shadowfax **₹4.7**, Menon **₹6.0** (2 pages), Aeroflex scanned **₹8.2** (Haiku locator ₹3.2 + Opus ₹5). `pypdf` is now in requirements.txt.

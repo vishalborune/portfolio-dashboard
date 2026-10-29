@@ -1590,7 +1590,8 @@ def _summarize_generic(company: str, headline: str, pdf_b64: str, api_key: str,
 # Claude EXTRACTS the raw consolidated line items from the PDF (its strength);
 # Python does ALL the arithmetic — EBITDA sum, QoQ/YoY %, unit->Cr — so a model
 # arithmetic slip can't put a wrong number in front of a trading decision
-# (house rule #2). EBITDA is Lakshmi's definition: PBT + Finance costs + Depn.
+# (house rule #2). EBITDA is Lakshmi's definition: PBT + Finance costs + Depn,
+# minus exceptional items and other income (core operating profit, 29-Oct-2026).
 
 # Extract COLUMN-BY-COLUMN, not row-by-row (31-Jul-2026 fix): the old prompt
 # asked the model to map each metric to the current/prev/year-ago column, and on
@@ -1621,7 +1622,8 @@ _RESULTS_JSON_PROMPT = (
     "Numbers exactly as printed: remove EVERY comma, including Indian lakh grouping "
     "('70,81.63' is 7081.63, '1,05,234' is 105234 — never 70.81); parentheses mean "
     "NEGATIVE; null if absent. Keep the statement's own unit. total_income = the 'Total income' "
-    "line; total_expenses = the 'Total expenses' line; ebitda_reported = the "
+    "line; other_income = the 'Other income' line (0 if the statement has no such "
+    "line); total_expenses = the 'Total expenses' line; ebitda_reported = the "
     "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
     "(after exceptional items if any); pat='profit for the period' after tax. "
     "exceptional_items = the 'Exceptional items' line if the statement has one, "
@@ -1633,7 +1635,7 @@ _RESULTS_JSON_PROMPT = (
     '{"basis":"consolidated|standalone|null","unit":"Lakhs|Crores|Millions|...",'
     '"columns":[{"period_end":"as printed","months":3,"is_quarter":true,'
     '"revenue_from_operations":n,"total_income":n,"total_expenses":n,'
-    '"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
+    '"other_income":n,"finance_costs":n,"depreciation":n,"ebitda_reported":n,'
     '"pbt":n,"exceptional_items":n,"pat":n,"basic_eps":n}]}\n'
     "If this is NOT a quarterly results statement, return {\"basis\":null}."
 )
@@ -1902,6 +1904,7 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
             "depreciation": trio("depreciation"),
             "pbt": trio("pbt"), "pat": trio("pat"), "basic_eps": trio("basic_eps"),
             "exceptional_items": trio("exceptional_items"),
+            "other_income": trio("other_income"),
             "ebitda_reported": trio("ebitda_reported"),
         }
         return _format_results(company, data)
@@ -1958,10 +1961,16 @@ def _format_results(company: str, data: dict) -> str:
     # margin and a "-58% / margin pressure" read; real operating EBITDA was UP ~8%,
     # margin 32.8→35.3%.) exceptional defaults to 0 so the no-one-off case (the vast
     # majority) is exactly PBT+finance+depn as before.
+    # OTHER INCOME is stripped too (Lakshmi 29-Oct-2026). Indegene's other income
+    # halved (₹29→15 Cr), so EBITDA-with-it read −1.2% QoQ while the company's own
+    # EBITDA was +4.3% — the core business grew and the alert said it shrank.
+    # Unknown other income blanks that period's EBITDA rather than leave it in.
+    oth = trio("other_income")
+
     def _ebit(i):
-        if pbt[i] is None or fin[i] is None or dep[i] is None:
+        if pbt[i] is None or fin[i] is None or dep[i] is None or oth[i] is None:
             return None
-        return pbt[i] + fin[i] + dep[i] - (exc[i] or 0.0)
+        return pbt[i] + fin[i] + dep[i] - (exc[i] or 0.0) - oth[i]
     ebitda = tuple(_ebit(i) for i in range(3))
 
     # Guard: if we couldn't even read the current revenue AND PBT, it's not a
@@ -2084,7 +2093,8 @@ def _format_results(company: str, data: dict) -> str:
                 + " — EBITDA/margin above are operating (ex-exceptional); reported "
                 "PBT/PAT/EPS YoY/QoQ are distorted by it.")
 
-    footer = "<i>EBITDA = operating profit (ex-exceptional) + finance costs + depreciation</i>"
+    footer = ("<i>EBITDA = core operating profit: PBT + finance costs + depreciation, "
+              "excluding other income and exceptional items</i>")
     parts = [header] + rows
     if warn:
         parts.append(html.escape(warn))
