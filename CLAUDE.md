@@ -941,13 +941,12 @@ recomputed from the lots still held — not the stale blended avg.
 
     Replayed Haiku's two bad extractions: both rejected.
 
-    **RE-ANCHOR BUG FIXED (Strides 29-Oct-2026, present since 31-Jul):** PBT/PAT/EPS came out with QoQ and YoY SWAPPED in both the old and new pipelines.
-    - **Cause:** the re-anchor compared raw PBT with TotalIncome − TotalExpenses, which is PRE-exceptional. June's ₹63 Cr one-off gain made its PBT the nearest match for Sep-2025.
-    - **Fix:** each candidate is compared after taking off ITS OWN exceptional. EVERY shown column (not just the current one) must reconcile within 10%, or it falls back to the gist. Re-assignments are logged.
-    - **Prompt:** with two "profit before tax" lines, use the LAST one (after the JV/associate share).
-    - **Page trimmer:** prefers pages printing the revenue line (whitespace-insensitive, since OCR printed "ope rations"); it skips notes pages that only mention PBT, and adds the next page for EPS per statement page.
-
-    Verified on Strides, Shadowfax, Menon and Indegene: every figure matches each company's own release.
+    **RE-ANCHOR REMOVED: VERIFY, NEVER MOVE (Strides 29-Oct-2026).** Lakshmi's 18:46 Strides alert printed PBT/PAT/EPS with QoQ and YoY SWAPPED. The model had read EVERY column correctly (replayed: even Haiku). Our own July "re-anchor" step MOVED the profit rows between columns: it compared raw PBT with TotalIncome − TotalExpenses (pre-exceptional), and June's ₹63 Cr one-off gain made June look like Sep-2025.
+    The step is gone. Python never moves a number the model read. Each shown quarter's PBT (net of its own exceptional) must match its own income − expenses within 10%; otherwise the typed template is BLOCKED and the gist is sent. A deliberately swapped Strides is now blocked.
+    **Lesson: a "correction" step that rearranges model output is itself a source of wrong numbers. Checks may reject, never rewrite.**
+    **Prompt:** with two "profit before tax" lines, use the LAST one (after the JV/associate share).
+    **Page trimmer:** prefers pages printing the revenue line (whitespace-insensitive, since OCR printed "ope rations"); it skips notes pages that only mention PBT, and adds the next page for EPS per statement page.
+    Verified on Strides, Shadowfax, Menon, Indegene (every figure matches each company's own release) and Aeroflex (scanned).
     **Retry:** a PDF whose summary failed for a RETRYABLE reason sends the headline with "Summary pending" and records `pdfowed`. Later polls retry it (max 3 per process) and send a 🔁 follow-up (`pdfsummary`). Retryable means: download failed, API error or timeout, or the per-run cap was hit. A model answer that failed the checks is NOT retried, since paying again buys the same answer.
     **Duplicate fix:** the lenient RSS parser now XML-unescapes exactly like the strict one. Before, `&amp;#8377;` vs `&#8377;` made two fingerprints, so Shadowfax's press release alerted twice. Verified: all 1,880 feed items are now identical under both parsers.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were

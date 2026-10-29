@@ -1838,28 +1838,15 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
             print(f"  [filings] results check failed for {company}: {why} — falling back to gist")
             return ""
 
-        # RE-ANCHOR PBT/PAT/EPS to the right column (31-Jul-2026). The model
-        # reliably transcribes the TOP rows (revenue/finance/depreciation/EBITDA)
-        # per column, but on wide statements it SWAPS the bottom rows (PBT/PAT/EPS)
-        # between columns (Clean Max: current revenue paired with the PRECEDING
-        # quarter's PBT/PAT). Those rows satisfy PBT ≈ reported-EBITDA − finance −
-        # depreciation, so reassign each selected column the (pbt,pat,eps) whose
-        # pbt matches its own identity — deterministically undoing any swap.
-        # Idempotent if already correct; skipped when EBITDA isn't reported.
-        # VERIFY + RE-ANCHOR the profit rows against each column's OWN arithmetic
-        # (31-Jul-2026). The model reliably transcribes the top lines (revenue,
-        # total income/expenses, finance, depreciation) but can misassign the
-        # bottom rows (PBT/PAT/EPS) between columns on wide statements (Clean Max).
-        # Every Ind-AS P&L satisfies PBT = TotalIncome − TotalExpenses (Schedule
-        # III, expenses all-inclusive) OR − finance − depreciation (when those are
-        # shown as separate lines, e.g. Clean Max). So per column compute the
-        # target both ways, match each column its best-fitting (pbt,pat,eps), and
-        # keep the identity with the smallest residual — deterministically undoing
-        # any swap. If even the best fit leaves the CURRENT column badly off (no
-        # reconciliation), fall back to the gist rather than emit a wrong number
-        # (rule #2). If Total income/expenses weren't extracted, trust the model.
-        selected = [c for c in (cur, prev_q, year_ago) if c]
-
+        # VERIFY, NEVER MOVE (29-Oct-2026). Each shown quarter's own PBT must agree with
+        # its own income − expenses (one-offs accounted for); a quarter that doesn't
+        # blocks the typed template. Numbers are never shifted between columns. The
+        # July "re-anchor" did shift them, to undo an older model's column mix-ups, and
+        # on Strides it moved CORRECT readings into the wrong quarters (PBT/PAT/EPS QoQ
+        # and YoY swapped) because June's one-off gain made June look like Sep-2025.
+        # The model's per-column reading was right; our rearranging was not.
+        # PBT = TotalIncome − TotalExpenses (+ exceptional), or − finance − depreciation
+        # too when the statement shows those outside total expenses (Clean Max).
         def _target(c, sub_findep):
             ti, te = _n(c, "total_income"), _n(c, "total_expenses")
             if ti is None or te is None:
@@ -1872,45 +1859,21 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
                 t -= (f + d)
             return t
 
-        pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps"), _n(c, "exceptional_items"))
-                for c in selected]
+        def _resid(c):
+            pbt = _n(c, "pbt")
+            if pbt is None:
+                return None
+            pre = pbt - (_n(c, "exceptional_items") or 0.0)
+            rs = [abs(pre - t) / max(abs(t), 0.02 * abs(_n(c, "total_income") or 0), 1.0)
+                  for t in (_target(c, False), _target(c, True)) if t is not None]
+            return min(rs) if rs else None
 
-        # TotalIncome − TotalExpenses is profit BEFORE exceptional items, so compare it
-        # with each candidate's PBT minus ITS OWN exceptional (which travels with it).
-        # Comparing raw PBT swapped Strides' June and year-ago columns on 29-Oct-2026:
-        # June's ₹63 Cr one-off gain made its PBT the closest match for Sep-2025, and
-        # the alert printed PBT/PAT/EPS with QoQ and YoY reversed.
-        def _pre(p):
-            return p[0] - (p[3] or 0.0)
-
-        def _denom(c, t):           # tiny-profit quarters: don't let rounding blow up
-            return max(abs(t), 0.02 * abs(_n(c, "total_income") or 0), 1.0)
-        best_assign, best_resid = None, None
-        if all(p[0] is not None for p in pool):
-            for sub in (False, True):
-                tgts = [_target(c, sub) for c in selected]
-                if any(t is None for t in tgts):
-                    continue
-                used, assign, resid = [False] * len(pool), [None] * len(selected), 0.0
-                for i, t in enumerate(tgts):
-                    j = min((k for k in range(len(pool)) if not used[k]),
-                            key=lambda k: abs(_pre(pool[k]) - t))
-                    used[j] = True
-                    assign[i] = pool[j]
-                    resid = max(resid, abs(_pre(pool[j]) - t) / _denom(selected[i], t))
-                if best_resid is None or resid < best_resid:
-                    best_resid, best_assign = resid, assign
-        if best_assign is not None:
-            # EVERY shown column must reconcile, not just the current one — a
-            # comparison column's PBT feeds every QoQ/YoY on the profit lines.
-            if best_resid > 0.10:
-                print(f"  [filings] results won't reconcile for {company} "
-                      f"(worst column off by {best_resid:.0%}) — falling back to gist")
+        for c, label in ((cur, "current"), (prev_q, "preceding"), (year_ago, "year-ago")):
+            r = _resid(c) if c else None
+            if r is not None and r > 0.10:
+                print(f"  [filings] results won't reconcile for {company}: {label} quarter's "
+                      f"PBT is {r:.0%} off its own income − expenses — falling back to gist")
                 return ""
-            if any(a is not p for a, p in zip(best_assign, pool)):
-                print(f"  [filings] {company}: profit rows re-assigned between columns")
-            for c, tup in zip(selected, best_assign):
-                c["pbt"], c["pat"], c["basic_eps"], c["exceptional_items"] = tup
 
         def trio(metric):
             g = lambda c: (float(c[metric]) if isinstance(c.get(metric), (int, float)) else None)
