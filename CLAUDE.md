@@ -940,6 +940,14 @@ recomputed from the lots still held — not the stale blended avg.
     (e) quarter revenue must be 0.2–5× our own `fundamentals_daily.revenue_ttm_cr`/4.
 
     Replayed Haiku's two bad extractions: both rejected.
+
+    **RE-ANCHOR BUG FIXED (Strides 29-Oct-2026, present since 31-Jul):** PBT/PAT/EPS came out with QoQ and YoY SWAPPED in both the old and new pipelines.
+    - **Cause:** the re-anchor compared raw PBT with TotalIncome − TotalExpenses, which is PRE-exceptional. June's ₹63 Cr one-off gain made its PBT the nearest match for Sep-2025.
+    - **Fix:** each candidate is compared after taking off ITS OWN exceptional. EVERY shown column (not just the current one) must reconcile within 10%, or it falls back to the gist. Re-assignments are logged.
+    - **Prompt:** with two "profit before tax" lines, use the LAST one (after the JV/associate share).
+    - **Page trimmer:** prefers pages printing the revenue line (whitespace-insensitive, since OCR printed "ope rations"); it skips notes pages that only mention PBT, and adds the next page for EPS per statement page.
+
+    Verified on Strides, Shadowfax, Menon and Indegene: every figure matches each company's own release.
     **Retry:** a PDF whose summary failed for a RETRYABLE reason sends the headline with "Summary pending" and records `pdfowed`. Later polls retry it (max 3 per process) and send a 🔁 follow-up (`pdfsummary`). Retryable means: download failed, API error or timeout, or the per-run cap was hit. A model answer that failed the checks is NOT retried, since paying again buys the same answer.
     **Duplicate fix:** the lenient RSS parser now XML-unescapes exactly like the strict one. Before, `&amp;#8377;` vs `&#8377;` made two fingerprints, so Shadowfax's press release alerted twice. Verified: all 1,880 feed items are now identical under both parsers.
 - **Filing-match bug FIXED (21-Jul-2026):** NSE filings for many holdings were

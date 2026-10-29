@@ -1401,12 +1401,20 @@ def _statement_pages_text(pdf_bytes: bytes) -> list:
     # No consolidated P&L page found: fine only if the filing has no consolidated
     # results at all — otherwise it's probably a scanned page we can't see.
     got = cons or (pl if pl and not any("consolidated" in t for t in texts) else [])
-    got = got[:2]
+    # Notes pages also mention "profit before tax" and "total income" (Strides'
+    # standalone-summary note, page 14). Prefer pages that print the revenue line;
+    # OCR can garble it (Menon), so keep all candidates when none does.
+    with_rev = [i for i in got if "revenuefromoperation" in re.sub(r"\s", "", texts[i])]
+    got = (with_rev or got)[:2]
     # A statement that runs over a page break leaves EPS on the next one (Menon
-    # 29-Oct-2026: page 7 ends at share capital, EPS is on page 8).
-    if got and "per share" not in texts[got[-1]] and got[-1] + 1 < len(texts):
-        got.append(got[-1] + 1)
-    return got
+    # 29-Oct-2026 page 7 → 8; Strides page 6 → 7).
+    out = []
+    for i in got:
+        out.append(i)
+        if (not re.search(r"earnings per|per (?:equity )?share", texts[i])
+                and i + 1 < len(texts) and i + 1 not in got):
+            out.append(i + 1)
+    return out[:4]
 
 
 def _statement_pages_haiku(api_key: str, pdf_b64: str, n_pages: int) -> list:
@@ -1625,7 +1633,9 @@ _RESULTS_JSON_PROMPT = (
     "line; other_income = the 'Other income' line (0 if the statement has no such "
     "line); total_expenses = the 'Total expenses' line; ebitda_reported = the "
     "column's own 'EBITDA' line if printed, else null. pbt='profit before tax' "
-    "(after exceptional items if any); pat='profit for the period' after tax. "
+    "(after exceptional items if any); if more than one 'profit before tax' line is "
+    "printed, use the LAST one, the line that tax is deducted from (after any share of "
+    "profit/loss of joint ventures or associates); pat='profit for the period' after tax. "
     "exceptional_items = the 'Exceptional items' line if the statement has one, "
     "SIGNED so pbt = (profit before exceptional & tax) + exceptional_items: "
     "POSITIVE for an exceptional GAIN/income, NEGATIVE for a charge/expense; "
@@ -1864,6 +1874,17 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
 
         pool = [(_n(c, "pbt"), _n(c, "pat"), _n(c, "basic_eps"), _n(c, "exceptional_items"))
                 for c in selected]
+
+        # TotalIncome − TotalExpenses is profit BEFORE exceptional items, so compare it
+        # with each candidate's PBT minus ITS OWN exceptional (which travels with it).
+        # Comparing raw PBT swapped Strides' June and year-ago columns on 29-Oct-2026:
+        # June's ₹63 Cr one-off gain made its PBT the closest match for Sep-2025, and
+        # the alert printed PBT/PAT/EPS with QoQ and YoY reversed.
+        def _pre(p):
+            return p[0] - (p[3] or 0.0)
+
+        def _denom(c, t):           # tiny-profit quarters: don't let rounding blow up
+            return max(abs(t), 0.02 * abs(_n(c, "total_income") or 0), 1.0)
         best_assign, best_resid = None, None
         if all(p[0] is not None for p in pool):
             for sub in (False, True):
@@ -1873,22 +1894,21 @@ def _summarize_results(company: str, pdf_b64: str, api_key: str, ticker: str = N
                 used, assign, resid = [False] * len(pool), [None] * len(selected), 0.0
                 for i, t in enumerate(tgts):
                     j = min((k for k in range(len(pool)) if not used[k]),
-                            key=lambda k: abs(pool[k][0] - t))
+                            key=lambda k: abs(_pre(pool[k]) - t))
                     used[j] = True
                     assign[i] = pool[j]
-                    resid = max(resid, abs(pool[j][0] - t) / max(abs(t), 1.0))
+                    resid = max(resid, abs(_pre(pool[j]) - t) / _denom(selected[i], t))
                 if best_resid is None or resid < best_resid:
                     best_resid, best_assign = resid, assign
         if best_assign is not None:
-            # current column is index 0 in `selected`; require IT to reconcile.
-            cur_t = min((abs(best_assign[0][0] - _target(selected[0], s))
-                         for s in (False, True) if _target(selected[0], s) is not None),
-                        default=None)
-            cur_denom = max(abs(_n(selected[0], "total_income") or 0), abs(best_assign[0][0]), 1.0)
-            if cur_t is not None and cur_t / cur_denom > 0.15:
+            # EVERY shown column must reconcile, not just the current one — a
+            # comparison column's PBT feeds every QoQ/YoY on the profit lines.
+            if best_resid > 0.10:
                 print(f"  [filings] results won't reconcile for {company} "
-                      f"(resid {cur_t/cur_denom:.0%}) — falling back to gist")
+                      f"(worst column off by {best_resid:.0%}) — falling back to gist")
                 return ""
+            if any(a is not p for a, p in zip(best_assign, pool)):
+                print(f"  [filings] {company}: profit rows re-assigned between columns")
             for c, tup in zip(selected, best_assign):
                 c["pbt"], c["pat"], c["basic_eps"], c["exceptional_items"] = tup
 
