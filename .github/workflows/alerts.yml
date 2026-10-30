@@ -449,6 +449,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
+      # Monthly returns heatmap (31-Oct-2026). The worker runs it right after its
+      # own price store; this is the backstop. Idempotent upsert, so both can run.
+      - run: python fy_tracker.py monthly store
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
   delivery-backfill:
     # ONE-TIME job: ~6 weeks of delivery history so the 4-week rolling

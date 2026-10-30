@@ -46,7 +46,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `dryrun.py` | Test-run any alert mode against live data, PRINTING what would be sent — no Telegram, no DB writes (`python dryrun.py deals\|eod-entries\|filings-nse\|states\|fast-poll\|digest`) |
 | `screener_data.py` | Deterministic screener.in parser — quarterly table, annual P&L, ROCE/ROE, promoter/pledge trend. **Python computes every QoQ/YoY %.** `python screener_data.py HFCL` |
 | `thesis.py` | Stage-2 thesis scorecard (7 pillars /14 + verdict). Opus 5 + web search researches only DU/SM/GV; RQ/MG/VA come from screener_data, TE is scored in Python. `python thesis.py "<name>" [--reason ..] [--send]` |
-| `fy_tracker.py` | FY return-target tracker (50% for each book, Lakshmi 04-Oct-2026): Modified Dietz FY-to-date return vs a compounding pace line. ONE module feeds the dashboard card (`app.render_fy_target`) and the digest block, so they can't disagree. `python fy_tracker.py` prints all four books. |
+| `fy_tracker.py` | FY return-target tracker (50% for each book, Lakshmi 04-Oct-2026): Modified Dietz FY-to-date return vs a compounding pace line. ONE module feeds the dashboard card (`app.render_fy_target`) and the digest block, so they can't disagree. `python fy_tracker.py` prints all four books. Also the **monthly returns heatmap** (`monthly_returns`, `python fy_tracker.py monthly [store]`). |
 | `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours (weekdays) + NSE filings every 3 min + BSE filings every 2h **7 DAYS** (companies file board-meeting outcomes/results on Saturdays; the RSS feed is a ~1-day snapshot so a weekend filing ages off before Monday — `_within(..., weekends=True)` for filings, weekday-only for live/market checks; 01-Aug-2026, Vishal caught it). Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | ~~`*_schema.sql`~~ | (Historical — schema was applied to Supabase directly; no `.sql` files are committed in the repo.) |
@@ -1367,6 +1367,26 @@ Weekly trail for pf1: 11-Sep ₹7.73L · 18-Sep ₹7.72L · 25-Sep ₹8.53L · 0
 80 by 31 March, sold at 110 → realised profit 10 (dashboard, tax), growth this year 30
 (tracker); the first 20 only cancelled the dip." And the ₹51L "bought" / ₹42L "sold" are
 TURNOVER (the same rupees recycled ~4-5×), not capital — fresh money added = ₹9.2L.
+
+## Monthly returns heatmap (Scorecard tab, Vishal 31-Oct-2026)
+Broker-style grid: one cell per month (book %, index % in small grey beneath, hover for the lead/lag), with a compounded **Year** column and the index's year. `fy_tracker.monthly_returns` → table `monthly_returns` → `app.render_monthly_returns`.
+- **Maths:** each month is its own Modified Dietz return, the same as `compute()` on a one-month window: (end value − start value − money put in) ÷ (start value + each flow weighted by its days in the month). Values are rebuilt BACKWARDS from today's holdings and priced at each month-end's raw close.
+- **Year = the months compounded (TIME-weighted)**, like a broker heatmap. **The FY card is MONEY-weighted**, so they legitimately differ: Vishal's Apr–Oct compounds to ~+48% vs the FY card's +36.9%, because April's +32.5% came before most of the new money. The caption says so; don't "fix" one to match the other.
+- **Where each book starts** (where the trade log is complete):
+  - Vishal: day before his first trade, **10-Sep-2024**. His log was checked: 83/84 sales match the trade log, and the 84th (BMW 542669) was a Sunday date typo, fixed 28-Jun → 24-Jun.
+  - Lakshmi and Abinaya: `START_OVERRIDE` (10-Jul).
+  - US: from the first buy.
+- **Benchmark:** the exact SC250 where stored (2026); before that the Smallcap 250 ETF (HDFCSML250), labelled per month. US: QQQ.
+- **Fail-safe:** a month with an unpriceable stock or a negative share count is stored with NO return plus the reason, shown as "—" with the reason on hover. `BSE_BEFORE_NSE` maps names that traded only on BSE before their NSE listing (SG Finserve, NSE from 05-Aug-2025 → BSE 539199). Without it Apr–Jul 2025 valued the holding at zero (Apr read −6.2% instead of +4.9%).
+- **Speed:** the dashboard only reads the table (1h cache), never prices on load. The WORKER recomputes all months nightly right after its bhavcopy store (subprocess, 20-min timeout, `monthly_ret_day` guard); GitHub's 20:00 bhavcopy job is the backstop. CLI: `python fy_tracker.py monthly` (print) / `monthly store` (~40 s for all four books with cached files).
+- **Needs a one-time table:**
+  ```sql
+  create table if not exists monthly_returns (
+    portfolio_id int not null, month date not null, ret numeric,
+    index_ret numeric, index_label text, status text, note text,
+    mtd boolean default false, computed_at timestamptz default now(),
+    primary key (portfolio_id, month));
+  ```
 
 ## Promoter pledge early warning + "Who's buying?" panel (Vishal 12-Oct-2026)
 From his course's n8n "hacks" sheet. Evaluated all five; built the two that fit.

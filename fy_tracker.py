@@ -145,6 +145,14 @@ def _scrip_code(ticker: str):
         return None
 
 
+# Stocks that traded on BSE only before they listed on NSE. NSE's file has no close
+# for them before the listing date, so the BSE code prices those days. Verified
+# against the real files (House Rule #5): SG Finserve listed on NSE 05-Aug-2025
+# (EQUITY_L); before that BSE 539199 'SGFIN' (₹396.25 on 30-Apr-2025). Without it
+# Vishal's Apr–Jul 2025 monthly returns valued the holding at nothing.
+BSE_BEFORE_NSE = {"SGFIN.NS": "539199.BO"}
+
+
 def close_on(client, ticker: str, d: date):
     """RAW close on d, or the latest trading day within 7 days before it.
     Our own table first; the exchange file for names we never stored."""
@@ -164,7 +172,10 @@ def close_on(client, ticker: str, d: date):
                 continue
             closes = _file_closes(dd)
             if closes:
-                return closes.get(key)
+                px = closes.get(key)
+                if px is None and ticker in BSE_BEFORE_NSE:
+                    px = closes.get(BSE_BEFORE_NSE[ticker])
+                return px
     return None
 
 
@@ -355,6 +366,140 @@ def verdict(r: dict) -> tuple[str, str]:
     return "#dc2626", f"behind the {r['target_pct']:.0f}% pace by {-r['ahead_pts']:.1f} pts"
 
 
+# ---------------------------------------------------------------------------
+# Monthly returns heatmap (Vishal 31-Oct-2026)
+# ---------------------------------------------------------------------------
+# Each month is its own Modified Dietz return — the same maths as compute(), on a
+# one-month window: profit in the month (end value − start value − money put in)
+# ÷ money actually at work (start value + each buy/sell weighted by the days it
+# was in the month). Months chain into a TIME-weighted year, which is what broker
+# heatmaps show; the FY card is MONEY-weighted, so the two legitimately differ when
+# money is added after a strong month. Computed nightly by the worker and stored in
+# `monthly_returns`; the dashboard only reads that table (no per-load pricing).
+#
+# Starts where the trade log is complete: Lakshmi/Abinaya at START_OVERRIDE
+# (10 Jul), everyone else at the day before their first logged trade (Vishal's log
+# is complete from 10-Sep-2024: 83/84 sales matched it, the 84th a date typo).
+# Any month with a stock that can't be priced, or a share count that goes
+# negative, is stored with no return and the reason — never a guessed number.
+INDEX_FALLBACK_IN = ("HDFCSML250.NS", "Smallcap 250 ETF")   # index history starts 2026
+
+
+def _month_ends(start: date, today: date) -> list:
+    import calendar
+    out, y, m = [], start.year, start.month
+    while True:
+        e = date(y, m, calendar.monthrange(y, m)[1])
+        out.append(min(e, today))
+        if e >= today:
+            return out
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+
+def monthly_returns(client, pf: int, today: date | None = None) -> list[dict]:
+    today = today or date.today()
+    us = pf in US_PORTFOLIOS
+    tx = _all(client, "transactions", "stock_name,transaction_type,quantity,price,amount,transaction_date", pf)
+    if not tx:
+        return []
+    trades = []
+    for t in tx:
+        q = float(t["quantity"] or 0)
+        amt = float(t["amount"]) if t.get("amount") not in (None, "") else q * float(t["price"] or 0)
+        sign = 1 if t["transaction_type"] == "buy" else -1
+        trades.append((date.fromisoformat(str(t["transaction_date"])[:10]),
+                       ticker_of(t["stock_name"]), sign * q, sign * amt))
+    first = min(d for d, *_ in trades)
+    start = START_OVERRIDE.get(pf) or first - timedelta(days=1)
+    cur = {}
+    for h in _all(client, "holdings", "stock_name,quantity", pf):
+        tk = ticker_of(h["stock_name"])
+        cur[tk] = cur.get(tk, 0.0) + float(h["quantity"] or 0)
+
+    memo = {}
+
+    def px(tk, d, live):
+        k = (tk, d, live)
+        if k not in memo:
+            memo[k] = latest_close(client, tk) if live else close_on(client, tk, d)
+        return memo[k]
+
+    def value(d, live):
+        """Book value at d's close, rebuilt backwards from today's holdings."""
+        q = dict(cur)
+        for td, tk, dq, _ in trades:
+            if td > d:
+                q[tk] = q.get(tk, 0.0) - dq
+        tot, bad = 0.0, []
+        for tk, n in q.items():
+            if n < -0.001:
+                bad.append(f"{tk} would be {n:,.4g} shares — a trade is missing from the log")
+            elif n > 0.001:
+                p = px(tk, d, live)
+                if not p:
+                    bad.append(f"{tk}: no close for {d:%d %b %Y}")
+                else:
+                    tot += n * p
+        return tot, bad
+
+    def bench(d0, d1, live):
+        itk, ilabel = INDEX_TICKER["US" if us else "IN"]
+        for tk, label in ((itk, ilabel),) + (() if us else (INDEX_FALLBACK_IN,)):
+            a, b = px(tk, d0, False), px(tk, d1, live)
+            if a and b:
+                return (b / a - 1) * 100, label
+        return None, None
+
+    out, prev = [], start
+    v0, bad0 = value(start, False)
+    for e in _month_ends(start, today):
+        live = e >= today
+        v1, bad1 = value(e, live)
+        flows = [(d, a) for d, _, _, a in trades if prev < d <= e]
+        days = max((e - prev).days, 1)
+        net = sum(a for _, a in flows)
+        denom = v0 + sum(a * (e - d).days / days for d, a in flows)
+        problems = bad0 + bad1
+        ret = None
+        if not problems and denom > 0:
+            ret = (v1 - v0 - net) / denom * 100
+        elif not problems:
+            problems = ["nothing invested this month"]
+        iret, ilabel = bench(prev, e, live)
+        out.append({"portfolio_id": pf, "month": date(e.year, e.month, 1).isoformat(),
+                    "ret": round(ret, 4) if ret is not None else None,
+                    "index_ret": round(iret, 4) if iret is not None else None,
+                    "index_label": ilabel, "status": "OK" if ret is not None else "CHECK",
+                    # a first month that starts mid-month says so ("from 10 Jul")
+                    "note": "; ".join(problems[:3]) if problems else
+                            (f"from {start + timedelta(days=1):%d %b}"
+                             if prev == start and (start + timedelta(days=1)).day != 1 else None),
+                    "mtd": live})
+        prev, v0, bad0 = e, v1, bad1
+    return out
+
+
+def store_monthly(client, pfs=(1, 2, 3, 4)) -> None:
+    for pf in pfs:
+        try:
+            rows = monthly_returns(client, pf)
+        except Exception as e:
+            print(f"⚠️ [monthly] pf{pf} failed: {type(e).__name__}: {e}")
+            continue
+        if not rows:
+            continue
+        client.table("monthly_returns").upsert(rows, on_conflict="portfolio_id,month").execute()
+        keep = {r["month"] for r in rows}
+        old = (client.table("monthly_returns").select("month").eq("portfolio_id", pf).execute().data or [])
+        for r in old:
+            if str(r["month"])[:10] not in keep:
+                client.table("monthly_returns").delete().eq("portfolio_id", pf).eq("month", r["month"]).execute()
+        bad = [r for r in rows if r["status"] != "OK"]
+        print(f"[monthly] pf{pf}: {len(rows)} months stored ({rows[0]['month'][:7]} → {rows[-1]['month'][:7]})"
+              + (f" · {len(bad)} unpriceable: " + " | ".join(f"{r['month'][:7]} {r['note']}" for r in bad[:3])
+                 if bad else ""))
+
+
 if __name__ == "__main__":
     import sys
     import tomllib
@@ -365,6 +510,17 @@ if __name__ == "__main__":
         sec = tomllib.load(open(".streamlit/secrets.toml", "rb"))
         url, key = sec["SUPABASE_URL"], sec["SUPABASE_SERVICE_KEY"]
     c = create_client(url, key)
+    if sys.argv[1:2] == ["monthly"]:
+        # `python fy_tracker.py monthly` prints; `... monthly store` also saves.
+        if sys.argv[2:3] == ["store"]:
+            store_monthly(c)
+        else:
+            for pf in (1, 2, 3, 4):
+                for r in monthly_returns(c, pf):
+                    f = lambda x: f"{x:+6.1f}%" if x is not None else "    — "
+                    print(f"pf{pf} {r['month'][:7]}{' MTD' if r['mtd'] else '    '} book {f(r['ret'])}  "
+                          f"{(r['index_label'] or 'index'):<18} {f(r['index_ret'])}  {r['note'] or ''}")
+        sys.exit(0)
     res = {}
     for pf in (1, 2, 3, 4):
         r = compute(c, pf)

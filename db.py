@@ -476,6 +476,23 @@ def get_digest_history() -> pd.DataFrame:
     return _get_digest_history_cached(_active_pf())
 
 
+@st.cache_data(ttl=3600)
+def _get_monthly_returns_cached(pf: int):
+    """Monthly returns heatmap rows, written nightly by `fy_tracker.store_monthly`
+    (the worker). Not user-edited, so deliberately NOT in _USER_EDITED_CACHES.
+    None = the table doesn't exist yet (one-time migration not run)."""
+    try:
+        res = (_client().table("monthly_returns").select("*")
+               .eq("portfolio_id", pf).order("month", desc=True).execute())
+    except Exception:
+        return None
+    return pd.DataFrame(res.data or [])
+
+
+def get_monthly_returns():
+    return _get_monthly_returns_cached(_active_pf())
+
+
 # ===============================================================
 # DELIVERY % (Sprint 3 fast-follow — displayed, never gates signals)
 # ===============================================================

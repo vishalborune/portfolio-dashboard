@@ -1960,6 +1960,121 @@ def xirr_after_charges(tx: pd.DataFrame, current_value: float):
         return None
 
 
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _chain(vals):
+    """Compound monthly % returns into one (time-weighted); None if none usable."""
+    vals = [v for v in vals if v is not None and not pd.isna(v)]
+    if not vals:
+        return None
+    g = 1.0
+    for v in vals:
+        g *= 1 + v / 100
+    return (g - 1) * 100
+
+
+def render_monthly_returns():
+    """Monthly returns heatmap (Vishal 31-Oct-2026). Reads the table the worker
+    fills nightly (`fy_tracker.store_monthly`) — no pricing on page load."""
+    import html as _html
+    st.subheader("Monthly returns")
+    df = db.get_monthly_returns()
+    if df is None:
+        st.info("Monthly returns need a one-time table in Supabase (SQL editor):\n\n"
+                "```sql\ncreate table if not exists monthly_returns (\n"
+                "  portfolio_id int not null, month date not null, ret numeric,\n"
+                "  index_ret numeric, index_label text, status text, note text,\n"
+                "  mtd boolean default false, computed_at timestamptz default now(),\n"
+                "  primary key (portfolio_id, month));\n```")
+        return
+    if df.empty:
+        st.info("Monthly returns are calculated each night after the closing prices "
+                "are stored — they'll appear here after tonight's run.")
+        return
+    df["month"] = pd.to_datetime(df["month"])
+    df["ret"] = pd.to_numeric(df["ret"], errors="coerce")
+    df["index_ret"] = pd.to_numeric(df["index_ret"], errors="coerce")
+    by = {(m.year, m.month): r for m, r in zip(df["month"], df.to_dict("records"))}
+
+    def _s(x):                 # pandas turns a missing note into NaN, which is truthy
+        return x if isinstance(x, str) and x.strip() else None
+
+    def pct(x):
+        return f"{0.0 if abs(x) < 0.05 else x:+.1f}"
+
+    def cell(r):
+        if r is None:
+            return '<td class="mr-e"></td>'
+        v, iv = r.get("ret"), r.get("index_ret")
+        lab = _s(r.get("index_label")) or "index"
+        note = _s(r.get("note"))
+        mtd = r.get("mtd") is True
+        mon = pd.Timestamp(r["month"]).strftime("%b %Y")
+        if v is None or pd.isna(v):
+            tip = f"{mon}: not calculated — {note or 'a price is missing'}"
+            return f'<td class="mr-x" title="{_html.escape(tip)}">—</td>'
+        a = min(abs(v), 20) / 20 * 0.55 + 0.12
+        bg = f"rgba(22,163,74,{a:.2f})" if v >= 0 else f"rgba(220,38,38,{a:.2f})"
+        tip = f"{mon}: {v:+.1f}%"
+        if iv is not None and not pd.isna(iv):
+            lead = v - iv
+            tip += f" · {lab} {iv:+.1f}% · {'ahead' if lead >= 0 else 'behind'} by {abs(lead):.1f} pts"
+        if mtd:
+            tip += " · month to date"
+        if note:
+            tip += f" · {note}"
+        sub = (f'<div class="mr-i">{pct(iv)}</div>' if iv is not None and not pd.isna(iv) else "")
+        star = "*" if mtd or note else ""
+        return (f'<td style="background:{bg}" title="{_html.escape(tip)}">'
+                f'<div class="mr-v">{pct(v)}%{star}</div>{sub}</td>')
+
+    years = sorted({y for y, _ in by}, reverse=True)
+    rows = []
+    for y in years:
+        recs = [by.get((y, m)) for m in range(1, 13)]
+        got = [r for r in recs if r is not None]
+        yr = _chain([r.get("ret") for r in got])
+        iyr = _chain([r.get("index_ret") for r in got if r.get("ret") is not None
+                      and not pd.isna(r.get("ret"))])
+        ycol = ("—" if yr is None else
+                f'<span style="color:{"#16a34a" if yr >= 0 else "#dc2626"}">{pct(yr)}%</span>')
+        icol = "—" if iyr is None else f"{pct(iyr)}%"
+        rows.append(f'<tr><th class="mr-y">{y}</th>{"".join(cell(r) for r in recs)}'
+                    f'<td class="mr-t">{ycol}</td><td class="mr-t mr-i2">{icol}</td></tr>')
+    head = "".join(f"<th>{m}</th>" for m in _MONTHS)
+    st.markdown(f"""
+<style>
+.mr-wrap {{overflow-x:auto}}
+.mr {{border-collapse:separate; border-spacing:3px; width:100%; min-width:760px; font-size:0.85rem}}
+.mr th {{font-weight:600; opacity:0.7; padding:4px; text-align:center}}
+.mr td {{text-align:center; padding:6px 2px; border-radius:6px; min-width:52px}}
+.mr .mr-e {{background:rgba(127,127,127,0.08)}}
+.mr .mr-x {{background:rgba(127,127,127,0.15); opacity:0.7}}
+.mr .mr-v {{font-weight:600}}
+.mr .mr-i {{font-size:0.7rem; opacity:0.65}}
+.mr .mr-t {{font-weight:700}}
+.mr .mr-i2 {{font-weight:400; opacity:0.7}}
+.mr .mr-y {{text-align:left; opacity:0.9}}
+</style>
+<div class="mr-wrap"><table class="mr">
+<tr><th></th>{head}<th>Year</th><th>Index</th></tr>
+{''.join(rows)}
+</table></div>""", unsafe_allow_html=True)
+    labels = sorted({str(x) for x in df["index_label"].dropna()})
+    first = df["month"].min()
+    st.caption(
+        "Each month = profit made that month ÷ money actually invested that month "
+        "(money added or withdrawn counts only for the days it was in), so adding "
+        "money never shows as a gain. **Year** compounds the months (time-weighted, "
+        "like a broker's heatmap); the FY target card is **money-weighted** — "
+        "what your rupees earned — so the two differ when money goes in after a "
+        "strong month. Small grey figure = the index that month "
+        f"({', '.join(labels) if labels else 'index'}). * = month to date or a part "
+        f"month (hover for details). Starts {first:%b %Y}, where the trade log is "
+        "complete. Updated nightly.")
+
+
 def tab_scorecard(realised: pd.DataFrame):
     """Trading scorecard — "if you can't measure, you can't improve".
 
@@ -1968,6 +2083,11 @@ def tab_scorecard(realised: pd.DataFrame):
     anything alone. A 29% win rate looks alarming until you see winners run 4x
     the size of losers, which is exactly what a trend-following book should look
     like."""
+    try:
+        render_monthly_returns()
+    except Exception as e:                 # never let the heatmap take the tab down
+        st.warning(f"Monthly returns unavailable: {type(e).__name__}")
+    st.divider()
     stats = metrics.trade_stats(realised)
     if not stats:
         st.info("No closed trades yet — the scorecard fills in as positions are sold.")

@@ -157,6 +157,7 @@ def main():
     # fired once (11-Aug-2026, Lakshmi got no alert).
     morning_levels_day = None   # morning 5/10-DMA order levels — once per day
     last_digest_try = 0.0       # weekly digest attempt throttle (Friday evening)
+    monthly_ret_day = None      # monthly returns heatmap — once per night, after the store
 
     while True:
         try:
@@ -348,6 +349,24 @@ def main():
                           f"{type(e).__name__}: {e}")
                     traceback.print_exc()
                 _reclaim_memory()      # the two exchange files are big downloads
+
+            # ---- monthly returns heatmap (once a night, after tonight's closes) ----
+            # Re-prices every month-end for all four books (31-Oct-2026). Subprocess
+            # with a timeout, like the digest: it downloads a few dozen past exchange
+            # files on a fresh box, and must never freeze or bloat this loop.
+            if bhav_day == today and monthly_ret_day != today:
+                monthly_ret_day = today
+                try:
+                    import subprocess, sys as _sys, os as _os
+                    r = subprocess.run(
+                        [_sys.executable, "-u", "fy_tracker.py", "monthly", "store"],
+                        timeout=1200,
+                        cwd=_os.path.dirname(_os.path.abspath(__file__)))
+                    print(f"[worker] monthly returns subprocess exited {r.returncode}")
+                except Exception as e:
+                    print(f"⚠️ [worker] monthly returns failed: {type(e).__name__}: {e}")
+                    traceback.print_exc()
+                _reclaim_memory()
 
             # ---- weekly digest (FRIDAY evening) ----------------------------
             # Moved here 28-Aug-2026: GitHub Actions' scheduler dropped the Friday
