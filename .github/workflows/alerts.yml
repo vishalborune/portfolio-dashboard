@@ -109,7 +109,8 @@ on:
 
 jobs:
   states:
-    if: github.event.schedule == '17 15 * * 1-5' || github.event_name == 'workflow_dispatch'
+    # the setups button runs the scanner alone — not every alert job with it
+    if: github.event.schedule == '17 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +151,8 @@ jobs:
   deals:
     # Bulk/block deals in stocks you hold or watch. 21:15 IST — after NSE
     # publishes the daily deal CSVs (EOD data; no intraday feed exists).
-    if: github.event.schedule == '45 15 * * 1-5' || github.event_name == 'workflow_dispatch'
+    # the setups button runs the scanner alone — not every alert job with it
+    if: github.event.schedule == '45 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,7 +172,8 @@ jobs:
     # Evening entry/add pass after the 20:00 bhavcopy stores today's SME closes.
     # The ONLY entry check for SME names (EOD data is fine per Lakshmi) + a final
     # mainboard pass. 20:20 IST. Also runs on a manual dispatch (quick, harmless).
-    if: github.event.schedule == '50 14 * * 1-5' || github.event_name == 'workflow_dispatch'
+    # the setups button runs the scanner alone — not every alert job with it
+    if: github.event.schedule == '50 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -422,7 +425,8 @@ jobs:
     # (Sprint 3). Runs after NSE/BSE publish their bhavcopy files. Silent,
     # best-effort by design -- see bhavcopy.py for the degrade-gracefully
     # logic (missing day just gets skipped, never breaks the workflow).
-    if: github.event.schedule == '30 14 * * 1-5' || github.event_name == 'workflow_dispatch'
+    # the setups button runs the scanner alone — not every alert job with it
+    if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -542,7 +546,8 @@ jobs:
     # silent when nothing matured -- exits are rare, most runs do nothing.
     # Scheduled AFTER bhavcopy (20:30 IST) so SME closes for the day exist.
     # Also runs on manual dispatch so the first journal entry can be tested.
-    if: github.event.schedule == '0 15 * * 1-5' || github.event_name == 'workflow_dispatch'
+    # the setups button runs the scanner alone — not every alert job with it
+    if: github.event.schedule == '0 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
