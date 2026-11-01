@@ -1383,16 +1383,16 @@ Finds NEW stocks to enter (not our holdings) and posts them to the **"New Stock 
   - shakeout: undercut the 15-day low by ≥1%, then reclaimed;
   - gapup: ≥3% over the prior high, held, ≥2× volume;
   - forming: a tight ≤8% base on the 21-EMA, within 3% of its top (watch list).
-- **Cadence (GitHub `setups` job, 20:41 IST weekdays):**
-  - **Friday:** the week's list, top 5 per setup ranked fresh-first, plus "👀 Watch next week" (multi-year NEAR + forming), the stops/retests block and the scorecard.
-  - **Mon–Thu:** TRIGGERS ONLY (multi-year provisional daily cross, pivot, gap-up), silent when nothing fired. The same stock + setup is not re-posted within 14 days.
-  - Measured over 20 sessions: plain base breakouts run 2–23 a day, so they stay on Friday's list; triggers run 0–6 a day.
+- **Cadence (GitHub `setups` job; Vishal moved the list to Saturday 01-Nov-2026):**
+  - **Saturday 08:41 IST:** the week's list as of Friday's close, top 5 per setup ranked fresh-first, plus "👀 Watch next week" (multi-year NEAR + forming), the stops/retests block and the scorecard.
+  - **Mon–Fri 20:41 IST:** TRIGGERS ONLY (multi-year provisional daily cross, pivot, gap-up), silent when nothing fired. The same stock + setup is not re-posted within 14 days.
+  - Measured over 20 sessions: plain base breakouts run 2–23 a day, so they stay on Saturday's list; triggers run 0–6 a day.
 - **Past-entry bands (Lakshmi asked):** ≤3% fresh, 3–8% stretched, >8% chasing. Chasing names are NOT listed, only named in a footnote; a 22× gap-up already 18% past entry with an 18% stop isn't a trade.
 - **Per stock:** what the company does (Screener "about", first sentence), cap and ₹ market cap, entry, stop (% from CMP), CMP vs entry, volume ×, % vs the 52-week high, P/E, run-rate P/E (CMP ÷ latest-quarter EPS × 4; a proxy, since there are no analyst forecasts), the setup's context, and 📌 if one of us holds or watches it. Screener is fetched only for the names printed (~1.5 s each); there are NO model calls.
 - **Self-scoring (`scan_setups`):** every posted setup is logged after a successful send, giving:
   - ❌ a stop-hit note (once);
   - 🔁 "retest holding" when a breakout comes back to within 2% of its entry on <1× volume, 4–30 days after posting;
-  - 4/8/13-week returns from the post-day close vs the SC250 ETF, summarised in Friday's 📊 line once ≥5 are scored.
+  - 4/8/13-week returns from the post-day close vs the SC250 ETF, summarised in Saturday's 📊 line once ≥5 are scored.
 
   The table also dedups a re-run (same day + mode = skip). Without the table the job still posts but logs nothing and warns.
 - **Needs a one-time table:**

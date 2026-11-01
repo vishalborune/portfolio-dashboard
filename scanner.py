@@ -488,9 +488,10 @@ def scan(which=ALL_SETUPS, daily: bool = False, panel=None, caps=None, names=Non
 # ---------------------------------------------------------------------------
 # automation — the "New Stock Setups" Telegram group (Vishal + Lakshmi, 01-Nov-2026)
 # ---------------------------------------------------------------------------
-# Friday: the week's list, best few per setup, plus a watch list for next week.
-# Mon–Thu: TRIGGERS ONLY (multi-year crosses, pivot breaks, gap-ups), silent
-# when nothing fired. Every posted setup is logged in `scan_setups`, so:
+# Saturday morning: the week's list (as of Friday's close), best few per setup,
+# plus a watch list for next week — Lakshmi plans the week on Saturdays.
+# Mon–Fri evenings: TRIGGERS ONLY (multi-year crosses, pivot breaks, gap-ups),
+# silent when nothing fired. Every posted setup is logged in `scan_setups`, so:
 #   * a setup that closes below its stop gets a ❌ failure note (once),
 #   * a breakout that comes back to its entry on light volume gets a 🔁 retest note,
 #   * every setup is scored 4/8/13 weeks later vs the Smallcap 250 — the same
@@ -503,7 +504,7 @@ LABEL = {"multiyear": "🏔 Multi-year breakout", "breakout": "📈 Base breakou
          "shakeout": "🪤 Shakeout &amp; reclaim", "pullback": "↩️ Pullback to EMA"}
 ORDER = ("multiyear", "breakout", "pivot", "gapup", "shakeout", "pullback")
 DAILY_SETUPS = ("multiyear", "pivot", "gapup")
-WEEKLY_PER_SETUP = 5          # per setup on Friday; the overflow count is shown
+WEEKLY_PER_SETUP = 5          # per setup on Saturday's list; the overflow count is shown
 WATCH_MAX = 8
 DAILY_MAX = 8
 FRESH_PCT, STRETCHED_PCT = 3.0, 8.0   # past-entry bands; beyond STRETCHED is chasing, not listed
@@ -662,7 +663,7 @@ def _rank(rows: list) -> list:
 
 
 def _weekly_show(picked: dict) -> dict:
-    """setup -> (shown, chasing, n_more) — what Friday's list prints."""
+    """setup -> (shown, chasing, n_more) — what Saturday's list prints."""
     out = {}
     for k in ORDER:
         ranked = _rank([x for x in picked.values() if x["setup"] == k])
@@ -835,7 +836,7 @@ def daily_message(res: dict, info: dict, books: dict, picked: dict, extra: list)
 # ---- the run --------------------------------------------------------------
 
 def run(mode: str | None = None, force: bool = False) -> int:
-    """mode: 'weekly' | 'daily' | None (= weekly on Friday, daily Mon–Thu).
+    """mode: 'weekly' | 'daily' | None (= weekly on Saturday, daily Mon–Fri, Sunday off).
     Returns a process exit code. With ALERTS_DRY_RUN the message is printed and
     nothing is written (alerts.sb() hands back a read-only client)."""
     from datetime import datetime
@@ -843,10 +844,10 @@ def run(mode: str | None = None, force: bool = False) -> int:
     import alerts
     from notify import chat_for_group, send_telegram
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-    if today.weekday() >= 5 and not force:
-        print("[setups] weekend — nothing to do")
+    if mode is None and today.weekday() == 6 and not force:
+        print("[setups] Sunday — nothing to do")
         return 0
-    mode = mode or ("weekly" if today.weekday() == 4 else "daily")
+    mode = mode or ("weekly" if today.weekday() == 5 else "daily")
     corporate_actions(refresh=True)
     build_history(end=today)
     panel = pd.read_parquet(PANEL)

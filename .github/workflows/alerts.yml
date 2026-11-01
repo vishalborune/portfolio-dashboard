@@ -29,7 +29,8 @@ on:
     - cron: "40 1 * * 2-6"                # usprices: US EOD store + health, 07:10 IST Tue-Sat (US session closes 01:30/02:30 IST; Sat stores Friday). Backstop to the worker's 07:00 block.
     - cron: "27 * * * *"                  # us-filings: SEC EDGAR poll hourly, 7 days — backstop to the worker's 15-min poll (dedup via filings_seen)
     - cron: "20 3 * * 6"                  # us-digest: Saturday 08:50 IST backstop (worker sends it after the 07:00 US store; own delivery marker)
-    - cron: "11 15 * * 1-5"               # setups: stock-picking scanner -> "New Stock Setups" group, 20:41 IST (Fri = weekly list, Mon-Thu = triggers only)
+    - cron: "11 15 * * 1-5"               # setups: stock-picking scanner -> "New Stock Setups" group, triggers only, 20:41 IST Mon-Fri
+    - cron: "11 3 * * 6"                  # setups: the week's list, Saturday 08:41 IST (as of Friday's close)
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -97,7 +98,7 @@ on:
         type: boolean
         default: false
       setups_mode:
-        description: "Setups mode when run by hand: auto (Fri weekly / Mon-Thu triggers, deduped) or force weekly / daily"
+        description: "Setups mode when run by hand: auto (Sat weekly / Mon-Fri triggers, deduped) or force weekly / daily"
         type: choice
         options: [auto, weekly, daily]
         default: auto
@@ -559,13 +560,13 @@ jobs:
 
   setups:
     # Stock-picking scanner (scanner.py, Vishal + Lakshmi 01-Nov-2026) -> the
-    # "New Stock Setups" Telegram group. Friday = the week's list + a watch list;
-    # Mon-Thu = triggers only (silent when nothing fired); stops hit, retests and
-    # 4/8/13-week scores come from the scan_setups log. 20:41 IST, after NSE
+    # "New Stock Setups" Telegram group. Saturday 08:41 IST = the week's list + a
+    # watch list; Mon-Fri 20:41 IST = triggers only (silent when nothing fired); stops hit, retests and
+    # 4/8/13-week scores come from the scan_setups log. Evenings run after NSE
     # publishes sec_bhavdata_full. Five years of daily files (~160 MB) live in the
     # Actions cache, so a run downloads only the new day. On GitHub, not the
     # 512 MB Render worker. No model calls.
-    if: github.event.schedule == '11 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now == 'true')
+    if: github.event.schedule == '11 15 * * 1-5' || github.event.schedule == '11 3 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
