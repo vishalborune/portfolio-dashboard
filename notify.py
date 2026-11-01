@@ -55,8 +55,12 @@ def _chunk_message(text: str, max_len: int = TG_MAX_LEN) -> list:
 # with an env override, and no new secret is needed on Render/GitHub.
 #   "lakshmi" -> the default TELEGRAM_CHAT_ID group ("Portfolio Alerts")
 #   "vishal_us" -> "US Portfolio Alerts" supergroup (Vishal's US book, pf 4)
+#   "setups"    -> "New Stock Setups" group (scanner.py stock-picking setups, 01-Nov-2026).
+#                  A plain group: if Telegram upgrades it to a supergroup the id
+#                  changes to -100…, and sends fail until this is updated.
 GROUP_CHAT_IDS = {
     "vishal_us": os.environ.get("TELEGRAM_CHAT_ID_US", "-1004304585068"),
+    "setups": os.environ.get("TELEGRAM_CHAT_ID_SETUPS", "-5153372612"),
 }
 
 

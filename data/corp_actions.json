@@ -1,0 +1,3074 @@
+[
+{
+"symbol": "BIGBLOC",
+"ex": "2021-11-15",
+"factor": 5.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MANINFRA",
+"ex": "2021-11-17",
+"factor": 1.5,
+"subject": " Bonus 1:2"
+},
+{
+"symbol": "SSWL",
+"ex": "2021-11-18",
+"factor": 2.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "APOLLOPIPE",
+"ex": "2021-12-02",
+"factor": 3.0,
+"subject": " Bonus 2:1"
+},
+{
+"symbol": "IEX",
+"ex": "2021-12-03",
+"factor": 3.0,
+"subject": " Bonus 2:1"
+},
+{
+"symbol": "TTKPRESTIG",
+"ex": "2021-12-14",
+"factor": 10.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 10 Per Share To Re 1 Per Share"
+},
+{
+"symbol": "KKCL",
+"ex": "2021-12-16",
+"factor": 5.0,
+"subject": " Bonus 4:1"
+},
+{
+"symbol": "PRECWIRE",
+"ex": "2021-12-22",
+"factor": 5.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PTL",
+"ex": "2021-12-23",
+"factor": 2.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ANDHRSUGAR",
+"ex": "2021-12-30",
+"factor": 5.0,
+"subject": " Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "IMFA",
+"ex": "2022-01-07",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "IPCALAB",
+"ex": "2022-01-10",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ONEPOINT",
+"ex": "2022-01-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "ONEPOINT",
+"ex": "2022-01-18",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "AURIGROW",
+"ex": "2022-01-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "AAKASH",
+"ex": "2022-02-03",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ESSENTIA",
+"ex": "2022-02-03",
+"factor": 3.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 3/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SCHAEFFLER",
+"ex": "2022-02-08",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GREENLAM",
+"ex": "2022-02-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "JBMA",
+"ex": "2022-02-21",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HGS",
+"ex": "2022-02-22",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SBC",
+"ex": "2022-02-22",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SBC",
+"ex": "2022-02-22",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "EASEMYTRIP",
+"ex": "2022-02-28",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SUPREMEENG",
+"ex": "2022-03-03",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VISHAL",
+"ex": "2022-03-10",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "CCAVENUE",
+"ex": "2022-03-14",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RKFORGE",
+"ex": "2022-03-14",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BCG",
+"ex": "2022-03-15",
+"factor": 1.6666666666666667,
+"subject": "Bonus 2:3"
+},
+{
+"symbol": "RAJRATAN",
+"ex": "2022-03-15",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "DRCSYSTEMS",
+"ex": "2022-03-16",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BSE",
+"ex": "2022-03-21",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "AURIGROW",
+"ex": "2022-03-24",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "NDL",
+"ex": "2022-03-24",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "VTL",
+"ex": "2022-03-24",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GOLDIAM",
+"ex": "2022-03-28",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SUULD",
+"ex": "2022-03-30",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "PCBL",
+"ex": "2022-04-11",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ARIHANTCAP",
+"ex": "2022-04-12",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "DUCON",
+"ex": "2022-04-18",
+"factor": 1.1,
+"subject": "Bonus 1:10"
+},
+{
+"symbol": "JUBLFOOD",
+"ex": "2022-04-19",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SAREGAMA",
+"ex": "2022-04-26",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BBOX",
+"ex": "2022-05-13",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BLS",
+"ex": "2022-05-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JETFREIGHT",
+"ex": "2022-05-19",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "VBL",
+"ex": "2022-06-06",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "AUBANK",
+"ex": "2022-06-09",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "COSMOFIRST",
+"ex": "2022-06-16",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "NAZARA",
+"ex": "2022-06-24",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SALASAR",
+"ex": "2022-06-27",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 1/- Per Share"
+},
+{
+"symbol": "IOC",
+"ex": "2022-06-30",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "PAISALO",
+"ex": "2022-06-30",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RATNAMANI",
+"ex": "2022-06-30",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "XPROINDIA",
+"ex": "2022-07-01",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "UNOMINDA",
+"ex": "2022-07-07",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TORNTPHARM",
+"ex": "2022-07-08",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "GMMPFAUDLR",
+"ex": "2022-07-11",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "STEELXIND",
+"ex": "2022-07-12",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SONAMLTD",
+"ex": "2022-07-14",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RGL",
+"ex": "2022-07-19",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HNDFDS",
+"ex": "2022-07-21",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HARDWYN",
+"ex": "2022-07-25",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "TATASTEEL",
+"ex": "2022-07-28",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RECLTD",
+"ex": "2022-08-17",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "MGEL",
+"ex": "2022-08-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "RAMASTEEL",
+"ex": "2022-08-25",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PDSL",
+"ex": "2022-08-26",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KRITIKA",
+"ex": "2022-08-30",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SOTL",
+"ex": "2022-09-01",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "DANGEE",
+"ex": "2022-09-06",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "DANGEE",
+"ex": "2022-09-06",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "GAIL",
+"ex": "2022-09-06",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "BANSWRAS",
+"ex": "2022-09-08",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "SONATSOFTW",
+"ex": "2022-09-08",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "BAJAJFINSV",
+"ex": "2022-09-13",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BAJAJFINSV",
+"ex": "2022-09-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BEL",
+"ex": "2022-09-15",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "RAJMET",
+"ex": "2022-09-15",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "ECLERX",
+"ex": "2022-09-21",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "CHOICEIN",
+"ex": "2022-09-22",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BSHSL",
+"ex": "2022-09-23",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RUBYMILLS",
+"ex": "2022-09-23",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SAKSOFT",
+"ex": "2022-09-23",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BHARATGEAR",
+"ex": "2022-09-27",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "LANDSMILL",
+"ex": "2022-09-28",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "LANDSMILL",
+"ex": "2022-09-28",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "RAMRAT",
+"ex": "2022-09-28",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "INSECTICID",
+"ex": "2022-09-30",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "MOTHERSON",
+"ex": "2022-10-03",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "AHLEAST",
+"ex": "2022-10-06",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "AJOONI",
+"ex": "2022-10-07",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "RUCHIRA",
+"ex": "2022-10-10",
+"factor": 1.1,
+"subject": "Bonus 1:10"
+},
+{
+"symbol": "SBCL",
+"ex": "2022-10-12",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "HLEGLAS",
+"ex": "2022-10-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MBAPL",
+"ex": "2022-10-18",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "GLOBAL",
+"ex": "2022-10-19",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "TPLPLASTEH",
+"ex": "2022-10-19",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AXITA",
+"ex": "2022-10-21",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "DIL",
+"ex": "2022-10-27",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "KSHITIJPOL",
+"ex": "2022-10-27",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SIKKO",
+"ex": "2022-10-28",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "TDPOWERSYS",
+"ex": "2022-10-31",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "NYKAA",
+"ex": "2022-11-10",
+"factor": 6.0,
+"subject": "Bonus 5:1"
+},
+{
+"symbol": "SSWL",
+"ex": "2022-11-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GPTINFRA",
+"ex": "2022-11-11",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MSUMI",
+"ex": "2022-11-16",
+"factor": 1.4,
+"subject": "Bonus 2:5"
+},
+{
+"symbol": "EASEMYTRIP",
+"ex": "2022-11-21",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "EASEMYTRIP",
+"ex": "2022-11-21",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "DEVIT",
+"ex": "2022-11-25",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "MAHSEAMLES",
+"ex": "2022-11-25",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RAJMET",
+"ex": "2022-11-30",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "LIKHITHA",
+"ex": "2022-12-02",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "BLS",
+"ex": "2022-12-08",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "CLEDUCATE",
+"ex": "2022-12-16",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "LANCER",
+"ex": "2022-12-16",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "SFL",
+"ex": "2022-12-21",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "PRECWIRE",
+"ex": "2022-12-22",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "ZIMLAB",
+"ex": "2022-12-22",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "FILATEX",
+"ex": "2022-12-27",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SECURCRED",
+"ex": "2023-01-04",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "RAMASTEEL",
+"ex": "2023-01-06",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "SPLPETRO",
+"ex": "2023-01-06",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 4/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VISHNU",
+"ex": "2023-01-13",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KPIGREEN",
+"ex": "2023-01-18",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SHRADHA",
+"ex": "2023-01-20",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "GVPTECH",
+"ex": "2023-01-23",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SERVOTECH",
+"ex": "2023-02-03",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "ACCURACY",
+"ex": "2023-02-15",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VCL",
+"ex": "2023-02-15",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "IRB",
+"ex": "2023-02-22",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VINNY",
+"ex": "2023-02-24",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VINNY",
+"ex": "2023-02-24",
+"factor": 2.3,
+"subject": "Bonus 13:10"
+},
+{
+"symbol": "360ONE",
+"ex": "2023-03-02",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "360ONE",
+"ex": "2023-03-02",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "OSIAHYPER",
+"ex": "2023-03-13",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ASTRAL",
+"ex": "2023-03-14",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "MEDICO",
+"ex": "2023-03-16",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HITECH",
+"ex": "2023-03-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "DEEPINDS",
+"ex": "2023-04-10",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "TIPSMUSIC",
+"ex": "2023-04-21",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GOYALALUM",
+"ex": "2023-04-25",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "APOLLO",
+"ex": "2023-05-04",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SIRCA",
+"ex": "2023-05-11",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "VISAKAIND",
+"ex": "2023-05-15",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SRPL",
+"ex": "2023-05-19",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RADHIKAJWE",
+"ex": "2023-05-26",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VSSL",
+"ex": "2023-05-26",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "LODHA",
+"ex": "2023-05-31",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "HARDWYN",
+"ex": "2023-06-05",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "HARDWYN",
+"ex": "2023-06-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "IONEXCHANG",
+"ex": "2023-06-12",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VBL",
+"ex": "2023-06-15",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "BLUESTARCO",
+"ex": "2023-06-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "GULPOLY",
+"ex": "2023-06-21",
+"factor": 1.2,
+"subject": "Bonus 1:5"
+},
+{
+"symbol": "INDIAMART",
+"ex": "2023-06-21",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "AKI",
+"ex": "2023-06-22",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KANSAINER",
+"ex": "2023-07-04",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "BEPL",
+"ex": "2023-07-05",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "SADHNANIQ",
+"ex": "2023-07-05",
+"factor": 1.2222222222222223,
+"subject": "Bonus 2:9"
+},
+{
+"symbol": "ROTO",
+"ex": "2023-07-07",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "APTECHT",
+"ex": "2023-07-14",
+"factor": 1.4,
+"subject": "Bonus 2:5"
+},
+{
+"symbol": "THANGAMAYL",
+"ex": "2023-07-17",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "ANMOL",
+"ex": "2023-07-18",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "NDRAUTO",
+"ex": "2023-07-24",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SHRIPISTON",
+"ex": "2023-07-24",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MAANALU",
+"ex": "2023-07-27",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "MAANALU",
+"ex": "2023-07-27",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SERVOTECH",
+"ex": "2023-07-28",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "AKSHAR",
+"ex": "2023-07-31",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KAMOPAINTS",
+"ex": "2023-08-01",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "NINSYS",
+"ex": "2023-08-03",
+"factor": 1.8,
+"subject": "Bonus 4:5"
+},
+{
+"symbol": "SARDAEN",
+"ex": "2023-08-04",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "IRISDOREME",
+"ex": "2023-08-11",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "OSWALSEEDS",
+"ex": "2023-08-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GNA",
+"ex": "2023-09-01",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JTLIND",
+"ex": "2023-09-07",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "ADFFOODS",
+"ex": "2023-09-11",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "POWERGRID",
+"ex": "2023-09-12",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "SARVESHWAR",
+"ex": "2023-09-15",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SARVESHWAR",
+"ex": "2023-09-15",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "JBCHEPHARM",
+"ex": "2023-09-18",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PFC",
+"ex": "2023-09-21",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "BERGEPAINT",
+"ex": "2023-09-22",
+"factor": 1.2,
+"subject": "Bonus 1:5"
+},
+{
+"symbol": "HAL",
+"ex": "2023-09-28",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "FOCUS",
+"ex": "2023-10-06",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SURYAROSNI",
+"ex": "2023-10-06",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "SIGACHI",
+"ex": "2023-10-09",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "THEMISMED",
+"ex": "2023-10-10",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GENSOL",
+"ex": "2023-10-17",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "MBAPL",
+"ex": "2023-10-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "GEEKAYWIRE",
+"ex": "2023-10-23",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KRISHANA",
+"ex": "2023-10-25",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JAYBARMARU",
+"ex": "2023-10-26",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BCLIND",
+"ex": "2023-10-27",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "TALBROAUTO",
+"ex": "2023-10-27",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MITTAL",
+"ex": "2023-11-01",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "CANTABIL",
+"ex": "2023-11-02",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "DPWIRES",
+"ex": "2023-11-08",
+"factor": 1.1428571428571428,
+"subject": "Bonus 1:7"
+},
+{
+"symbol": "HPAL",
+"ex": "2023-11-09",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HINDCON",
+"ex": "2023-11-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MKPL",
+"ex": "2023-11-10",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ATALREAL",
+"ex": "2023-11-16",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SHAILY",
+"ex": "2023-11-23",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SAFARI",
+"ex": "2023-12-12",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SONATSOFTW",
+"ex": "2023-12-12",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TPHQ",
+"ex": "2023-12-14",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KRITIKA",
+"ex": "2023-12-19",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "AXITA",
+"ex": "2023-12-22",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "HMAAGRO",
+"ex": "2023-12-29",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ALLCARGO",
+"ex": "2024-01-02",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "NESTLEIND",
+"ex": "2024-01-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PGIL",
+"ex": "2024-01-05",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "COCHINSHIP",
+"ex": "2024-01-10",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "ESSENTIA",
+"ex": "2024-01-11",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "NEWGEN",
+"ex": "2024-01-12",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SBC",
+"ex": "2024-01-19",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "DOLPHIN",
+"ex": "2024-01-25",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KANANIIND",
+"ex": "2024-01-30",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SALASAR",
+"ex": "2024-02-01",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "OSWALSEEDS",
+"ex": "2024-02-02",
+"factor": 1.2,
+"subject": "Bonus 1:5"
+},
+{
+"symbol": "SANDUMA",
+"ex": "2024-02-02",
+"factor": 6.0,
+"subject": "Bonus 5:1"
+},
+{
+"symbol": "AKSHAR",
+"ex": "2024-02-15",
+"factor": 1.2,
+"subject": "Bonus 1:5"
+},
+{
+"symbol": "KPIGREEN",
+"ex": "2024-02-15",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "CHOICEIN",
+"ex": "2024-02-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MASFIN",
+"ex": "2024-02-22",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "RPPL",
+"ex": "2024-02-26",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "DRCSYSTEMS",
+"ex": "2024-02-27",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "FIEMIND",
+"ex": "2024-02-28",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "CGCL",
+"ex": "2024-03-05",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "CGCL",
+"ex": "2024-03-05",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MANORAMA",
+"ex": "2024-03-07",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GAEL",
+"ex": "2024-03-15",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MKPL",
+"ex": "2024-03-15",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "RAMASTEEL",
+"ex": "2024-03-19",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "ADVANIHOTR",
+"ex": "2024-03-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "NRL",
+"ex": "2024-03-20",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "PAISALO",
+"ex": "2024-03-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "REFEX",
+"ex": "2024-03-22",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "LAL",
+"ex": "2024-03-28",
+"factor": 1.5454545454545454,
+"subject": "Bonus 6:11"
+},
+{
+"symbol": "LAL",
+"ex": "2024-03-28",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PERSISTENT",
+"ex": "2024-03-28",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "CUPID",
+"ex": "2024-04-04",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "CUPID",
+"ex": "2024-04-04",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BTML",
+"ex": "2024-04-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SBGLP",
+"ex": "2024-04-18",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ANUP",
+"ex": "2024-04-23",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BBL",
+"ex": "2024-04-24",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "BHAGCHEM",
+"ex": "2024-05-02",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 1/- Per Share"
+},
+{
+"symbol": "SONAMLTD",
+"ex": "2024-05-10",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "CANBK",
+"ex": "2024-05-15",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VARDMNPOLY",
+"ex": "2024-05-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BDL",
+"ex": "2024-05-24",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "GMBREW",
+"ex": "2024-05-24",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "INOXWIND",
+"ex": "2024-05-24",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "SDBL",
+"ex": "2024-05-24",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BALAXI",
+"ex": "2024-05-30",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "DAVANGERE",
+"ex": "2024-05-31",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "MOTILALOFS",
+"ex": "2024-06-10",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "KAMOPAINTS",
+"ex": "2024-06-14",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BPCL",
+"ex": "2024-06-21",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "HINDPETRO",
+"ex": "2024-06-21",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "PREMEXPLN",
+"ex": "2024-06-21",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AURIONPRO",
+"ex": "2024-06-27",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SHAREINDIA",
+"ex": "2024-06-27",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AVONMORE",
+"ex": "2024-06-28",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 1/- Per Share"
+},
+{
+"symbol": "OIL",
+"ex": "2024-07-02",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "GPTINFRA",
+"ex": "2024-07-03",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "REMSONSIND",
+"ex": "2024-07-05",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VERTOZ",
+"ex": "2024-07-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VERTOZ",
+"ex": "2024-07-05",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "PGEL",
+"ex": "2024-07-10",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "MMFL",
+"ex": "2024-07-16",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "KPIGREEN",
+"ex": "2024-07-18",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "ELECON",
+"ex": "2024-07-19",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ALMONDZ",
+"ex": "2024-07-23",
+"factor": 6.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 6/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KSB",
+"ex": "2024-07-25",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AARTECH",
+"ex": "2024-08-09",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "AARTECH",
+"ex": "2024-08-09",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "DJML",
+"ex": "2024-08-09",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "FILATFASH",
+"ex": "2024-08-09",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KAPSTON",
+"ex": "2024-08-09",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "RUSHIL",
+"ex": "2024-08-09",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SAKUMA",
+"ex": "2024-08-09",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "GRPLTD",
+"ex": "2024-08-12",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "EIHAHOTELS",
+"ex": "2024-08-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "CDSL",
+"ex": "2024-08-23",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SAPPHIRE",
+"ex": "2024-09-05",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VSTIND",
+"ex": "2024-09-06",
+"factor": 11.0,
+"subject": "Bonus 10:1"
+},
+{
+"symbol": "ANDHRAPAP",
+"ex": "2024-09-11",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BIGBLOC",
+"ex": "2024-09-12",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "VBL",
+"ex": "2024-09-12",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KIMS",
+"ex": "2024-09-13",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MONARCH",
+"ex": "2024-09-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SPORTKING",
+"ex": "2024-09-13",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RPPL",
+"ex": "2024-09-17",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "NDL",
+"ex": "2024-09-19",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SAKSOFT",
+"ex": "2024-09-19",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "AXITA",
+"ex": "2024-09-20",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "MINDTECK",
+"ex": "2024-09-20",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "PHOENIXLTD",
+"ex": "2024-09-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RITES",
+"ex": "2024-09-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "UEL",
+"ex": "2024-09-20",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "NDRAUTO",
+"ex": "2024-09-25",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SANGHVIMOV",
+"ex": "2024-09-27",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GPIL",
+"ex": "2024-10-04",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "NBCC",
+"ex": "2024-10-07",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "POWERMECH",
+"ex": "2024-10-08",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JINDALSAW",
+"ex": "2024-10-09",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VAISHALI",
+"ex": "2024-10-15",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VAISHALI",
+"ex": "2024-10-15",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "POCL",
+"ex": "2024-10-16",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "HEGAM",
+"ex": "2024-10-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SUKHJITS",
+"ex": "2024-10-25",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "DRREDDY",
+"ex": "2024-10-28",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RELIANCE",
+"ex": "2024-10-28",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JASH",
+"ex": "2024-10-30",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "PREMIERPOL",
+"ex": "2024-11-05",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "MOTISONS",
+"ex": "2024-11-08",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ROTO",
+"ex": "2024-11-08",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "WEL",
+"ex": "2024-11-12",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "JTLIND",
+"ex": "2024-11-14",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SHAKTIPUMP",
+"ex": "2024-11-25",
+"factor": 6.0,
+"subject": "Bonus 5:1"
+},
+{
+"symbol": "EASEMYTRIP",
+"ex": "2024-11-29",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RPEL",
+"ex": "2024-11-29",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "DIACABS",
+"ex": "2024-12-03",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "WIPRO",
+"ex": "2024-12-03",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TARACHAND",
+"ex": "2024-12-05",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GLOBAL",
+"ex": "2024-12-10",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SHRADHA",
+"ex": "2024-12-10",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "EXXARO",
+"ex": "2024-12-13",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PCJEWELLER",
+"ex": "2024-12-16",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SKYGOLD",
+"ex": "2024-12-16",
+"factor": 10.0,
+"subject": "Bonus 9:1"
+},
+{
+"symbol": "LINC",
+"ex": "2024-12-20",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "LINC",
+"ex": "2024-12-20",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "HARDWYN",
+"ex": "2024-12-27",
+"factor": 1.4,
+"subject": "Bonus 2:5"
+},
+{
+"symbol": "MAZDOCK",
+"ex": "2024-12-27",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "NMDC",
+"ex": "2024-12-27",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "BANCOINDIA",
+"ex": "2024-12-30",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SURYAROSNI",
+"ex": "2025-01-01",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "GARFIBRES",
+"ex": "2025-01-03",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "KPIGREEN",
+"ex": "2025-01-03",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "JAGSNPHARM",
+"ex": "2025-01-08",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KAMDHENU",
+"ex": "2025-01-08",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SHRIRAMFIN",
+"ex": "2025-01-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "JAIBALAJI",
+"ex": "2025-01-17",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KITEX",
+"ex": "2025-01-17",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "NAVA",
+"ex": "2025-01-20",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "MAZDA",
+"ex": "2025-01-28",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "IGL",
+"ex": "2025-01-31",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JBMA",
+"ex": "2025-01-31",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SENCO",
+"ex": "2025-01-31",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "REDTAPE",
+"ex": "2025-02-04",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "KSOLVES",
+"ex": "2025-02-06",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "AGIIL",
+"ex": "2025-02-07",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "RAMAPHO",
+"ex": "2025-02-07",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "TTL",
+"ex": "2025-02-12",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "TARIL",
+"ex": "2025-02-14",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "KOTHARIPRO",
+"ex": "2025-02-18",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "JINDWORLD",
+"ex": "2025-02-28",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "COASTCORP",
+"ex": "2025-03-04",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MGEL",
+"ex": "2025-03-04",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ANANDRATHI",
+"ex": "2025-03-05",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SBC",
+"ex": "2025-03-10",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "IOLCP",
+"ex": "2025-03-11",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GREENLAM",
+"ex": "2025-03-21",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "DHARAN",
+"ex": "2025-04-04",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "AFIL",
+"ex": "2025-04-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "NAVKARURB",
+"ex": "2025-04-24",
+"factor": 2.5,
+"subject": "Bonus 3:2"
+},
+{
+"symbol": "ACUTAAS",
+"ex": "2025-04-25",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "UNITEDPOLY",
+"ex": "2025-05-02",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "NAUKRI",
+"ex": "2025-05-07",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "NAVKARURB",
+"ex": "2025-05-09",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BSE",
+"ex": "2025-05-23",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "UEL",
+"ex": "2025-05-30",
+"factor": 1.68,
+"subject": "Bonus 17:25"
+},
+{
+"symbol": "COFORGE",
+"ex": "2025-06-04",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "VESUVIUS",
+"ex": "2025-06-10",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VIMTALABS",
+"ex": "2025-06-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BAJFINANCE",
+"ex": "2025-06-16",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "BAJFINANCE",
+"ex": "2025-06-16",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "VMART",
+"ex": "2025-06-23",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "VERTOZ",
+"ex": "2025-06-25",
+"factor": 0.1,
+"subject": "Consolidation Of Equity Shares From Re 1 Per Share To Rs 10 Per Share"
+},
+{
+"symbol": "CONCOR",
+"ex": "2025-07-04",
+"factor": 1.25,
+"subject": "Bonus 1:4"
+},
+{
+"symbol": "IRISDOREME",
+"ex": "2025-07-04",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "PARAS",
+"ex": "2025-07-04",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "SHARDAMOTR",
+"ex": "2025-07-04",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "DYCL",
+"ex": "2025-07-11",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "ROTO",
+"ex": "2025-07-11",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "ANUHPHR",
+"ex": "2025-07-15",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "ASHOKLEY",
+"ex": "2025-07-16",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "IFGLEXPOR",
+"ex": "2025-07-18",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "INDOTHAI",
+"ex": "2025-07-18",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "MOTHERSON",
+"ex": "2025-07-18",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "MSUMI",
+"ex": "2025-07-18",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "KELLTONTEC",
+"ex": "2025-07-25",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "NESTLEIND",
+"ex": "2025-08-08",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "INDIAGLYCO",
+"ex": "2025-08-12",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "VRLLOG",
+"ex": "2025-08-14",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "DEVIT",
+"ex": "2025-08-21",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AARON",
+"ex": "2025-08-25",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "HDFCBANK",
+"ex": "2025-08-26",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "KARURVYSYA",
+"ex": "2025-08-26",
+"factor": 1.2,
+"subject": "Bonus 1:5"
+},
+{
+"symbol": "STEELCAS",
+"ex": "2025-08-29",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PAVNAIND",
+"ex": "2025-09-01",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "PATANJALI",
+"ex": "2025-09-11",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "FISCHER",
+"ex": "2025-09-12",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GODFRYPHLP",
+"ex": "2025-09-16",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "ZYDUSWELL",
+"ex": "2025-09-18",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "TFCILTD",
+"ex": "2025-09-19",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "ADANIPOWER",
+"ex": "2025-09-22",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SANDUMA",
+"ex": "2025-09-22",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "PIDILITIND",
+"ex": "2025-09-23",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TIMETECHNO",
+"ex": "2025-09-23",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "NAZARA",
+"ex": "2025-09-26",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "NAZARA",
+"ex": "2025-09-26",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 4/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "RMDRIP",
+"ex": "2025-09-26",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "SHILPAMED",
+"ex": "2025-10-03",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SUMEETINDS",
+"ex": "2025-10-03",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SIGMA",
+"ex": "2025-10-06",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "AGIIL",
+"ex": "2025-10-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "LGHL",
+"ex": "2025-10-10",
+"factor": 2.4,
+"subject": "Bonus 7:5"
+},
+{
+"symbol": "UEL",
+"ex": "2025-10-10",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "UNIVASTU",
+"ex": "2025-10-13",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "GOKULAGRO",
+"ex": "2025-10-14",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "TATAINVEST",
+"ex": "2025-10-14",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ABINFRA",
+"ex": "2025-10-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "ROLEXRINGS",
+"ex": "2025-10-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GEEKAYWIRE",
+"ex": "2025-10-30",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "FCL",
+"ex": "2025-10-31",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "FCL",
+"ex": "2025-10-31",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BEML",
+"ex": "2025-11-03",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "SMCGLOBAL",
+"ex": "2025-11-14",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "WEBELSOLAR",
+"ex": "2025-11-14",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "HDFCAMC",
+"ex": "2025-11-26",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SIKKO",
+"ex": "2025-11-27",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "THYROCARE",
+"ex": "2025-11-28",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "CAMS",
+"ex": "2025-12-05",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "SIKKO",
+"ex": "2025-12-08",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BECTORFOOD",
+"ex": "2025-12-12",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "BHARATRAS",
+"ex": "2025-12-12",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BHARATRAS",
+"ex": "2025-12-12",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "MONEYBOXX",
+"ex": "2025-12-15",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "LALPATHLAB",
+"ex": "2025-12-19",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "KMEW",
+"ex": "2025-12-22",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "GRMOVER",
+"ex": "2025-12-24",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "NUVAMA",
+"ex": "2025-12-26",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "RAMRAT",
+"ex": "2025-12-26",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MCX",
+"ex": "2026-01-02",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "ORIENTTECH",
+"ex": "2026-01-05",
+"factor": 1.1,
+"subject": "Bonus 1:10"
+},
+{
+"symbol": "SKMEGGPROD",
+"ex": "2026-01-12",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "AIIL",
+"ex": "2026-01-13",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "AJMERA",
+"ex": "2026-01-14",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "KOTAKBANK",
+"ex": "2026-01-14",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BESTAGRO",
+"ex": "2026-01-16",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "BESTAGRO",
+"ex": "2026-01-16",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "AXITA",
+"ex": "2026-02-13",
+"factor": 1.1,
+"subject": "Bonus 1:10"
+},
+{
+"symbol": "DELPHIFX",
+"ex": "2026-02-13",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "DELPHIFX",
+"ex": "2026-02-13",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "ANGELONE",
+"ex": "2026-02-26",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "INFOBEAN",
+"ex": "2026-02-27",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "VGL",
+"ex": "2026-03-02",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "AQYLON",
+"ex": "2026-03-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KAPSTON",
+"ex": "2026-03-06",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "SILVERTUC",
+"ex": "2026-03-06",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "SILVERTUC",
+"ex": "2026-03-06",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "CUPID",
+"ex": "2026-03-09",
+"factor": 5.0,
+"subject": "Bonus 4:1"
+},
+{
+"symbol": "ECLERX",
+"ex": "2026-03-13",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "METROPOLIS",
+"ex": "2026-03-20",
+"factor": 4.0,
+"subject": "Bonus 3:1"
+},
+{
+"symbol": "KILITCH",
+"ex": "2026-03-24",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "V2RETAIL",
+"ex": "2026-03-25",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "HIRECT",
+"ex": "2026-03-27",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "IRB",
+"ex": "2026-03-30",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "RNBDENIMS",
+"ex": "2026-04-02",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "RNBDENIMS",
+"ex": "2026-04-02",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "RMDRIP",
+"ex": "2026-04-10",
+"factor": 1.7142857142857142,
+"subject": "Bonus 5:7"
+},
+{
+"symbol": "PASHUPATI",
+"ex": "2026-04-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "AHCL",
+"ex": "2026-04-24",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "AHCL",
+"ex": "2026-04-24",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AVROIND",
+"ex": "2026-05-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "LEMERITE",
+"ex": "2026-05-29",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "LICI",
+"ex": "2026-05-29",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "ANANDRATHI",
+"ex": "2026-06-03",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TRENT",
+"ex": "2026-06-04",
+"factor": 1.5,
+"subject": "Bonus 1:2"
+},
+{
+"symbol": "E2E",
+"ex": "2026-06-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "CUB",
+"ex": "2026-06-12",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "BRIGADE",
+"ex": "2026-06-17",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "DBEIL",
+"ex": "2026-06-19",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KOTYARK",
+"ex": "2026-06-24",
+"factor": 11.0,
+"subject": "Bonus 10:1"
+},
+{
+"symbol": "ZFCVINDIA",
+"ex": "2026-06-24",
+"factor": 6.0,
+"subject": "Bonus 5:1"
+},
+{
+"symbol": "KRISHANA",
+"ex": "2026-07-03",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MBAPL",
+"ex": "2026-07-03",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "GOLDIAM",
+"ex": "2026-07-10",
+"factor": 1.3333333333333333,
+"subject": "Bonus 1:3"
+},
+{
+"symbol": "MWL",
+"ex": "2026-07-10",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "POCL",
+"ex": "2026-07-21",
+"factor": 2.5,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "JLHL",
+"ex": "2026-07-24",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "HARDWYN",
+"ex": "2026-07-28",
+"factor": 1.4,
+"subject": "Bonus 2:5"
+},
+{
+"symbol": "NARMADA",
+"ex": "2026-07-31",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "TEMBO",
+"ex": "2026-08-05",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "KIRLPNU",
+"ex": "2026-08-18",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "GOODLUCK",
+"ex": "2026-08-21",
+"factor": 3.0,
+"subject": "Bonus 2:1"
+},
+{
+"symbol": "TDPOWERSYS",
+"ex": "2026-08-24",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 2/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "CORDELIA",
+"ex": "2026-08-25",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "TCC",
+"ex": "2026-09-04",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "PGIL",
+"ex": "2026-09-11",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "TAALTECH",
+"ex": "2026-09-22",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "AASTHA",
+"ex": "2026-09-28",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BLSE",
+"ex": "2026-10-06",
+"factor": 2.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 5/- Per Share"
+},
+{
+"symbol": "BUILDPRO",
+"ex": "2026-10-08",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+},
+{
+"symbol": "MOLDTECH",
+"ex": "2026-10-09",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "MOLDTKPAC",
+"ex": "2026-10-09",
+"factor": 2.0,
+"subject": "Bonus 1:1"
+},
+{
+"symbol": "BANSALWIRE",
+"ex": "2026-10-16",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 5/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "JSWDULUX",
+"ex": "2026-10-22",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share"
+},
+{
+"symbol": "AZADIND",
+"ex": "2026-10-23",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share"
+}
+]

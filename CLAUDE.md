@@ -48,6 +48,7 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
 | `thesis.py` | Stage-2 thesis scorecard (7 pillars /14 + verdict). Opus 5 + web search researches only DU/SM/GV; RQ/MG/VA come from screener_data, TE is scored in Python. `python thesis.py "<name>" [--reason ..] [--send]` |
 | `fy_tracker.py` | FY return-target tracker (50% for each book, Lakshmi 04-Oct-2026): Modified Dietz FY-to-date return vs a compounding pace line. ONE module feeds the dashboard card (`app.render_fy_target`) and the digest block, so they can't disagree. `python fy_tracker.py` prints all four books. Also the **monthly returns heatmap** (`monthly_returns`, `python fy_tracker.py monthly [store]`). |
 | `worker.py` | **The always-on alert engine (Render Background Worker).** Live checks every 60s in market hours (weekdays) + NSE filings every 3 min + BSE filings every 2h **7 DAYS** (companies file board-meeting outcomes/results on Saturdays; the RSS feed is a ~1-day snapshot so a weekend filing ages off before Monday — `_within(..., weekends=True)` for filings, weekday-only for live/market checks; 01-Aug-2026, Vishal caught it). Exists because GitHub Actions' scheduler DROPPED entire mornings (23-Jul-2026: no scheduled run between 23:22 and 11:20). Shares `alerts.compute_fast_levels` / `alerts.fast_cycle` with the GitHub job so the two can never diverge. Start command must be `python -u worker.py` — without `-u` Python buffers stdout and the Render logs look dead. |
+| `scanner.py` | **Stock-picking setups → "New Stock Setups" Telegram group** (Vishal + Lakshmi, 01-Nov-2026). Every NSE stock from 5 years of NSE's own daily files, split/bonus-adjusted from `data/corp_actions.json`. `python scanner.py scan` prints; `run [weekly\|daily] [--force]` is the GitHub job. See the section below. |
 | `.github/workflows/alerts.yml` | The single CI workflow — see Schedule below |
 | ~~`*_schema.sql`~~ | (Historical — schema was applied to Supabase directly; no `.sql` files are committed in the repo.) |
 
@@ -1367,6 +1368,45 @@ Weekly trail for pf1: 11-Sep ₹7.73L · 18-Sep ₹7.72L · 25-Sep ₹8.53L · 0
 80 by 31 March, sold at 110 → realised profit 10 (dashboard, tax), growth this year 30
 (tracker); the first 20 only cancelled the dip." And the ₹51L "bought" / ₹42L "sold" are
 TURNOVER (the same rupees recycled ~4-5×), not capital — fresh money added = ₹9.2L.
+
+## Stock-setups scanner (`scanner.py`, Vishal + Lakshmi 01-Nov-2026)
+Finds NEW stocks to enter (not our holdings) and posts them to the **"New Stock Setups" group, chat_id -5153372612** (`notify.GROUP_CHAT_IDS["setups"]`, env override `TELEGRAM_CHAT_ID_SETUPS`). It is a plain group: if Telegram upgrades it to a supergroup the id changes to -100… and sends fail until updated.
+- **Data:** NSE `sec_bhavdata_full` daily files since Nov-2021, cached in `.cache/scan/days` (~160 MB; the Actions cache on GitHub). The holiday-republish guard applies, and NSE's 08-Aug-2022 file is xlsx.
+- **Splits/bonuses (House Rule #10):** taken from NSE's corporate-actions API, which answers a home IP only, so the list is COMMITTED in `data/corp_actions.json`. Ratios are read from the subject ("From Rs 10 To Rs 2" / "Bonus 1:1"), same-day actions multiply, and each is cross-checked against the real ex-date price step (512 actions, 0 mismatches). NSE's PREV_CLOSE is NOT adjusted on ex-dates, so don't derive factors from it. **Any >40% overnight move with no recorded action skips that stock from EVERY setup** (`gap_day`, last 260 sessions). A split newer than the saved list is caught that way, not mis-charted. GitHub can't refresh the list (the job logs "refresh failed"), so run `python scanner.py corp-actions` from Vishal's PC now and then and commit the file.
+- **Universe:** EQ/BE, in NSE's EQUITY_L (no ETFs), NOT in the Nifty 100, 20-day average turnover ≥ ₹1 Cr. Cap labels come from the niftyindices lists; "—" = outside Mid150/Small250/Micro250. **If the index lists or EQUITY_L fail to download, the run stops** (large caps or ETFs would slip in silently).
+- **Leader filter on every setup:** close > 50-DMA > 200-DMA, ≥75% of the 52-week high, 6-month return > the Smallcap 250 ETF.
+- **Setups:**
+  - multiyear: a weekly close above the highest weekly close of up to 5 years, unbroken ≥52 weeks;
+  - breakout: a 6-week base ≤25% deep or a 12-week base ≤35%, on ≥1.5× 50-day volume; stop = the tighter of the base low and entry × 0.92;
+  - pivot: a ≤10% 10-day range within 4% of a rising 21-EMA;
+  - pullback: touched the 21/50-EMA and still ≤5% above it;
+  - shakeout: undercut the 15-day low by ≥1%, then reclaimed;
+  - gapup: ≥3% over the prior high, held, ≥2× volume;
+  - forming: a tight ≤8% base on the 21-EMA, within 3% of its top (watch list).
+- **Cadence (GitHub `setups` job, 20:41 IST weekdays):**
+  - **Friday:** the week's list, top 5 per setup ranked fresh-first, plus "👀 Watch next week" (multi-year NEAR + forming), the stops/retests block and the scorecard.
+  - **Mon–Thu:** TRIGGERS ONLY (multi-year provisional daily cross, pivot, gap-up), silent when nothing fired. The same stock + setup is not re-posted within 14 days.
+  - Measured over 20 sessions: plain base breakouts run 2–23 a day, so they stay on Friday's list; triggers run 0–6 a day.
+- **Past-entry bands (Lakshmi asked):** ≤3% fresh, 3–8% stretched, >8% chasing. Chasing names are NOT listed, only named in a footnote; a 22× gap-up already 18% past entry with an 18% stop isn't a trade.
+- **Per stock:** what the company does (Screener "about", first sentence), cap and ₹ market cap, entry, stop (% from CMP), CMP vs entry, volume ×, % vs the 52-week high, P/E, run-rate P/E (CMP ÷ latest-quarter EPS × 4; a proxy, since there are no analyst forecasts), the setup's context, and 📌 if one of us holds or watches it. Screener is fetched only for the names printed (~1.5 s each); there are NO model calls.
+- **Self-scoring (`scan_setups`):** every posted setup is logged after a successful send, giving:
+  - ❌ a stop-hit note (once);
+  - 🔁 "retest holding" when a breakout comes back to within 2% of its entry on <1× volume, 4–30 days after posting;
+  - 4/8/13-week returns from the post-day close vs the SC250 ETF, summarised in Friday's 📊 line once ≥5 are scored.
+
+  The table also dedups a re-run (same day + mode = skip). Without the table the job still posts but logs nothing and warns.
+- **Needs a one-time table:**
+  ```sql
+  create table if not exists scan_setups (
+    id bigserial primary key, posted_on date not null, symbol text not null,
+    setup text not null, mode text not null, name text, cap text,
+    entry numeric, stop numeric, close numeric, status text default 'open',
+    status_on date, retest_on date,
+    ret_4w numeric, bench_4w numeric, ret_8w numeric, bench_8w numeric,
+    ret_13w numeric, bench_13w numeric, created_at timestamptz default now(),
+    unique (posted_on, symbol, setup));
+  ```
+- **Run by hand:** tick-boxes `run_setups_now` + `setups_mode` (auto = deduped; weekly/daily = force). Locally: `ALERTS_DRY_RUN=1 python scanner.py run weekly --force` prints the message. `pyarrow` is installed in the job step only, not in requirements.txt (the Render web service doesn't need it).
 
 ## Monthly returns heatmap (Scorecard tab, Vishal 31-Oct-2026)
 Broker-style grid: one cell per month (book %, index % in small grey beneath, hover for the lead/lag), with a compounded **Year** column and the index's year. `fy_tracker.monthly_returns` → table `monthly_returns` → `app.render_monthly_returns`.
