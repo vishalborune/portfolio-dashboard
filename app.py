@@ -968,7 +968,7 @@ def render_fy_target(k: dict):
         st.markdown(f"**{title}** · <span style='color:#64748b'>{r['note']}</span>",
                     unsafe_allow_html=True)
         if r["status"] != "OK":
-            st.warning("Tracker paused until the log is fixed — a wrong number is worse "
+            st.warning("Tracker paused — a wrong number is worse "
                        "than none:\n\n" + "\n".join(f"- {p}" for p in r["problems"]))
             return
         col, words = fy_tracker.verdict(r)

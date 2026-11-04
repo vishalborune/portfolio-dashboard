@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import date, timedelta
 
 # None = GROWTH MODE (Vishal 05-Oct-2026, his India book only): no fixed target or
@@ -90,19 +91,31 @@ def _all(client, table, cols, pf):
 # prices
 # ---------------------------------------------------------------------------
 
-_FILE_MEMO: dict = {}
+_FILE_MEMO: dict = {}          # d -> (retry_after, closes), for days not fully on disk
+FILE_RETRY_SECS = 600
+
+
+def _file_complete(closes: dict) -> bool:
+    return any(k.endswith(".NS") for k in closes) and any(k.endswith(".BO") for k in closes)
 
 
 def _file_closes(d: date) -> dict:
     """{ticker: raw close} for EVERY NSE + BSE name on trading day d, from the
-    exchanges' own files. Cached per date (a past day's file never changes)."""
-    if d in _FILE_MEMO:
-        return _FILE_MEMO[d]
+    exchanges' own files. Only a day with BOTH exchanges is cached to disk (a past
+    day's file never changes). Lakshmi's card paused on 04-Nov-2026 listing every
+    untracked NSE name: NSE's download had failed while BSE's worked, and the
+    BSE-only result was saved and reused as if it were the whole day."""
+    hit = _FILE_MEMO.get(d)
+    if hit and time.time() < hit[0]:
+        return hit[1]
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, f"bhav_closes_{d:%Y%m%d}.json")
     if os.path.exists(path):
         try:
-            return json.load(open(path, encoding="utf-8"))
+            cached = json.load(open(path, encoding="utf-8"))
+            if _file_complete(cached):
+                return cached
+            print(f"  [fy] ignoring partial cached file for {d}")
         except Exception:
             pass
     import bhavcopy
@@ -124,11 +137,14 @@ def _file_closes(d: date) -> dict:
                 out.setdefault(f"{int(r['SC_CODE'])}.BO", float(r["CLOSE"]))
     except Exception as e:
         print(f"  [fy] BSE file {d} unreadable: {e}")
-    if out:
+    if _file_complete(out):
         json.dump(out, open(path, "w", encoding="utf-8"))
-    # Memo empties too (a holiday has no file — 31-Mar-2026 was one), but only
-    # per process: a failed download must not be cached to disk forever.
-    _FILE_MEMO[d] = out
+    else:
+        print(f"  [fy] exchange files for {d} incomplete: "
+              f"{sum(k.endswith('.NS') for k in out)} NSE, {sum(k.endswith('.BO') for k in out)} BSE names")
+    # Memo everything briefly (a holiday has no file — 31-Mar-2026 was one), so one
+    # run doesn't re-download per ticker; a failed download is retried after this.
+    _FILE_MEMO[d] = (time.time() + FILE_RETRY_SECS, out)
     return out
 
 
@@ -177,6 +193,19 @@ def close_on(client, ticker: str, d: date):
                     px = closes.get(BSE_BEFORE_NSE[ticker])
                 return px
     return None
+
+
+def _file_missing(ticker: str, d: date) -> bool:
+    """True when `ticker`'s exchange file for d didn't download (as opposed to the
+    stock genuinely not being in it). Same walk-back as close_on."""
+    suffix = ticker[-3:]
+    for back in range(0, 7):
+        dd = d - timedelta(days=back)
+        if dd.weekday() < 5:
+            closes = _file_closes(dd)
+            if closes:
+                return not any(k.endswith(suffix) for k in closes)
+    return True
 
 
 def latest_close(client, ticker: str):
@@ -256,7 +285,8 @@ def compute(client, pf: int, v_end: float | None = None, end: date | None = None
     for tk, q in opening.items():
         px = close_on(client, tk, start)
         if not px:
-            problems.append(f"{tk}: no close found for {start:%d %b %Y}")
+            problems.append(f"{tk}: exchange file for {start:%d %b %Y} didn't download — will retry"
+                            if _file_missing(tk, start) else f"{tk}: no close found for {start:%d %b %Y}")
             continue
         # A split/bonus between the start and the first later trade makes the
         # share count and the start price disagree in basis. Bonus lots logged

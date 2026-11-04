@@ -1352,6 +1352,12 @@ First readings 04-Oct-2026: Vishal +50.6% (₹7.6L) vs pace +23.1%, SC250 +23.1%
 target already reached; Lakshmi +3.4% vs pace +10.0% (SC250 −2.9%); Abinaya +17.2% vs pace +10.0%; household
 +8.1%; US +3.1% vs +1.2% (QQQ +1.1%).
 
+**PARTIAL EXCHANGE FILE PAUSED THE CARD (04-Nov-2026, Lakshmi's dashboard listed 15 stocks as "no close found for 10 Jul").** Those 15 were held on the start date and sold before the 01-Sep backfill, so `sme_daily_prices` never had them and `close_on` fell through to a live download on the web service.
+- **The bug:** `_file_closes` treated NSE-failed + BSE-OK as the whole day, saved it to `.cache` and memoised it for the process, so one failed NSE download stuck until the next restart. Reproduced with the exact 15 names. The server's own log wasn't available, so the NSE failure itself is inferred.
+- **Code fix:** only a day with both exchanges is written to disk, a partial cached file is ignored, and an incomplete day is retried after `FILE_RETRY_SECS` (10 min; the card's own cache is 1 hour). The message now says the file didn't download instead of blaming the trade log.
+- **Data fix:** the start-date closes for every such name (pf1 10 on 30-Mar; pf2 + pf3 26 on 10-Jul) are stored in `sme_daily_prices`, checked against the file. With both downloads disabled all three books give identical numbers. These lone rows are harmless: the exit audit reads only dates after the sale, and `signals` needs `MIN_BHAV_*` rows before trusting a series.
+- **`monthly_returns.computed_at` is the row's first insert, not its last update** (the upsert doesn't send it), so it can't be used to judge freshness.
+
 **GROWTH MODE for Vishal's India book (05-Oct-2026).** After walking through why the
 tracker's ₹7.6L exceeds his dashboard's realised + unrealised (₹5.53L — the dashboard
 measures from PURCHASE price, so the first ₹2.1L of this year's recovery only cancels the
