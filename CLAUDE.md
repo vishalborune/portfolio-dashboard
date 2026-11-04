@@ -130,6 +130,25 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    the 40wEMA to ₹44.25 vs ₹42.40 adjusted; state MAINTAIN/ADD either way, so no false
    signal — but it had sat unregistered since the 02-Sep backfill. Verified vs Business
    Standard / Goodreturns / Trendlyne and our own raw step (House Rule #5).
+   **THE DETECTOR ITSELF WAS HALF-BLIND UNTIL 04-Nov-2026.** `scan_supabase` built its ticker
+   list with a plain `select("ticker")`, which hit Supabase's silent 1,000-row cap: 67 of 174
+   tickers were scanned while it still printed "all clear". It now walks the table one ticker
+   at a time and prints how many it scanned; a failed scan returns None and reports "NOT all
+   clear" instead of an empty, clean-looking result. The full scan found five real splits,
+   registered from NSE's own record (`data/corp_actions.json`) and matched to the raw step:
+   **KOTAKBANK** 14-Jan-2026 ÷5 (a FALSE EXIT on Lakshmi's watchlist: 40wEMA ₹605 vs ₹459
+   close; true ₹412, MAINTAIN/ADD), **COFORGE** 04-Jun-2025 ÷5, **GLOBAL** 10-Dec-2024 ÷2.5,
+   **JTLIND** 14-Nov-2024 ÷2, **BECTORFOOD** 12-Dec-2025 ÷5.
+   `EXPLAINED_STEPS` holds checked steps that are NOT share-count changes, so they stop being
+   re-flagged nightly: the Strides/OneSource (06-Dec-2024) and Sterlite/STL Networks
+   (24-Apr-2025) demergers, which have no true ratio and were left unadjusted (a trial
+   adjustment moved the 40wEMA ₹1,036→₹1,030 and ₹580.1→₹579.6, no state change), and real
+   NBIS/RKLB moves (no split on record). Rows more than 7 days apart no longer count as an
+   overnight step, so a sold stock's stored rows can't false-flag; the cost is that a split
+   during such a data gap isn't caught here. **Findings still only print to the job log.**
+   **Testing gotcha:** `signals` caches per process even in bare scripts, so compare
+   before/after readings in separate processes (a same-process trial returned identical
+   numbers and proved nothing).
 
 ## Dashboard performance: `db._bust()` must NOT clear market caches (01-Sep-2026)
 It used to call `st.cache_data.clear()`, which drops EVERY cache in the app — including

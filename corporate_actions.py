@@ -120,10 +120,65 @@ CORPORATE_ACTIONS = [
                 "Goodreturns, Trendlyne). Flagged by the gap detector 18-Oct-2026 after "
                 "the fixed backfill run; it had sat unregistered since the 02-Sep backfill.",
     },
+    # The next five were invisible until the scan covered every ticker (04-Nov-2026).
+    # Each ratio is from NSE's own corporate-action record (data/corp_actions.json)
+    # and matches the raw step in NSE's file.
+    {
+        "ticker": "KOTAKBANK.NS",
+        "ex_date": "2026-01-14",
+        "action": "1:5 split (FV ₹5 → ₹1)",
+        "price_divisor": 5.0,
+        "note": "₹2,132.60 → ₹421.00. Unadjusted it put the 40wEMA at ₹605 against a ₹459 "
+                "close: a FALSE EXIT on Lakshmi's watchlist, added 02-Nov-2026.",
+    },
+    {
+        "ticker": "COFORGE.NS",
+        "ex_date": "2025-06-04",
+        "action": "1:5 split (FV ₹10 → ₹2)",
+        "price_divisor": 5.0,
+        "note": "₹8,499.00 → ₹1,724.50. Lakshmi holds and watches it.",
+    },
+    {
+        "ticker": "GLOBAL.NS",
+        "ex_date": "2024-12-10",
+        "action": "2:5 split (FV ₹5 → ₹2)",
+        "price_divisor": 2.5,
+        "note": "₹204.52 → ₹86.04. Lakshmi holds it.",
+    },
+    {
+        "ticker": "JTLIND.NS",
+        "ex_date": "2024-11-14",
+        "action": "1:2 split (FV ₹2 → ₹1)",
+        "price_divisor": 2.0,
+        "note": "₹183.79 → ₹98.15. On Lakshmi's watchlist.",
+    },
+    {
+        "ticker": "BECTORFOOD.NS",
+        "ex_date": "2025-12-12",
+        "action": "1:5 split (FV ₹10 → ₹2)",
+        "price_divisor": 5.0,
+        "note": "₹1,310.30 → ₹271.20. Not held or watched today; its rows are still stored.",
+    },
 ]
+
+# Big steps that are checked and are NOT a share-count change, so there is no ratio to
+# register. Listed so they stop being re-flagged every night and burying a real finding.
+EXPLAINED_STEPS = {
+    ("STAR.NS", "2024-12-06"): "OneSource demerger (record date 06-Dec-2024, 1 for 2): value moved to a new company",
+    ("STLTECH.NS", "2025-04-24"): "STL Networks demerger (record date 24-Apr-2025, 1 for 1): value moved to a new company",
+    ("NBIS", "2025-01-27"): "real move: no split on record",
+    ("NBIS", "2025-09-09"): "real move: no split on record",
+    ("NBIS", "2026-07-30"): "real move: no split on record",
+    ("NBIS", "2026-08-12"): "real move: no split on record",
+    ("RKLB", "2024-11-13"): "real move: no split on record",
+    ("RKLB", "2025-01-21"): "real move: no split on record",
+    ("RKLB", "2026-05-08"): "real move: no split on record",
+}
 
 GAP_THRESHOLD_PCT = 25.0   # a >25% overnight close move == probable split/bonus
 _EX_DATE_TOLERANCE_DAYS = 3  # data date vs official ex-date can differ slightly
+_MAX_OVERNIGHT_DAYS = 7    # rows further apart than this aren't an overnight step
+                           # (a sold stock's stored rows can be months apart)
 
 
 def _actions_for(ticker: str) -> list[dict]:
@@ -160,7 +215,9 @@ def adjust_prices(df: pd.DataFrame,
 
 def _is_explained(ticker: str, gap_date: pd.Timestamp) -> bool:
     """True if a >25% step on this date is accounted for by a registered
-    action (within a few days of its ex-date)."""
+    action (within a few days of its ex-date) or a checked EXPLAINED_STEPS entry."""
+    if (ticker, gap_date.date().isoformat()) in EXPLAINED_STEPS:
+        return True
     for a in _actions_for(ticker):
         if abs((gap_date - pd.Timestamp(a["ex_date"])).days) <= _EX_DATE_TOLERANCE_DAYS:
             return True
@@ -184,6 +241,8 @@ def find_unadjusted_gaps(df: pd.DataFrame,
         pct = g["close"].pct_change() * 100
         for i in g.index[pct.abs() > threshold]:
             gap_date = g[date_col].iloc[i]
+            if (gap_date - g[date_col].iloc[i - 1]).days > _MAX_OVERNIGHT_DAYS:
+                continue
             if _is_explained(ticker, gap_date):
                 continue
             prev_close = g["close"].iloc[i - 1] if i > 0 else float("nan")
@@ -202,26 +261,40 @@ def find_unadjusted_gaps(df: pd.DataFrame,
 def scan_supabase(client) -> list[dict]:
     """Fetch RAW prices for every ticker in sme_daily_prices and return any
     unadjusted split/bonus signatures. Per-ticker query keeps each under the
-    1000-row cap. Best-effort: DB hiccups return [] rather than crash a caller
-    (the daily job wires this in, and must never be broken by a diagnostic)."""
+    1000-row cap. Best-effort: DB hiccups return None rather than crash a caller
+    (the daily job wires this in, and must never be broken by a diagnostic).
+
+    The ticker list walks the table one ticker at a time (04-Nov-2026): a plain
+    select("ticker") hit the silent 1000-row cap, so the scan saw only the 67
+    tickers in the first 1000 of 65,000+ rows, while still reporting all clear."""
     try:
-        tickers = sorted({r["ticker"] for r in
-                          (client.table("sme_daily_prices").select("ticker").execute().data or [])})
-        frames = []
+        tickers, last = [], None
+        while True:
+            q = client.table("sme_daily_prices").select("ticker").order("ticker").limit(1)
+            r = (q.gt("ticker", last) if last else q).execute().data or []
+            if not r:
+                break
+            last = r[0]["ticker"]
+            tickers.append(last)
+        findings = []
         for t in tickers:
             rows = (client.table("sme_daily_prices").select("ticker, price_date, close")
                     .eq("ticker", t).order("price_date", desc=True).execute().data or [])
             if rows:
-                frames.append(pd.DataFrame(rows))
-        raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-        return find_unadjusted_gaps(raw)
+                findings.extend(find_unadjusted_gaps(pd.DataFrame(rows)))
+        print(f"  [corp-actions] scanned {len(tickers)} tickers")
+        return findings
     except Exception as e:
         print(f"  [corp-actions] scan failed: {type(e).__name__}: {e}")
-        return []
+        return None
 
 
-def report(findings: list[dict], n_tickers: int | None = None) -> None:
-    """Print a scan result the same way for the CLI and the daily-job hook."""
+def report(findings: list[dict] | None, n_tickers: int | None = None) -> None:
+    """Print a scan result the same way for the CLI and the daily-job hook.
+    None means the scan didn't run, which must never read as all clear."""
+    if findings is None:
+        print("[corp-actions scan] ⚠️ did not complete — result unknown, NOT all clear")
+        return
     header = "[corp-actions scan]"
     if n_tickers is not None:
         header += f" {n_tickers} tickers checked,"
