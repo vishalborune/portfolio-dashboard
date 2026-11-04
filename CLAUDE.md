@@ -152,10 +152,18 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    **SPLITS AND BONUSES ARE NOW AUTOMATIC (04-Nov-2026, Vishal: "we just need the right data
    ... you figure out what is needed").** Nothing here needs a person. The registry above stays
    as hand-verified history and always wins over the automatic record within a week.
-   - **Record:** `corporate_actions.sync` (GitHub `ca-sync` job, 07:07 and 18:53 IST, 7 days)
+   - **Record:** `corporate_actions.sync` (GitHub `ca-sync` job, 07:07 and 20:08 IST, 7 days)
      writes `data/corp_actions_auto.json` from NSE's API (bulk, includes FUTURE ex-dates; no
-     longer limited to today), BSE's `DefaultData` API (per scrip, for `.BO` names) and Yahoo
-     (US, and a last-resort check on a fresh unexplained crash). Only stored tickers reach the
+     longer limited to today), BSE's daily file (`_bse_events`, for `.BO` names) and Yahoo (US,
+     and a last-resort check on a fresh unexplained crash). **BSE's corporate-action API answers
+     a home IP but 403s GitHub, so don't reintroduce it:** the daily file works anywhere and
+     restates `FACE_VALUE` and `TOTAL NO OF SHRS` on the ex-date. It gives no advance notice, so a
+     BSE-only event lands the same evening; a dual-listed `.BO` ticker also gets NSE's record,
+     matched on BSE's `SC_NAME`, and one event counts from one source only (same-date entries
+     multiply). Backtest of `_bse_events` over 412 files, Mar-2025 to Nov-2026, against NSE's
+     record: of 128 events visible in BSE's data, 123 right ratio, 1 wrong (RM Drip's 5:7 read as
+     1:1), 4 missed (two 1:10 bonuses and two UEL events), 0 false alarms. Before changing that
+     rule, re-run this backtest: each tweak moved other names. Only stored tickers reach the
      file, so a commit and the redeploy it causes are rare (8 events in 2.4 years). A failed
      source keeps what's on file and turns the run red, which emails the owner. Tick-box
      `ca_sync_now` runs it alone. This also closes a hole the gap detector can't: a 1:4 bonus

@@ -414,23 +414,75 @@ def parse_factor(subject: str):
     return round(f, 6) if f != 1.0 else None
 
 
-def _fetch_bse(code: str, frm: date, to: date) -> list[tuple]:
-    import requests
-    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36",
-         "Referer": "https://www.bseindia.com/", "Origin": "https://www.bseindia.com",
-         "Accept": "application/json"}
-    r = requests.get("https://api.bseindia.com/BseIndiaAPI/api/DefaultData/w",
-                     params={"Fdate": f"{frm:%Y%m%d}", "TDate": f"{to:%Y%m%d}", "Purposecode": "",
-                             "ddlcategorys": "E", "ddlindustrys": "", "scripcode": code,
-                             "segment": "0", "strSearch": "S"}, headers=h, timeout=30)
-    if r.status_code != 200:
-        raise RuntimeError(f"HTTP {r.status_code}, {len(r.content)} bytes, starts {r.text[:80]!r}")
+# bonus factors: a new shares per b held. Nearly every real bonus uses a simple ratio.
+_BONUS = sorted({(a + b) / b: (a, b) for b in range(10, 0, -1) for a in range(10, 0, -1)}.items())
+_SIMPLE = {(a, 1) for a in range(1, 11)} | {(1, b) for b in (2, 3, 4, 5, 10)} | {(3, 2), (2, 3), (3, 4), (4, 5), (2, 5), (3, 5)}
+
+
+def _pick_bonus(r: float, step: float):
+    """(factor, (a, b)) for a share-count ratio r and price step, or None. In order: a
+    simple ratio the shares match exactly; a simple ratio of 2x or more that shares and
+    price roughly agree on (CWD's 4:1 with shares ×5.48, price ×4.75); an unusual ratio
+    only if the shares match it exactly (RM Drip's 5:7). Anything else is not a bonus."""
+    simple = [x for x in _BONUS if x[1] in _SIMPLE]
+    near = min(simple, key=lambda v: abs(math.log(v[0] / r)))
+    if abs(near[0] / r - 1) <= 0.005:
+        return near
+    big = min((x for x in simple if x[0] >= 2), key=lambda v: abs(math.log(v[0] / r)) + abs(math.log(v[0] / step)))
+    if abs(math.log(big[0] / r)) <= math.log(1.25):
+        return big
+    near = min(_BONUS, key=lambda v: abs(math.log(v[0] / r)))
+    return near if abs(near[0] / r - 1) <= 0.005 else None
+
+
+def _bse_events(files: list[tuple], codes: set | None = None) -> list[tuple]:
+    """Splits and bonuses from consecutive BSE daily files [(date, df), ...]:
+    [(ex-date, scrip code, factor, subject)]. BSE's API refuses GitHub's servers (403)
+    but this file downloads anywhere, and it restates FACE_VALUE and TOTAL NO OF SHRS
+    around the ex-date. It gives no advance notice, so an event lands the same evening.
+
+    The share count is the truth for the total, and a same-day split + bonus shows only
+    there (Bajaj Finance: FV 2 to 1 but shares ×10). It can move a session away from the
+    price step (V-Mart), so it's read over a small window. See _pick_bonus: a big ratio
+    may round, but a small one must match almost exactly, because a QIP or conversion on
+    a weak day otherwise reads as a bonus (Sumeet Industries: shares ×1.32, price -12%,
+    no bonus), and crediting shares that were never issued is worse than missing a 1:10."""
+    need = ["CLOSE", "FACE_VALUE", "TOTAL NO OF SHRS"]
+    tables = []
+    for d, df in files:
+        if any(c not in df.columns for c in need + ["SC_CODE"]):
+            raise RuntimeError(f"BSE file {d} columns changed: {list(df.columns)[:30]}")
+        x = df.drop_duplicates("SC_CODE").set_index("SC_CODE")[need].apply(pd.to_numeric, errors="coerce")
+        tables.append(x.loc[x.index.isin(codes)] if codes else x)
     out = []
-    for x in r.json() or []:
-        f = parse_factor(x.get("Purpose"))
-        ex = str(x.get("exdate") or "")
-        if f and len(ex) == 8:
-            out.append((f"{ex[:4]}-{ex[4:6]}-{ex[6:]}", f, " ".join(str(x["Purpose"]).split())))
+    for i in range(1, len(tables)):
+        a, b = tables[i - 1], tables[i]
+        idx = a.index.intersection(b.index)
+        step = (a.loc[idx, "CLOSE"] / b.loc[idx, "CLOSE"])
+        fv_moved = (a.loc[idx, "FACE_VALUE"] != b.loc[idx, "FACE_VALUE"]) & (a.loc[idx, "FACE_VALUE"] > 0) & (b.loc[idx, "FACE_VALUE"] > 0)
+        s_lo, s_hi = tables[max(i - 2, 0)], tables[min(i + 1, len(tables) - 1)]
+        for code in idx[fv_moved | (step >= 1.1)]:
+            if code not in s_lo.index or code not in s_hi.index:
+                continue
+            st, s0, s1 = float(step[code]), float(s_lo.loc[code, "TOTAL NO OF SHRS"]), float(s_hi.loc[code, "TOTAL NO OF SHRS"])
+            fv0, fv1 = float(a.loc[code, "FACE_VALUE"]), float(b.loc[code, "FACE_VALUE"])
+            if not (st > 0 and s0 > 0 and s1 > 0):
+                continue
+            r = s1 / s0
+            if fv_moved[code]:
+                g = fv0 / fv1
+                # shares beyond the face-value change are a same-day bonus (or lag: then none)
+                c, ab = (_pick_bonus(r / g, st / g) if r / g >= 1.1 else None) or (1.0, None)
+                f = g * c
+                if f / _STEP_TOLERANCE <= st <= f * _STEP_TOLERANCE:
+                    word = "Split" if g > 1 else "Consolidation"
+                    plus = f" + bonus {ab[0]}:{ab[1]}" if ab else ""
+                    out.append((files[i][0].isoformat(), int(code), round(f, 6), f"{word} FV {fv0:g} to {fv1:g}{plus} (BSE file)"))
+            elif r >= 1.1:
+                hit = _pick_bonus(r, st)
+                if hit and hit[0] / 1.25 <= st <= hit[0] * 1.25:
+                    f, (x, y) = hit
+                    out.append((files[i][0].isoformat(), int(code), round(f, 6), f"Bonus {x}:{y} (BSE file, shares {s0:.0f} to {s1:.0f})"))
     return out
 
 
@@ -470,27 +522,51 @@ def sync(client, frm: date | None = None) -> tuple[bool, list[str]]:
     tickers = _stored_tickers(client)
     found, failed = [], []
 
-    nse = {t[:-3]: t for t in tickers if t.endswith(".NS")}
+    # BSE: the last few sessions' files, so a missed run still catches up.
+    import bhavcopy
+    bse = {}
+    for t in (t for t in tickers if t.endswith(".BO")):
+        code = t[:-3] if t[:-3].isdigit() else (bhavcopy.SME_STOCKS.get(t) or {}).get("scrip_code")
+        if code:
+            bse.setdefault(int(code), []).append(t)
+        else:
+            failed.append(f"BSE {t}: no scrip code")
+    files = []
+    try:
+        for back in range(9, -1, -1):
+            d = today - timedelta(days=back)
+            df = bhavcopy.fetch_bse_bhavcopy(d) if d.weekday() < 5 else pd.DataFrame()
+            if not df.empty:
+                files.append((d, df))
+        if len(files) < 2:
+            raise RuntimeError(f"only {len(files)} daily files in the last 10 days")
+    except Exception as e:
+        failed.append(f"BSE files: {type(e).__name__}: {str(e)[:120]}")
+
+    # NSE first, so its ratio and advance notice win. A dual-listed BSE ticker gets the
+    # same record, matched on the NSE symbol BSE prints in SC_NAME.
+    nse = {t[:-3]: [t] for t in tickers if t.endswith(".NS")}
+    if files:
+        latest = files[-1][1]
+        for code, ts in bse.items():
+            row = latest[latest["SC_CODE"] == code]
+            if len(row):
+                nse.setdefault(str(row.iloc[0]["SC_NAME"]).strip(), []).extend(ts)
     try:
         import scanner
         for e in scanner._fetch_corporate_actions(frm, to):
-            if e["symbol"] in nse:
-                found.append({"ticker": nse[e["symbol"]], "ex": e["ex"], "factor": e["factor"],
+            for tk in nse.get(e["symbol"], []):
+                found.append({"ticker": tk, "ex": e["ex"], "factor": e["factor"],
                               "subject": " ".join(e["subject"].split()), "source": "NSE"})
     except Exception as e:
         failed.append(f"NSE: {type(e).__name__}: {str(e)[:120]}")
 
-    import bhavcopy
-    for t in (t for t in tickers if t.endswith(".BO")):
-        code = t[:-3] if t[:-3].isdigit() else (bhavcopy.SME_STOCKS.get(t) or {}).get("scrip_code")
-        if not code:
-            failed.append(f"BSE {t}: no scrip code")
-            continue
+    if len(files) >= 2:
         try:
-            found += [{"ticker": t, "ex": ex, "factor": f, "subject": s, "source": "BSE"}
-                      for ex, f, s in _fetch_bse(str(code), frm, to)]
+            found += [{"ticker": tk, "ex": ex, "factor": f, "subject": s, "source": "BSE file"}
+                      for ex, code, f, s in _bse_events(files, set(bse)) for tk in bse[code]]
         except Exception as e:
-            failed.append(f"BSE {t}: {type(e).__name__}: {str(e)[:120]}")
+            failed.append(f"BSE files: {type(e).__name__}: {str(e)[:120]}")
 
     # US bars are stored split-adjusted, so a split only needs registering when the
     # stored rows really do step; otherwise adjusting would divide twice.
@@ -517,7 +593,10 @@ def sync(client, frm: date | None = None) -> tuple[bool, list[str]]:
     merged = {(e["ticker"], e["ex"], e["subject"].lower()): e for e in have}
     for e in found:
         k = (e["ticker"], e["ex"], e["subject"].lower())
-        if k not in merged and _relevant(e):
+        # one event, one source: entries on a date multiply, so a second source's copy must not count
+        other = any(x["ticker"] == e["ticker"] and x["source"] != e["source"]
+                    and abs((pd.Timestamp(x["ex"]) - pd.Timestamp(e["ex"])).days) <= 5 for x in merged.values())
+        if k not in merged and not other and _relevant(e):
             merged[k] = e
     if len(merged) != len(have):
         _write_auto(list(merged.values()))

@@ -32,7 +32,7 @@ on:
     - cron: "11 15 * * 1-5"               # setups: stock-picking scanner -> "New Stock Setups" group, triggers only, 20:41 IST Mon-Fri
     - cron: "11 3 * * 6"                  # setups: the week's list, Saturday 08:41 IST (as of Friday's close)
     - cron: "37 1 * * *"                  # ca-sync: split/bonus record, 07:07 IST, before the worker credits at 08:00
-    - cron: "23 13 * * *"                 # ca-sync: 18:53 IST, so an event announced today is known by tomorrow morning
+    - cron: "38 14 * * *"                 # ca-sync: 20:08 IST, after the BSE file and before eod-entries 20:20 / states 20:47
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -606,11 +606,11 @@ jobs:
           ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
 
   ca-sync:
-    # Split/bonus record from NSE, BSE and Yahoo (corporate_actions.sync), committed so
+    # Split/bonus record from NSE's API, BSE's daily file and Yahoo (corporate_actions.sync), committed so
     # the worker and dashboards read it from the repo. Only tracked names reach the file,
     # so a commit (and the redeploy it causes) is rare. Runs apply_due as a backstop to
     # the worker's morning pass; both are idempotent. A failed source turns the run red.
-    if: github.event.schedule == '37 1 * * *' || github.event.schedule == '23 13 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.ca_sync_now == 'true')
+    if: github.event.schedule == '37 1 * * *' || github.event.schedule == '38 14 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.ca_sync_now == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: write
