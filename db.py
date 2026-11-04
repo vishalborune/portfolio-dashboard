@@ -8,6 +8,7 @@ stays snappy without hammering the database.
 from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
+import re
 import pandas as pd
 import streamlit as st
 from supabase import create_client, Client
@@ -284,6 +285,15 @@ def fifo_lots(holding_id: int):
         if qty <= 0:
             continue
         if t.get("transaction_type") == "buy":
+            # A split restates every older lot, as the demat does. As a zero-cost
+            # lot, the first sale after a 1:5 would be costed at the pre-split price.
+            m = re.match(r"Auto split x([\d.]+)", str(t.get("notes") or ""))
+            if m and float(t.get("price") or 0) == 0:
+                f = float(m.group(1))
+                for l in lots:
+                    if str(l["date"]) < str(t.get("transaction_date")):
+                        l["qty"], l["price"] = l["qty"] * f, l["price"] / f
+                continue
             lots.append({"qty": qty, "price": float(t.get("price") or 0),
                          "date": t.get("transaction_date")})
         elif t.get("transaction_type") == "sell":

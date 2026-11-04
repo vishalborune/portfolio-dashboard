@@ -158,11 +158,22 @@ def main():
     morning_levels_day = None   # morning 5/10-DMA order levels — once per day
     last_digest_try = 0.0       # weekly digest attempt throttle (Friday evening)
     monthly_ret_day = None      # monthly returns heatmap — once per night, after the store
+    ca_day = None               # split/bonus credits — once a morning, before the levels
 
     while True:
         try:
             now = _now()
             today = now.date()
+
+            # ---- split/bonus credits for today's ex-dates, before the levels --
+            if now.hour >= 8 and ca_day != today:
+                ca_day = today
+                try:
+                    import corporate_actions
+                    corporate_actions.apply_due(client)
+                except Exception as e:
+                    print(f"⚠️ [worker] corporate-action credits failed: {type(e).__name__}: {e}")
+                    traceback.print_exc()
 
             # ---- refresh the day's levels once, just before the open --------
             if _within(now, FILINGS_OPEN, MARKET_CLOSE) and levels_day != today:

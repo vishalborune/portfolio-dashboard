@@ -31,6 +31,8 @@ on:
     - cron: "20 3 * * 6"                  # us-digest: Saturday 08:50 IST backstop (worker sends it after the 07:00 US store; own delivery marker)
     - cron: "11 15 * * 1-5"               # setups: stock-picking scanner -> "New Stock Setups" group, triggers only, 20:41 IST Mon-Fri
     - cron: "11 3 * * 6"                  # setups: the week's list, Saturday 08:41 IST (as of Friday's close)
+    - cron: "37 1 * * *"                  # ca-sync: split/bonus record, 07:07 IST, before the worker credits at 08:00
+    - cron: "23 13 * * *"                 # ca-sync: 18:53 IST, so an event announced today is known by tomorrow morning
   workflow_dispatch:                       # manual run button
     inputs:
       run_backfill:
@@ -97,6 +99,10 @@ on:
         description: "Run the stock-setups scanner now (posts to the New Stock Setups group)?"
         type: boolean
         default: false
+      ca_sync_now:
+        description: "Refresh the split/bonus record now (runs that job alone)?"
+        type: boolean
+        default: false
       setups_mode:
         description: "Setups mode when run by hand: auto (Sat weekly / Mon-Fri triggers, deduped) or force weekly / daily"
         type: choice
@@ -110,7 +116,7 @@ on:
 jobs:
   states:
     # the setups button runs the scanner alone — not every alert job with it
-    if: github.event.schedule == '17 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
+    if: github.event.schedule == '17 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true' && github.event.inputs.ca_sync_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -152,7 +158,7 @@ jobs:
     # Bulk/block deals in stocks you hold or watch. 21:15 IST — after NSE
     # publishes the daily deal CSVs (EOD data; no intraday feed exists).
     # the setups button runs the scanner alone — not every alert job with it
-    if: github.event.schedule == '45 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
+    if: github.event.schedule == '45 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true' && github.event.inputs.ca_sync_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -173,7 +179,7 @@ jobs:
     # The ONLY entry check for SME names (EOD data is fine per Lakshmi) + a final
     # mainboard pass. 20:20 IST. Also runs on a manual dispatch (quick, harmless).
     # the setups button runs the scanner alone — not every alert job with it
-    if: github.event.schedule == '50 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
+    if: github.event.schedule == '50 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true' && github.event.inputs.ca_sync_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -426,7 +432,7 @@ jobs:
     # best-effort by design -- see bhavcopy.py for the degrade-gracefully
     # logic (missing day just gets skipped, never breaks the workflow).
     # the setups button runs the scanner alone — not every alert job with it
-    if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
+    if: github.event.schedule == '30 14 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true' && github.event.inputs.ca_sync_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -547,7 +553,7 @@ jobs:
     # Scheduled AFTER bhavcopy (20:30 IST) so SME closes for the day exist.
     # Also runs on manual dispatch so the first journal entry can be tested.
     # the setups button runs the scanner alone — not every alert job with it
-    if: github.event.schedule == '0 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true')
+    if: github.event.schedule == '0 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_setups_now != 'true' && github.event.inputs.ca_sync_now != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -598,3 +604,33 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ALERTS_DRY_RUN: ${{ github.event.inputs.dry_run }}
+
+  ca-sync:
+    # Split/bonus record from NSE, BSE and Yahoo (corporate_actions.sync), committed so
+    # the worker and dashboards read it from the repo. Only tracked names reach the file,
+    # so a commit (and the redeploy it causes) is rare. Runs apply_due as a backstop to
+    # the worker's morning pass; both are idempotent. A failed source turns the run red.
+    if: github.event.schedule == '37 1 * * *' || github.event.schedule == '23 13 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.ca_sync_now == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python corporate_actions.py sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      - name: Commit the record if it changed
+        if: always()
+        run: |
+          git add data/corp_actions_auto.json
+          git diff --cached --quiet && exit 0
+          git config user.name "portfolio-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Split/bonus record: nightly sync"
+          git pull --rebase origin main
+          git push origin HEAD:main

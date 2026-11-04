@@ -217,6 +217,23 @@ def vol_context(vol_ratio) -> str:
     return f"\nVolume: {vol_ratio:.1f}x 10-wk avg"
 
 
+_GAP_HOLD: dict = {}
+
+
+def _gap_hold(client, ticker: str):
+    """A fresh, unexplained >25% one-day fall looks like a split nobody has recorded,
+    and every level is then on the wrong scale. Hold this name's alerts until
+    corporate_actions.sync explains it or the window passes. Asked once a day per name."""
+    key = (ticker, date.today())
+    if key not in _GAP_HOLD:
+        import corporate_actions
+        g = corporate_actions.recent_unexplained(client, ticker)
+        if g:
+            print(f"[gap-hold] {ticker}: {g['prev_close']} -> {g['close']} on {g['date']} is unexplained — alerts held")
+        _GAP_HOLD[key] = g
+    return _GAP_HOLD[key]
+
+
 def check_watchlist_entries(client, price_fn=None):
     """Watchlist ENTRY alerts (added 17-Jul-2026) — the mirror image of the
     exit-side state alerts. Sweeps every portfolio's watchlist hourly:
@@ -281,6 +298,8 @@ def check_watchlist_entries(client, price_fn=None):
 
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
+        if _gap_hold(client, ticker):
+            continue
         # price_fn (fast intraday poller) injects a LIVE-price zone; when absent
         # (EOD/hourly path) we classify off the latest daily close as before.
         d = price_fn(ticker) if price_fn is not None else signals.daily_entry_state(ticker)
@@ -376,6 +395,8 @@ def check_holding_adds(client, price_fn=None):
 
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
+        if _gap_hold(client, ticker):
+            continue
         d = price_fn(ticker) if price_fn is not None else signals.daily_entry_state(ticker)
         if not d:
             continue                       # SME in fast mode / data unavailable
@@ -487,7 +508,7 @@ def check_risk_stops(client, prices: dict):
     msgs_by_group, to_log = {}, []
     for ticker, e in by_ticker.items():
         cmp_, peak = prices.get(ticker, (None, None))
-        if cmp_ is None:
+        if cmp_ is None or _gap_hold(client, ticker):
             continue
         for grp, holders in e["groups"].items():
             # Loss stop — per holder's OWN cost (they may have bought at different
@@ -1153,7 +1174,7 @@ def run_states():
     vol_spikes = {}   # (group, ticker) -> spike info  (volume alerts, 15-Jul-2026)
     for _, h in holdings.iterrows():
         ticker = extract_yf_ticker(h["stock_name"])
-        if not ticker:
+        if not ticker or _gap_hold(client, ticker):
             continue
         pf = int(h.get("portfolio_id", 1))
         group = PF_GROUP.get(pf, "vishal")

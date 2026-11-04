@@ -145,10 +145,42 @@ for continuity. This file is the "memory" that chat couldn't reliably carry forw
    adjustment moved the 40wEMA ₹1,036→₹1,030 and ₹580.1→₹579.6, no state change), and real
    NBIS/RKLB moves (no split on record). Rows more than 7 days apart no longer count as an
    overnight step, so a sold stock's stored rows can't false-flag; the cost is that a split
-   during such a data gap isn't caught here. **Findings still only print to the job log.**
+   during such a data gap isn't caught here.
    **Testing gotcha:** `signals` caches per process even in bare scripts, so compare
    before/after readings in separate processes (a same-process trial returned identical
    numbers and proved nothing).
+   **SPLITS AND BONUSES ARE NOW AUTOMATIC (04-Nov-2026, Vishal: "we just need the right data
+   ... you figure out what is needed").** Nothing here needs a person. The registry above stays
+   as hand-verified history and always wins over the automatic record within a week.
+   - **Record:** `corporate_actions.sync` (GitHub `ca-sync` job, 07:07 and 18:53 IST, 7 days)
+     writes `data/corp_actions_auto.json` from NSE's API (bulk, includes FUTURE ex-dates; no
+     longer limited to today), BSE's `DefaultData` API (per scrip, for `.BO` names) and Yahoo
+     (US, and a last-resort check on a fresh unexplained crash). Only stored tickers reach the
+     file, so a commit and the redeploy it causes are rare (8 events in 2.4 years). A failed
+     source keeps what's on file and turns the run red, which emails the owner. Tick-box
+     `ca_sync_now` runs it alone. This also closes a hole the gap detector can't: a 1:4 bonus
+     only steps the price 20%, under its 25% line.
+   - **Prices:** `adjust_prices` reads the record. A future ex-date changes nothing until the
+     day arrives; on the ex-date morning history is already restated, so the live quote and the
+     levels agree before the evening file. An automatic event must also fit the real step
+     (`_step_fits`, ×/÷1.6) once rows exist on both sides, or it's skipped and logged, so a wrong
+     or cancelled record can't divide good prices.
+   - **Our records:** `apply_due` (worker from 08:00 IST before the levels, GitHub as backstop)
+     credits holdings on the ex-date: a price-0 lot, quantity up, average down, invested
+     unchanged. Without it a 1:5 reads as an 80% loss and fires the 10%-below-cost stop. Watchlist
+     target and support levels are divided, marker in the note. Idempotent; a hand-entered
+     price-0 lot within -7/+60 days of the ex-date counts as done. Only ex-dates from
+     `AUTO_CREDIT_FROM` (05-Nov-2026): the audit found no holding that had missed a credit.
+     Consolidations are logged, not applied. US quantities stay fractional; India floors.
+   - **FIFO:** a lot noted `Auto split x<f>` rescales older lots in `db.fifo_lots`; a bonus stays
+     a separate zero-cost lot. `fy_tracker` needs the price-0 lot either way, because it rebuilds
+     opening shares backwards and prices them at RAW closes, so never rewrite old lots instead.
+   - **Alerts:** `alerts._gap_hold` holds stop, state and entry alerts for a name with an
+     unexplained >25% one-session FALL in the last 5 days (a rise isn't split-shaped). The cost is
+     that a genuine 25% crash can alert up to 5 days late; a false EXIT is worse.
+   - **Exit audit:** `restate_to_sale_scale` puts later prices on the sale's share scale. Goodluck
+     sold ₹1,284 on 13-Aug, 2:1 bonus 21-Aug: the audit told the group "saved 60%" when the stock
+     had RISEN 21%. Journal ids 64 and 66 were repaired (×3 on the 30d and 60d prices).
 
 ## Dashboard performance: `db._bust()` must NOT clear market caches (01-Sep-2026)
 It used to call `st.cache_data.clear()`, which drops EVERY cache in the app — including

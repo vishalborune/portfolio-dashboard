@@ -184,7 +184,7 @@ def corporate_actions(refresh: bool = False) -> list:
     return out
 
 
-def _fetch_corporate_actions(frm: date) -> list:
+def _fetch_corporate_actions(frm: date, to: date | None = None) -> list:
     import json
     import re
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -192,10 +192,11 @@ def _fetch_corporate_actions(frm: date) -> list:
     s.headers.update({"User-Agent": ua})
     ref = "https://www.nseindia.com/companies-listing/corporate-filings-actions"
     s.get(ref, timeout=20)
+    to = to or date.today()
     rows, y = [], frm.year
-    while y <= date.today().year:
+    while y <= to.year:
         a = max(frm, date(y, 1, 1))
-        b = min(date.today(), date(y, 12, 31))
+        b = min(to, date(y, 12, 31))
         r = s.get(f"https://www.nseindia.com/api/corporates-corporateActions?index=equities"
                   f"&from_date={a:%d-%m-%Y}&to_date={b:%d-%m-%Y}", headers={"Referer": ref}, timeout=60)
         if r.status_code != 200:

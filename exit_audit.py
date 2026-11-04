@@ -29,6 +29,8 @@ import requests
 import yfinance as yf
 from supabase import create_client
 
+import corporate_actions
+
 WINDOWS = (30, 60, 90)
 # Don't chase forever: if a window is more than this many days past due and
 # still has no price (delisted, symbol changed...), leave it pending and a
@@ -79,7 +81,9 @@ def fetch_daily_closes(client, ticker: str, since: date) -> pd.DataFrame:
             df = df.dropna(subset=["close"])
             if not df.empty:
                 df["date"] = pd.to_datetime(df["date"]).dt.date
-                return df[["date", "close"]].reset_index(drop=True)
+                out = df[["date", "close"]].reset_index(drop=True)
+                out.attrs["restated"] = True    # Yahoo's Close is on today's split scale
+                return out
     except Exception:
         pass
     # 2) Our own SME table (NSE Emerge / BSE SME stocks)
@@ -170,6 +174,10 @@ def run():
             if price is None:
                 print(f"[audit] no price yet for {ticker} at +{w}d — will retry next run")
                 continue
+            # On the sale's share scale: Goodluck's 2:1 bonus 8 days after the sale made
+            # ₹1,284 → ₹517 read as "saved 60%" when the stock had risen 21%.
+            price = corporate_actions.restate_to_sale_scale(
+                ticker, price, exit_d, actual_d, daily_cache[ticker].attrs.get("restated", False))
 
             updates[f"price_{w}d"] = price
             updates[f"audited_{w}d"] = today.isoformat()
