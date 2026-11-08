@@ -310,6 +310,17 @@ such a day (BSE's file has no trade-date column; both exchanges share the calend
 phantom rows were deleted (backup `outputs/phantom_rows_2026-10-02.json`). House Rule #7
 in action: a 200 with 400 KB of real-looking data was still not that day's data.
 
+**The reverse case, a REAL weekend session (08-Nov-2026, Diwali Muhurat on a Sunday).** NSE and
+BSE both published genuine files (DATE1 08-Nov-2026), but the worker's price store was
+weekday-only, so the session never reached `sme_daily_prices`. I then wrongly called RKFORGE's
+₹723.20 "stale Yahoo" during a digest re-send: it was the Sunday close, and the reconcile
+reference (`_bhav_reference`, which skips weekends) was the one a session behind. The 88 rows were
+backfilled, and the worker now also tries on weekends, hourly; a normal weekend has no file and a
+republished one fails the DATE1 check. Still weekday-only: the live poller, the evening
+states/stops/entry passes and the GitHub backstop crons, so a rare weekend session gets no alerts
+until Monday's runs. **When a stock's price "disagrees" around a special session, check the
+exchange file for that date before calling either side stale.**
+
 ## Known SME/BSE-only tickers requiring bhavcopy (not Yahoo)
 `bhavcopy.py`'s `SME_STOCKS` dict is the single source of truth. Currently
 tracks: OBSCP, TCL, UTSSAV, VIESL (NSE Emerge), SSEGL (NSE Emerge, series ST),

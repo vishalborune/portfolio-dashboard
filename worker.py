@@ -313,7 +313,7 @@ def main():
                     print(f"⚠️ [worker] US price store failed: {type(e).__name__}: {e}")
                     traceback.print_exc()
 
-            # ---- nightly bhavcopy price store (WEEKDAYS, evening) ----------
+            # ---- nightly bhavcopy price store (evening; weekends hourly) -----
             # Moved here 04-Sep-2026: GitHub's 20:00 cron silently skipped, our
             # stored prices ended a day earlier, and the Friday digest was
             # (rightly) blocked by its own reconciliation guard — no Telegram,
@@ -321,9 +321,14 @@ def main():
             # depends on, so the data job now runs on the same always-on worker,
             # BEFORE the digest block in this loop. GitHub's 20:00 cron stays as
             # a backstop; the store is an idempotent upsert so both can run.
-            if (now.weekday() < 5 and _within(now, BHAV_OPEN, BHAV_CLOSE)
+            # Weekends too, but only hourly (08-Nov-2026): NSE held its Diwali Muhurat
+            # session on a Sunday and published a real file for it, and this block
+            # was weekday-only, so the session never reached our prices. A normal
+            # weekend has no file, and fetch_nse_bhavcopy rejects a republished one
+            # by its DATE1, so nothing is stored then.
+            if (_within(now, BHAV_OPEN, BHAV_CLOSE, weekends=True)
                     and bhav_day != today
-                    and time.time() - last_bhav_try >= BHAV_RETRY):
+                    and time.time() - last_bhav_try >= (BHAV_RETRY if now.weekday() < 5 else 3600)):
                 last_bhav_try = time.time()
                 try:
                     import bhavcopy
