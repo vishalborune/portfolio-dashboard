@@ -348,7 +348,9 @@ every day's file). A BSE SME name can be added by scrip code (`XBOM:544773`) and
 last step of the GitHub bhavcopy job. Nobody had run the backfill for Amal, OneSource, Onward, Caliber
 or Ind-Swift, so they sat on a few days of our data while states/DMAs quietly rode Yahoo. It backfills
 any tracked ticker under 60 rows that is present in the exchange file of ~120 days ago; a genuine new
-listing is absent there, so it is skipped and never re-triggers nightly. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
+listing is absent there, so it is skipped and never re-triggers nightly. The probe carries the well-stored tickers as a control, so a failed download can't make a
+short name look newly listed. `backfill()` itself now also stores a weekend day when NSE published a
+real file for it (it had skipped Sunday's Muhurat session for a name added the day after). NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
 Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)

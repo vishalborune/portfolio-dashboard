@@ -704,7 +704,16 @@ def backfill(client, days: int = 730, only: list = None):
     d = start
     done, found = 0, 0
     while d <= date.today():
-        if d.weekday() < 5:  # Mon-Fri only
+        # Weekends only when NSE really published that day (09-Nov-2026: the
+        # Sunday Muhurat session was missed for a name added the next day).
+        # One quick 404 per normal weekend day; a holiday republish fails the
+        # DATE1 check inside fetch_nse_bhavcopy.
+        if d.weekday() >= 5:
+            wk = fetch_nse_bhavcopy(d)
+            weekend_session = wk is not None and not wk.empty
+        else:
+            weekend_session = False
+        if d.weekday() < 5 or weekend_session:
             prices = extract_prices_for_date(d, universe)
             if prices:
                 store_prices(client, d, prices)
@@ -738,19 +747,24 @@ def backfill_new(client, min_rows: int = 60, probe_days: int = 120):
     if not short:
         print(f"[bhavcopy backfill-new] all {len(universe)} tickers have >= {min_rows} rows")
         return
-    probe, found = date.today() - timedelta(days=probe_days), {}
+    # The well-stored tickers ride along as a control: they prove that day's
+    # file (per exchange) really loaded, so "short ticker absent" can only mean
+    # "not listed yet" — never "the download failed".
+    ex_of = lambda t: universe[t].get("exchange", "NSE")
+    probe, loaded, found = date.today() - timedelta(days=probe_days), set(), {}
     for _ in range(10):                       # walk back to a day with a file
         if probe.weekday() < 5:
-            found = extract_prices_for_date(probe, {t: universe[t] for t in short})
-            if found:
+            found = extract_prices_for_date(probe, universe)
+            loaded = {ex_of(t) for t in found if t not in short}
+            if loaded:
                 break
         probe -= timedelta(days=1)
-    if not found:
-        print(f"⚠️ [bhavcopy backfill-new] no exchange file near {probe} to probe "
-              f"{len(short)} short ticker(s): {short} — not backfilled tonight")
-        return
-    need = sorted(found)
-    young = {t: n for t, n in short.items() if t not in found}
+    unknown = {t: n for t, n in short.items() if ex_of(t) not in loaded}
+    if unknown:
+        print(f"⚠️ [bhavcopy backfill-new] no usable exchange file near {probe} to probe "
+              f"{unknown} — not backfilled tonight")
+    need = sorted(t for t in short if t in found)
+    young = {t: n for t, n in short.items() if t not in found and t not in unknown}
     if young:
         print(f"[bhavcopy backfill-new] recent listings (not trading on {probe}), "
               f"left as is: {young}")
