@@ -1,5 +1,12 @@
 [
 {
+"ticker": "ROLEXRINGS.NS",
+"ex": "2025-10-17",
+"factor": 10.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Re 1/- Per Share",
+"source": "NSE"
+},
+{
 "ticker": "GOODLUCK.NS",
 "ex": "2026-08-21",
 "factor": 3.0,

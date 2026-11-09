@@ -345,7 +345,10 @@ names NOTHING (6 new watchlist names: 0 rows after a full 9-min run). It now use
 every day's file). A BSE SME name can be added by scrip code (`XBOM:544773`) and
 `tracked_universe` resolves it with no `SME_STOCKS` entry.
 **New names are now backfilled automatically (09-Nov-2026): `python bhavcopy.py backfill-new`**, the
-last step of the GitHub bhavcopy job. Nobody had run the backfill for Amal, OneSource, Onward, Caliber
+first step of the GitHub `ca-sync` job (07:07 + 20:08 IST), which then runs `corporate_actions.py sync
+full` (from Jun-2024) so an OLD split in the new history is recorded before the evening states run.
+Rolex Rings (watchlist, 09-Nov) had a 1:10 split in Oct-2025 that the default 90-day window would
+never see: unrecorded, its 40wEMA would have read ~10x high and fired a false EXIT. Nobody had run the backfill for Amal, OneSource, Onward, Caliber
 or Ind-Swift, so they sat on a few days of our data while states/DMAs quietly rode Yahoo. It backfills
 any tracked ticker under 60 rows that is present in the exchange file of ~120 days ago; a genuine new
 listing is absent there, so it is skipped and never re-triggers nightly. The probe carries the well-stored tickers as a control, so a failed download can't make a
