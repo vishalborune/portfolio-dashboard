@@ -153,9 +153,32 @@ def fetch_weekly(ticker: str, period: str = "3y") -> pd.DataFrame:
                                  "High": "high", "Low": "low",
                                  "Open": "open", "Volume": "volume"})
         df = df.dropna(subset=["close"]).reset_index(drop=True)
-        return df[["date", "open", "high", "low", "close", "volume"]]
+        return _overlay_weekly(df[["date", "open", "high", "low", "close", "volume"]], bhav)
     except Exception:
         return _fetch_weekly_from_bhavcopy(ticker)
+
+
+def _overlay_weekly(yahoo: pd.DataFrame, bhav: pd.DataFrame) -> pd.DataFrame:
+    """Yahoo for the older history, OUR exchange-file bars wherever we have them
+    (09-Nov-2026). A young listing (Rentomojo, <20 stored weeks) fell back to
+    Yahoo wholesale, and Yahoo had no bar for the Sunday Muhurat session, so its
+    price sat a session behind NSE's own file. Yahoo's weekly rows are labelled
+    by their Monday; ours by the week's Friday (W-FRI), so Yahoo's are mapped to
+    the same Friday before ours replace them. Our FIRST week can be partial (the
+    day we started storing), so Yahoo keeps that one."""
+    if bhav is None or bhav.empty or len(bhav) < 2:
+        return yahoo
+    try:
+        y = yahoo.copy()
+        wk = pd.to_datetime(y["date"]).dt.tz_localize(None).dt.to_period("W-FRI").dt.end_time.dt.normalize()
+        b = bhav.copy()
+        b["date"] = pd.to_datetime(b["date"]).dt.tz_localize(None)
+        first = b["date"].min()
+        out = pd.concat([y[wk <= first], b[b["date"] > first]], ignore_index=True)
+        return out.sort_values("date").reset_index(drop=True)
+    except Exception as e:
+        print(f"  [signals] weekly overlay skipped ({type(e).__name__}: {e}) — using Yahoo as is")
+        return yahoo
 
 
 # ---------------------------------------------------------------------------
@@ -501,8 +524,17 @@ def _fetch_daily(ticker: str, lookback: int = 260) -> pd.DataFrame:
             return s.astype(float)
         # dropna across OHLC TOGETHER so the columns stay row-aligned; KEEP the
         # DatetimeIndex so the 52-week high can span a true calendar year.
-        return pd.DataFrame({"close": _col("Close"), "high": _col("High"),
-                             "low": _col("Low")}).dropna()
+        y = pd.DataFrame({"close": _col("Close"), "high": _col("High"),
+                          "low": _col("Low")}).dropna()
+        # Our exchange-file days win where we have them (see _overlay_weekly):
+        # Yahoo can lack a session NSE published, e.g. Sunday 08-Nov-2026.
+        if not _bhav_fallback.empty:
+            try:
+                y.index = pd.to_datetime(y.index).tz_localize(None)
+                y = pd.concat([y[~y.index.isin(_bhav_fallback.index)], _bhav_fallback]).sort_index()
+            except Exception as e:
+                print(f"  [signals] daily overlay skipped ({type(e).__name__}: {e})")
+        return y
     except Exception:
         return pd.DataFrame()
 

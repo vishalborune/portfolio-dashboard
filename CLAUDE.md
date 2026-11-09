@@ -350,7 +350,16 @@ or Ind-Swift, so they sat on a few days of our data while states/DMAs quietly ro
 any tracked ticker under 60 rows that is present in the exchange file of ~120 days ago; a genuine new
 listing is absent there, so it is skipped and never re-triggers nightly. The probe carries the well-stored tickers as a control, so a failed download can't make a
 short name look newly listed. `backfill()` itself now also stores a weekend day when NSE published a
-real file for it (it had skipped Sunday's Muhurat session for a name added the day after). NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
+real file for it (it had skipped Sunday's Muhurat session for a name added the day after).
+**Young listings: our bars now override Yahoo where we have them (09-Nov-2026).** Below
+`MIN_BHAV_WEEKS`/`MIN_BHAV_DAILY_ROWS` the fetchers fell back to Yahoo WHOLESALE, so Rentomojo
+(listed Sep-2026) sat a session behind NSE (Yahoo had no Sunday Muhurat bar). `signals._overlay_weekly`
+(and the same overlay in `_fetch_daily`) keeps Yahoo only for weeks/days before our first stored one
+(our first week can be partial, so Yahoo keeps it). Yahoo's weekly rows are Monday-labelled, ours
+W-FRI, so they're mapped to the Friday before merging. After it: digest vs NSE file = Rs 0 on all
+three books. **Telegram coverage for Vishal-only holdings:** 13 of his names are on Lakshmi's
+watchlist (pf2) purely so their alerts reach the group (notes say so); a NEW Vishal-only buy is not
+added automatically. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
 Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)
