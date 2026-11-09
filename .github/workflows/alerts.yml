@@ -477,6 +477,13 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      # Newly added stocks get their past prices (09-Nov-2026). Last step on
+      # purpose: a ~10 min backfill, only on nights a new name needs one.
+      - run: python bhavcopy.py backfill-new
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
   delivery-backfill:
     # ONE-TIME job: ~6 weeks of delivery history so the 4-week rolling

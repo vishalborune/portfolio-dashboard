@@ -716,6 +716,51 @@ def backfill(client, days: int = 730, only: list = None):
     print(f"[bhavcopy] Backfill complete: {found} days stored out of {done} trading days scanned")
 
 
+def backfill_new(client, min_rows: int = 60, probe_days: int = 120):
+    """Backfill any tracked ticker that has too little stored history even
+    though it traded long before we started storing it (09-Nov-2026).
+
+    Adding a stock to holdings/watchlist puts it into the nightly store from
+    that day only; its past stayed empty until someone remembered to run
+    `backfill`. Nobody did for Amal, OneSource, Onward, Caliber or Ind-Swift,
+    so their states and DMAs quietly rode Yahoo. A genuine new listing is
+    told apart by ONE probe: it is absent from the exchange file of
+    ~probe_days ago, so it is skipped and never re-triggers this nightly.
+    `min_rows` mirrors signals.MIN_BHAV_DAILY_ROWS (the bar for our data to
+    win over Yahoo)."""
+    universe = tracked_universe(client)
+    short = {}
+    for t in sorted(universe):
+        r = (client.table("sme_daily_prices").select("price_date", count="exact")
+             .eq("ticker", t).limit(1).execute())
+        if (r.count or 0) < min_rows:
+            short[t] = r.count or 0
+    if not short:
+        print(f"[bhavcopy backfill-new] all {len(universe)} tickers have >= {min_rows} rows")
+        return
+    probe, found = date.today() - timedelta(days=probe_days), {}
+    for _ in range(10):                       # walk back to a day with a file
+        if probe.weekday() < 5:
+            found = extract_prices_for_date(probe, {t: universe[t] for t in short})
+            if found:
+                break
+        probe -= timedelta(days=1)
+    if not found:
+        print(f"⚠️ [bhavcopy backfill-new] no exchange file near {probe} to probe "
+              f"{len(short)} short ticker(s): {short} — not backfilled tonight")
+        return
+    need = sorted(found)
+    young = {t: n for t, n in short.items() if t not in found}
+    if young:
+        print(f"[bhavcopy backfill-new] recent listings (not trading on {probe}), "
+              f"left as is: {young}")
+    if not need:
+        return
+    print(f"[bhavcopy backfill-new] traded on {probe} but short of history: "
+          f"{ {t: short[t] for t in need} } — backfilling")
+    backfill(client, only=need)
+
+
 if __name__ == "__main__":
     import os
     mode = sys.argv[1] if len(sys.argv) > 1 else "today"
@@ -741,6 +786,8 @@ if __name__ == "__main__":
     if mode == "backfill":
         # python bhavcopy.py backfill [TICKER ...]  — no tickers = everything tracked
         backfill(client, only=sys.argv[2:] or None)
+    elif mode == "backfill-new":
+        backfill_new(client)
     elif mode == "index-backfill":
         index_backfill(client)
     else:

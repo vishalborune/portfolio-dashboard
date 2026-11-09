@@ -4522,8 +4522,11 @@ def _bhav_reference(max_back: int = 6):
         import bhavcopy as _bc
         for back in range(max_back):
             d = date.today() - timedelta(days=back)
-            if d.weekday() >= 5:
-                continue
+            # Weekends are tried too (09-Nov-2026): a REAL weekend session
+            # (Diwali Muhurat, Sun 08-Nov) has a genuine file, and skipping it
+            # made every holding "drift" by that session's move. A normal
+            # weekend has no file, and a holiday republish fails fetch_nse_
+            # bhavcopy's DATE1 check, so neither can pose as a session.
             df = _bc.fetch_nse_bhavcopy(d)
             if df is None or df.empty:
                 continue

@@ -314,7 +314,7 @@ in action: a 200 with 400 KB of real-looking data was still not that day's data.
 BSE both published genuine files (DATE1 08-Nov-2026), but the worker's price store was
 weekday-only, so the session never reached `sme_daily_prices`. I then wrongly called RKFORGE's
 ₹723.20 "stale Yahoo" during a digest re-send: it was the Sunday close, and the reconcile
-reference (`_bhav_reference`, which skips weekends) was the one a session behind. The 88 rows were
+reference (`_bhav_reference`, which then skipped weekends; it tries them since 09-Nov) was the one a session behind. The 88 rows were
 backfilled, and the worker now also tries on weekends, hourly; a normal weekend has no file and a
 republished one fails the DATE1 check. Still weekday-only: the live poller, the evening
 states/stops/entry passes and the GitHub backstop crons, so a rare weekend session gets no alerts
@@ -343,7 +343,12 @@ a script passing the universe) re-wrote those 16 and gave newly added holdings/w
 names NOTHING (6 new watchlist names: 0 rows after a full 9-min run). It now uses
 `tracked_universe(client)`; pass tickers to load only new names (still ~9 min — it reads
 every day's file). A BSE SME name can be added by scrip code (`XBOM:544773`) and
-`tracked_universe` resolves it with no `SME_STOCKS` entry. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
+`tracked_universe` resolves it with no `SME_STOCKS` entry.
+**New names are now backfilled automatically (09-Nov-2026): `python bhavcopy.py backfill-new`**, the
+last step of the GitHub bhavcopy job. Nobody had run the backfill for Amal, OneSource, Onward, Caliber
+or Ind-Swift, so they sat on a few days of our data while states/DMAs quietly rode Yahoo. It backfills
+any tracked ticker under 60 rows that is present in the exchange file of ~120 days ago; a genuine new
+listing is absent there, so it is skipped and never re-triggers nightly. NOTE: Lehar is held by two people under two identifiers (XBOM:532829 =
 Vishal, XBOM:LEHAR = Abinaya) — different portfolios, so not a duplicate.
 
 ## The benchmark (Lakshmi's rule: beat the index by 2-5+ pts or stop)
