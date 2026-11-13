@@ -4713,16 +4713,47 @@ def _mark_digest_sent(client):
         print(f"⚠️ [digest] could not write the delivery marker: {e}")
 
 
+def _book_marker(book: str) -> str:
+    return f"__digest_email_{book}__"
+
+
+def _book_sent(client, book: str, day: date = None) -> bool:
+    """Did THIS book's email go out today? Per-book on purpose (13-Nov-2026):
+    with one all-or-nothing marker, Abinaya's book was blocked by the reconcile
+    guard, the marker was never written, and every 30-minute retry re-sent
+    Vishal's (already delivered) email while Lakshmi's never went at all."""
+    day = day or date.today()
+    try:
+        rows = (client.table("entry_alert_log").select("ticker")
+                .eq("alert_date", day.isoformat())
+                .eq("ticker", _book_marker(book)).execute().data or [])
+        return bool(rows)
+    except Exception as e:
+        print(f"⚠️ [digest] could not check {book}'s delivery marker ({e}) — assuming NOT sent")
+        return False
+
+
+def _mark_book_sent(client, book: str):
+    try:
+        client.table("entry_alert_log").upsert({
+            "ticker": _book_marker(book), "grp": book,
+            "alert_date": date.today().isoformat(), "kind": "DIGEST"}).execute()
+    except Exception as e:
+        print(f"⚠️ [digest] could not write {book}'s delivery marker: {e}")
+
+
 def run_digest_if_due() -> bool:
     """Send the weekly digest unless it already went out today. Returns True if
     it ran. This is what the always-on worker calls — GitHub Actions' scheduler
     has now dropped the Friday digest outright (28-Aug-2026, Vishal got nothing),
-    the same best-effort behaviour that moved the live alerts onto the worker."""
+    the same best-effort behaviour that moved the live alerts onto the worker.
+    A book already delivered today is skipped, so a retry only re-attempts the
+    book that failed."""
     client = sb()
     if digest_already_sent(client):
         print("[digest] email already delivered today — skipping (no double send)")
         return False
-    if run_digest():          # marks delivery itself
+    if run_digest(skip_delivered=True):          # marks delivery itself
         return True
     print("[digest] not marked as delivered — a later attempt will retry")
     return False
@@ -4811,7 +4842,7 @@ def run_snapshot_refresh():
         send_email, send_telegram = keep_mail, keep_tg
 
 
-def run_digest(only=None):
+def run_digest(only=None, skip_delivered=False):
     """Weekly digest — TWO separate emails (Vishal 07-Aug-2026): his OWN book in
     one email, the Lakshmi+Abinaya book in another, so neither email carries the
     other's (long) all-holdings states table. Both go to DIGEST_EMAILS. The
@@ -4849,14 +4880,21 @@ def run_digest(only=None):
     hl = all_holdings[all_holdings["portfolio_id"].isin(lak)]
     hv = all_holdings[all_holdings["portfolio_id"].isin(vis)]
     results = []
-    if not hl.empty and only in (None, "lakshmi"):
-        results.append(_digest_for(client, hl, tg_pf_ids=lak,
-                                   label="Lakshmi & Abinaya", telegram=True,
-                                   asof=SNAPSHOT_DATE_OVERRIDE))
-    if not hv.empty and only in (None, "vishal"):
-        results.append(_digest_for(client, hv, tg_pf_ids=[],
-                                   label="Vishal", telegram=False,
-                                   asof=SNAPSHOT_DATE_OVERRIDE))
+    books = [("lakshmi", hl, lak, "Lakshmi & Abinaya", True),
+             ("vishal", hv, [], "Vishal", False)]
+    for book, h, tg_ids, label, tg in books:
+        if h.empty or only not in (None, book):
+            continue
+        if skip_delivered and _book_sent(client, book):
+            print(f"[digest] {label}'s email already delivered today — not re-sending it")
+            results.append(True)
+            continue
+        r = _digest_for(client, h, tg_pf_ids=tg_ids, label=label, telegram=tg,
+                        asof=SNAPSHOT_DATE_OVERRIDE)
+        results.append(r)
+        # Not during the Saturday re-stamp (send_email is stubbed there).
+        if r is True and SNAPSHOT_DATE_OVERRIDE is None:
+            _mark_book_sent(client, book)
     # True only when every email we tried actually left the building. A digest the
     # reconciliation guard blocked returns None, which correctly counts as not-sent.
     ok = bool(results) and all(r is True for r in results)

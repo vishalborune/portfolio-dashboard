@@ -55,6 +55,10 @@ on:
         description: "Re-send ONLY Vishal's digest email (after late trade entry)?"
         type: boolean
         default: false
+      send_lakshmi_digest_now:
+        description: "Re-send ONLY the Lakshmi & Abinaya digest email?"
+        type: boolean
+        default: false
       list_telegram_chats:
         description: "Diagnostic: list the Telegram chats/groups the bot has recently seen (to find a new group's chat ID)?"
         type: boolean
@@ -397,7 +401,7 @@ jobs:
     # Runs on the Friday 21:00 IST cron, OR when manually triggered with the
     # "Send the Sunday digest right now?" tick-box (GitHub sometimes drops
     # scheduled runs entirely -- this is the recovery button for that).
-    if: github.event.schedule == '0 17 * * 5' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.send_digest_now == 'true' || github.event.inputs.send_vishal_digest_now == 'true'))
+    if: github.event.schedule == '0 17 * * 5' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.send_digest_now == 'true' || github.event.inputs.send_vishal_digest_now == 'true' || github.event.inputs.send_lakshmi_digest_now == 'true'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -412,6 +416,8 @@ jobs:
       - run: |
           if [ "${{ github.event.inputs.send_vishal_digest_now }}" = "true" ]; then
             python alerts.py digest vishal
+          elif [ "${{ github.event.inputs.send_lakshmi_digest_now }}" = "true" ]; then
+            python alerts.py digest lakshmi
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python alerts.py digest
           else
