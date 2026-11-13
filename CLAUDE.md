@@ -618,6 +618,18 @@ switch sources without disclosure.
   for Friday, so next week's WoW compares against the corrected book. Can be triggered
   headlessly from Vishal's PC via the GitHub REST `dispatches` endpoint using the token
   `git credential fill` returns (no `gh` CLI installed).
+- **Per-book delivery markers (13-Nov-2026).** The single `__digest_email__` marker was
+  all-or-nothing: Abinaya's book was blocked by the reconcile guard, so every 30-min retry
+  re-sent Vishal's delivered email while Lakshmi's never went. Each book now writes
+  `__digest_email_<book>__` on delivery and `run_digest_if_due` skips a delivered book; the
+  whole-week marker is still written when both are out. Tick-box `send_lakshmi_digest_now`
+  re-sends that book only. The Telegram teaser now goes only after its email is delivered.
+  **The blocked book's cause: SOLD-then-BOUGHT-BACK names have a price hole** (sold = out of
+  the tracked universe, so storing stops). Abinaya re-bought Alembic Pharma + Windlas after
+  the 20:00 store and they were valued at early-October closes. `bhavcopy.fill_gaps` (inside
+  `backfill-new`, and alone as `python bhavcopy.py fill-gaps`, which the worker and the GitHub
+  digest job run just before the digest) fills any name whose newest row is >4 days behind the
+  latest file or whose two newest rows are >7 days apart, if that file shows it trading.
 - **Digest add-ons (Vishal 12-Oct-2026, "for the weekly debrief")** — three boxes built
   by pure helpers in alerts.py (`_digest_fy_box`, `_digest_scorecard_box`,
   `_digest_sales_box`), each wrapped so a failure omits the box, never the digest:

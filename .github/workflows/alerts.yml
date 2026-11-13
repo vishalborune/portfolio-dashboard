@@ -414,6 +414,8 @@ jobs:
       # "send it now", and on 28-Aug-2026 the guard would otherwise have refused
       # the very rescue that was needed.
       - run: |
+          # fill price holes for stocks bought back since they were sold (13-Nov-2026)
+          python bhavcopy.py fill-gaps || echo "fill-gaps failed -- digest runs anyway"
           if [ "${{ github.event.inputs.send_vishal_digest_now }}" = "true" ]; then
             python alerts.py digest vishal
           elif [ "${{ github.event.inputs.send_lakshmi_digest_now }}" = "true" ]; then

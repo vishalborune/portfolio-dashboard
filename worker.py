@@ -407,6 +407,19 @@ def main():
                     # digest is the heaviest job on this 512 MB box — returns to
                     # the OS on exit instead of joining the malloc arena.
                     import subprocess, sys as _sys, os as _os
+                    # Fill price holes first (13-Nov-2026): a stock bought BACK
+                    # after the evening jobs has no prices since it was sold, the
+                    # digest values it at that old close and the reconcile guard
+                    # blocks the email. Own subprocess + timeout, so a slow
+                    # exchange download can't stop the digest from running.
+                    try:
+                        g = subprocess.run(
+                            [_sys.executable, "-u", "bhavcopy.py", "fill-gaps"],
+                            timeout=600,
+                            cwd=_os.path.dirname(_os.path.abspath(__file__)))
+                        print(f"[worker] fill-gaps subprocess exited {g.returncode}")
+                    except Exception as e:
+                        print(f"⚠️ [worker] fill-gaps before digest failed: {type(e).__name__}: {e}")
                     r = subprocess.run(
                         [_sys.executable, "-u", "alerts.py", "digest-if-due"],
                         timeout=1200,

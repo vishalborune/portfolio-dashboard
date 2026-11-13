@@ -5423,7 +5423,11 @@ def _digest_for(client, holdings, tg_pf_ids=None, label=None, telegram=True, aso
                           f"{fr['pace_now']:+.1f}% (target {fr['window_target']:.0f}% for the window)")
         tg.append("Full review in the email 📧")
         chat = chat_id_for_group("vishal_us" if market() == "US" else "lakshmi")
-        if telegram and chat:            # Vishal's email-only digest sends no teaser
+        # Only after the email really went: the teaser points at it, and a failed
+        # email is retried every 30 min, which would repeat the teaser each time.
+        if not email_ok:
+            print("[digest] Telegram teaser held back — the email did not go out")
+        elif telegram and chat:          # Vishal's email-only digest sends no teaser
             send_telegram("\n".join(tg), chat_id=chat)
     except Exception as ex:
         print(f"(digest: telegram summary failed: {ex})")

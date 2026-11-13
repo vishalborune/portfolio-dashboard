@@ -725,6 +725,75 @@ def backfill(client, days: int = 730, only: list = None):
     print(f"[bhavcopy] Backfill complete: {found} days stored out of {done} trading days scanned")
 
 
+def fill_gaps(client, universe: dict, newest: dict, stale_days: int = 4,
+              gap_days: int = 7, max_days: int = 730):
+    """Fill the hole left when a stock is SOLD and later BOUGHT BACK (13-Nov-2026).
+
+    Selling drops a name out of the tracked universe, so its stored prices stop.
+    Buying it back puts it in again from that day only, and the weeks between stay
+    empty. The readers then priced it at its last stored close: Abinaya re-bought
+    Alembic Pharma and Windlas on Friday evening after the 20:00 store, and the
+    digest valued them at early-October closes (Rs 800 vs Rs 1,030). The reconcile
+    guard blocked the whole Lakshmi & Abinaya email.
+
+    A ticker counts as stale when its newest row is more than `stale_days` days
+    behind the latest exchange file, OR when its two newest rows are more than
+    `gap_days` apart (bought back and one new day already stored on top of the
+    hole). It is only filled if the latest file shows it trading, so a suspended
+    name is skipped instead of being re-fetched every night. One pass covers all
+    of them, from the oldest gap to today. `newest` = {ticker: [newest, 2nd]}."""
+    if not newest:
+        return
+    # The latest published file: NSE first, walking back over weekends/holidays.
+    d, latest = date.today(), {}
+    for _ in range(10):
+        if d.weekday() < 5:
+            latest = extract_prices_for_date(d, {t: universe[t] for t in newest})
+            if latest:
+                break
+        d -= timedelta(days=1)
+    if not latest:
+        print("⚠️ [bhavcopy fill-gaps] no exchange file in the last 10 days loaded — "
+              "gaps not checked this run")
+        return
+    stale = {}
+    for t, rows in newest.items():
+        if (d - rows[0]).days > stale_days:
+            stale[t] = rows[0]
+        elif len(rows) > 1 and (rows[0] - rows[1]).days > gap_days:
+            stale[t] = rows[1]                # the hole sits under the newest row
+    if not stale:
+        print(f"[bhavcopy fill-gaps] no gaps: every stored ticker is within "
+              f"{stale_days} days of the {d} file")
+        return
+    idle = {t: str(n) for t, n in stale.items() if t not in latest}
+    if idle:
+        print(f"[bhavcopy fill-gaps] not in the {d} file (suspended/delisted?), "
+              f"left as is: {idle}")
+    need = {t: n for t, n in stale.items() if t in latest}
+    if not need:
+        return
+    days = min(max_days, (date.today() - min(need.values())).days)
+    print(f"[bhavcopy fill-gaps] stored prices have a hole after: "
+          f"{ {t: str(n) for t, n in need.items()} } — filling the last {days} days")
+    backfill(client, days=days, only=sorted(need))
+
+
+def fill_gaps_all(client, min_rows: int = 60):
+    """`python bhavcopy.py fill-gaps`: the gap check alone, without backfill_new's
+    full-history pass for new names. The worker runs it right before the Friday
+    digest, because a stock bought back after the evening jobs (13-Nov-2026) is
+    otherwise priced at its old close."""
+    universe = tracked_universe(client)
+    newest = {}
+    for t in sorted(universe):
+        r = (client.table("sme_daily_prices").select("price_date", count="exact")
+             .eq("ticker", t).order("price_date", desc=True).limit(2).execute())
+        if (r.count or 0) >= min_rows and r.data:
+            newest[t] = [date.fromisoformat(str(x["price_date"])[:10]) for x in r.data]
+    fill_gaps(client, universe, newest)
+
+
 def backfill_new(client, min_rows: int = 60, probe_days: int = 120):
     """Backfill any tracked ticker that has too little stored history even
     though it traded long before we started storing it (09-Nov-2026).
@@ -738,12 +807,15 @@ def backfill_new(client, min_rows: int = 60, probe_days: int = 120):
     `min_rows` mirrors signals.MIN_BHAV_DAILY_ROWS (the bar for our data to
     win over Yahoo)."""
     universe = tracked_universe(client)
-    short = {}
+    short, newest = {}, {}
     for t in sorted(universe):
         r = (client.table("sme_daily_prices").select("price_date", count="exact")
-             .eq("ticker", t).limit(1).execute())
+             .eq("ticker", t).order("price_date", desc=True).limit(2).execute())
         if (r.count or 0) < min_rows:
             short[t] = r.count or 0
+        elif r.data:
+            newest[t] = [date.fromisoformat(str(x["price_date"])[:10]) for x in r.data]
+    fill_gaps(client, universe, newest)
     if not short:
         print(f"[bhavcopy backfill-new] all {len(universe)} tickers have >= {min_rows} rows")
         return
@@ -802,6 +874,8 @@ if __name__ == "__main__":
         backfill(client, only=sys.argv[2:] or None)
     elif mode == "backfill-new":
         backfill_new(client)
+    elif mode == "fill-gaps":
+        fill_gaps_all(client)
     elif mode == "index-backfill":
         index_backfill(client)
     else:
