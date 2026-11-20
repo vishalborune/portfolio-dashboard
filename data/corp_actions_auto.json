@@ -1,5 +1,12 @@
 [
 {
+"ticker": "SHARDAMOTR.NS",
+"ex": "2025-07-04",
+"factor": 2.0,
+"subject": "Bonus 1:1",
+"source": "NSE"
+},
+{
 "ticker": "TIMETECHNO.NS",
 "ex": "2025-09-23",
 "factor": 2.0,
