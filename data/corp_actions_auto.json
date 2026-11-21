@@ -21,6 +21,13 @@
 "source": "NSE"
 },
 {
+"ticker": "LALPATHLAB.NS",
+"ex": "2025-12-19",
+"factor": 2.0,
+"subject": "Bonus 1:1",
+"source": "NSE"
+},
+{
 "ticker": "GOODLUCK.NS",
 "ex": "2026-08-21",
 "factor": 3.0,
