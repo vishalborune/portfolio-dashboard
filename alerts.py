@@ -4903,7 +4903,9 @@ def run_digest(only=None, skip_delivered=False):
     # triggered rescue delivered the email and left no trace of it — which would
     # have had the backstop send a duplicate 30 minutes later (28-Aug-2026).
     # Whoever sends it, the send is what gets recorded.
-    if ok and only is None:
+    # Not during the Saturday re-stamp either: it sends nothing (send_email is
+    # stubbed), and on 21-Nov-2026 it wrote a "delivered" marker for Saturday.
+    if ok and only is None and SNAPSHOT_DATE_OVERRIDE is None:
         _mark_digest_sent(client)
     return ok
 
