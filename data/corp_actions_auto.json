@@ -33,5 +33,12 @@
 "factor": 3.0,
 "subject": "Bonus 2:1",
 "source": "NSE"
+},
+{
+"ticker": "SPAL.NS",
+"ex": "2026-12-10",
+"factor": 5.0,
+"subject": "Face Value Split (Sub-Division) - From Rs 10/- Per Share To Rs 2/- Per Share",
+"source": "NSE"
 }
 ]
